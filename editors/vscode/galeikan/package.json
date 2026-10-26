@@ -4,6 +4,7 @@
   "description": "Galeikan syntax highlighting and Eclipse color theme",
   "version": "0.1.0",
   "publisher": "galeikan",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/GaleikanOrg/Galeikan.git"
