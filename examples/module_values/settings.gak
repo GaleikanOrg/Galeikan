@@ -1,0 +1,3 @@
+let threshold: i64 = 40
+
+fn verdict(score: i64) -> bool = score >= threshold

@@ -1,0 +1,9 @@
+from std.iter import range
+
+var total: i64 = 0
+for outer in range(1, 4) {
+    for inner in range(2) {
+        total = total + outer * inner
+    }
+}
+print total

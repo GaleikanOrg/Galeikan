@@ -1,0 +1,102 @@
+{
+  "name": "Galeikan",
+  "scopeName": "source.galeikan",
+  "patterns": [
+    { "include": "#strings" },
+    { "include": "#comments" },
+    { "include": "#declarations" },
+    { "include": "#imports" },
+    { "include": "#effects" },
+    { "include": "#memberCalls" },
+    { "include": "#namespaces" },
+    { "include": "#typeContexts" },
+    { "include": "#types" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#calls" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "strings": {
+      "patterns": [{
+        "name": "string.quoted.double.galeikan",
+        "begin": "\"",
+        "end": "\"",
+        "patterns": [{ "name": "constant.character.escape.galeikan", "match": "\\\\[ntr\"\\\\]" }]
+      }]
+    },
+    "comments": { "patterns": [{ "name": "comment.line.number-sign.galeikan", "match": "#.*$" }] },
+    "declarations": {
+      "patterns": [{
+        "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "storage.type.function.galeikan" },
+          "2": { "name": "entity.name.function.galeikan" }
+        }
+      }, {
+        "match": "\\b(struct|class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "storage.type.struct.galeikan" },
+          "2": { "name": "entity.name.type.galeikan" }
+        }
+      }]
+    },
+    "imports": {
+      "patterns": [{
+        "match": "\\b(import|from)\\s+((?:std|py|pkg)\\.[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_.]*)",
+        "captures": {
+          "1": { "name": "keyword.control.import.galeikan" },
+          "2": { "name": "entity.name.namespace.galeikan" }
+        }
+      }]
+    },
+    "effects": {
+      "patterns": [{
+        "name": "support.type.effect.galeikan",
+        "match": "\\b(?:file\\.read|net\\.connect|process\\.inspect|python\\.exec|case\\.write)\\b"
+      }]
+    },
+    "memberCalls": {
+      "patterns": [{
+        "match": "\\b((?:[A-Za-z_][A-Za-z0-9_]*\\.)+)([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+        "captures": {
+          "1": { "name": "support.namespace.galeikan" },
+          "2": { "name": "entity.name.function.call.galeikan" }
+        }
+      }]
+    },
+    "namespaces": {
+      "patterns": [{
+        "name": "support.namespace.galeikan",
+        "match": "\\b(?:std|py|pkg)\\.[A-Za-z_][A-Za-z0-9_.]*\\b"
+      }]
+    },
+    "typeContexts": {
+      "patterns": [{
+        "match": "(:|->|<|\\.)\\s*([A-Z][A-Za-z0-9_]*)\\b",
+        "captures": {
+          "1": { "name": "keyword.operator.galeikan" },
+          "2": { "name": "entity.name.type.galeikan" }
+        }
+      }]
+    },
+    "types": {
+      "patterns": [
+        { "name": "storage.type.primitive.galeikan", "match": "\\b(?:i64|u64|bool|str|bytes)\\b" },
+        { "name": "entity.name.type.galeikan", "match": "\\b(?:Source|Observation|Finding|Format|Section|Instruction|Disassembly|Region|Regions|Offsets|Diff|HttpResponse|Result|List)\\b" },
+        { "name": "entity.name.type.galeikan", "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*[<,{)])" }
+      ]
+    },
+    "keywords": {
+      "patterns": [{
+        "name": "keyword.control.galeikan",
+        "match": "\\b(?:requires|import|from|as|struct|class|let|var|return|break|continue|for|while|in|if|else|match|and|or|not|print|impact)\\b"
+      }]
+    },
+    "constants": { "patterns": [{ "name": "constant.language.galeikan", "match": "\\b(?:true|false)\\b" }] },
+    "numbers": { "patterns": [{ "name": "constant.numeric.galeikan", "match": "\\b(?:0x[0-9A-Fa-f]+|[0-9]+)(?:u64)?\\b" }] },
+    "calls": { "patterns": [{ "name": "entity.name.function.call.galeikan", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" }] },
+    "operators": { "patterns": [{ "name": "keyword.operator.galeikan", "match": ">>>|<<|>>|->|=>|==|!=|<=|>=|[+*/=<>?~&|^-]" }] }
+  }
+}

@@ -1,0 +1,12 @@
+var index = 0
+var total = 0
+fn twice(value: i64) -> i64 = value * 2
+while index < 4 {
+    total = total + index
+    print if index == 0 { "start" } else { "next" }
+    index = index + 1
+}
+print total
+print 100 / 5 / 2
+print true and not false
+print twice(total)

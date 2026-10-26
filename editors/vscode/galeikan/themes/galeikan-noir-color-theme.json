@@ -1,0 +1,30 @@
+{
+  "name": "Galeikan Eclipse",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#050A10",
+    "editor.foreground": "#E8F3FF",
+    "editorCursor.foreground": "#9CD9FF",
+    "editor.selectionBackground": "#173753",
+    "editor.lineHighlightBackground": "#0B1824",
+    "editorLineNumber.foreground": "#587082",
+    "editorLineNumber.activeForeground": "#D9EDFF",
+    "activityBar.background": "#050A10",
+    "sideBar.background": "#09131C",
+    "statusBar.background": "#12344D",
+    "titleBar.activeBackground": "#050A10",
+    "tab.activeBackground": "#0D202F"
+  },
+  "tokenColors": [
+    { "scope": "comment.line.number-sign.galeikan", "settings": { "foreground": "#7891A2", "fontStyle": "italic" } },
+    { "scope": "string.quoted.double.galeikan", "settings": { "foreground": "#BBE4FF" } },
+    { "scope": "constant.character.escape.galeikan", "settings": { "foreground": "#73C8FF" } },
+    { "scope": "keyword.control.galeikan, storage.type.function.galeikan", "settings": { "foreground": "#69C6FF", "fontStyle": "bold" } },
+    { "scope": "entity.name.function.galeikan, entity.name.function.call.galeikan", "settings": { "foreground": "#FFFFFF" } },
+    { "scope": "storage.type.primitive.galeikan, entity.name.type.galeikan", "settings": { "foreground": "#9CD9FF" } },
+    { "scope": "support.type.effect.galeikan", "settings": { "foreground": "#5DBAFF" } },
+    { "scope": "support.namespace.galeikan, entity.name.namespace.galeikan", "settings": { "foreground": "#B8C8DC" } },
+    { "scope": "constant.numeric.galeikan, constant.language.galeikan", "settings": { "foreground": "#D4E8FF" } },
+    { "scope": "keyword.operator.galeikan", "settings": { "foreground": "#82CBF6" } }
+  ]
+}

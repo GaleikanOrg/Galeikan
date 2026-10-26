@@ -1,0 +1,6 @@
+from helpers import score
+import helpers
+
+print score(20)
+print helpers.set_offset(4)
+print score(20)

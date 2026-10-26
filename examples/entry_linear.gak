@@ -1,0 +1,14 @@
+requires { file.read }
+import std.cli
+import std.binary
+import std.formats
+import std.asm
+
+let source: Source = binary.analyze(cli.arg(0), 67108864)
+let report: Format = formats.probe(source)
+let instructions: Disassembly = asm.linear(report, cli.int(1))
+
+impact instructions
+for instruction in instructions {
+    impact instruction
+}

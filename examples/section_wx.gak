@@ -1,0 +1,19 @@
+requires { file.read, case.write }
+from std.binary import analyze
+from std.cli import arg
+from std.formats import probe, kind, count, section, name, writable, executable
+from std.audit import signal as audit_signal
+from std.iter import range
+
+let report = probe(analyze(arg(0), 536870912))
+let indicator = if kind(report) == "pe" { "pe.section_wx" } else { "elf.load_rwx" }
+if kind(report) == "pe" {
+    for index in range(count(report)) {
+        let part = section(report, index)
+        if writable(part) and executable(part) {
+            print name(part)
+            impact part
+        }
+    }
+}
+impact audit_signal(report, indicator, "absent", "binary.wx")

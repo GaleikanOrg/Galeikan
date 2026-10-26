@@ -1,0 +1,13 @@
+from std.bytes import from_hex, to_hex, concat, repeat, xor, at
+from std.binary import snapshot, deep
+
+let header = from_hex("4d 5a")
+let payload = concat(header, repeat(from_hex("41"), 2))
+let masked = xor(payload, from_hex("20"))
+
+fn unmask(data: bytes) -> bytes = xor(data, from_hex("20"))
+
+print to_hex(payload)
+print at(payload, 0)
+print to_hex(unmask(masked))
+impact deep(snapshot(payload), 0, "u16le")

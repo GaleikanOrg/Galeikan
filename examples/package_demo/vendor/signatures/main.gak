@@ -1,0 +1,5 @@
+import std.binary
+import pkg.markers
+
+fn magic(source: Source) -> Observation = binary.deep(source, 0, "u16be")
+fn label() -> str = markers.label()

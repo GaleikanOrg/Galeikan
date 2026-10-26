@@ -1,0 +1,18 @@
+requires { net.connect }
+import std.cli
+from std.net import request, status, headers, body
+from std.binary import from_hex, size, sha256
+
+let reply: HttpResponse = request(
+    "POST",
+    cli.arg(0),
+    ["Content-Type: application/octet-stream"],
+    from_hex("47 41 4b"),
+    65536,
+    5000
+)
+print status(reply)
+print headers(reply, "content-type")
+print size(body(reply))
+print sha256(body(reply))
+impact reply

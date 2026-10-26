@@ -1,0 +1,11 @@
+import std.binary
+
+let source = binary.snapshot(binary.from_hex("47 41 4c 45 49 4b 41 4e ff 54 00 45 00 53 00 54 00 00"))
+for offset in binary.strings(source, 4, "ascii") {
+    print offset
+    print binary.read_text(source, offset, 64, "ascii")
+}
+for offset in binary.strings(source, 4, "utf16le") {
+    print offset
+    print binary.read_text(source, offset, 64, "utf16le")
+}

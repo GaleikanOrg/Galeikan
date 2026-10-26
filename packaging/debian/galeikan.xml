@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-galeikan">
+    <comment>Galeikan source (.gak)</comment>
+    <glob pattern="*.gak"/>
+    <icon name="text-x-galeikan"/>
+  </mime-type>
+  <mime-type type="text/x-galeikan-script">
+    <comment>Galeikan source (.gaks)</comment>
+    <glob pattern="*.gaks"/>
+    <icon name="text-x-galeikan-script"/>
+  </mime-type>
+  <mime-type type="application/x-galeikan-bytecode">
+    <comment>Galeikan bytecode bundle</comment>
+    <glob pattern="*.gakb"/>
+  </mime-type>
+</mime-info>

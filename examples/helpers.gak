@@ -1,0 +1,7 @@
+import std.binary
+
+# A pure helper written in Galeikan.
+fn signature(source: Source) -> Observation {
+    let value = binary.deep(source, 0, "u16le")
+    return value
+}

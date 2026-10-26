@@ -1,0 +1,15 @@
+requires { file.read }
+from std.cli import arg
+from std.binary import analyze, sha256
+from std.formats import probe, certificate_count, certificate_data, certificate_offset, certificate_size, certificate_revision, certificate_type
+from std.iter import range
+
+let report: Format = probe(analyze(arg(0), 67108864))
+print certificate_count(report)
+for index in range(certificate_count(report)) {
+    print certificate_offset(report, index)
+    print certificate_size(report, index)
+    print certificate_revision(report, index)
+    print certificate_type(report, index)
+    print sha256(certificate_data(report, index))
+}

@@ -1,0 +1,12 @@
+requires { file.read }
+import std.cli
+import std.binary
+import std.formats
+
+let source: Source = binary.analyze(cli.arg(0), 67108864)
+let report: Format = formats.probe(source)
+print formats.kind(report)
+print formats.bits(report)
+print formats.endian(report)
+print formats.arch(report)
+impact report

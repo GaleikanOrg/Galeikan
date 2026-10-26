@@ -1,0 +1,8 @@
+import std.binary
+import std.audit
+
+let source = binary.snapshot(binary.from_hex("00 01 02 03 04 05 06 07 00 00 00 00"))
+let candidate = binary.view(source, 0, 8)
+let score = binary.entropy(candidate)
+impact score
+impact audit.bound(score, 2500, 3500, "entropy.range")

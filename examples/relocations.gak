@@ -1,0 +1,13 @@
+requires { file.read }
+import std.binary
+import std.formats
+import std.iter
+import std.cli
+
+let source = binary.analyze(cli.arg(0), 67108864)
+let report = formats.probe(source)
+
+print formats.relocation_count(report)
+for index in iter.range(formats.relocation_count(report)) {
+    print formats.relocation_summary(report, index)
+}

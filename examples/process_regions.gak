@@ -1,0 +1,23 @@
+requires { process.inspect }
+import std.cli
+import std.process
+import std.binary
+
+fn locate(pid: i64, address: i64) -> Region {
+    let regions: Regions = process.regions(pid)
+    var selected: Region = process.at(regions, 0)
+    for region in regions {
+        selected = if process.start(region) <= address and address < process.end(region) {
+            region
+        } else {
+            selected
+        }
+    }
+    return selected
+}
+
+let region = locate(cli.int(0), cli.int(1))
+let source = process.snapshot_region(region, cli.int(1) - process.start(region), cli.int(2))
+print region
+impact binary.deep(source, 0, "u8")
+print binary.sha256(source)

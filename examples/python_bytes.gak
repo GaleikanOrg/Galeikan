@@ -1,0 +1,9 @@
+requires { python.exec }
+import std.binary
+import py.pyhelpers as helpers
+
+let sample = binary.snapshot(binary.from_hex("47 41 4b 00"))
+let raw = binary.extract(sample, 0, binary.size(sample))
+let reversed = helpers.reverse_bytes(raw)
+print helpers.is_gak_header(raw)
+impact binary.deep(binary.snapshot(reversed), 0, "u16le")

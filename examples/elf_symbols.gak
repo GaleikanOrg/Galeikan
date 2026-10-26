@@ -1,0 +1,12 @@
+requires { file.read }
+from std.cli import arg
+from std.binary import analyze
+from std.formats import probe, symbol_count, symbol_summary
+from std.iter import range
+
+let report: Format = probe(analyze(arg(0), 67108864))
+let count: i64 = symbol_count(report)
+print count
+for index in range(if count < 20 { count } else { 20 }) {
+    print symbol_summary(report, index)
+}

@@ -1,0 +1,12 @@
+import std.binary
+import std.result
+
+fn inspect(data: bytes) -> Result<Observation> {
+    let source = binary.snapshot(data)
+    return binary.deep(source, 2, "u16le")
+}
+
+let short = inspect(binary.from_hex("47 41"))
+print result.is_error(short)
+print short
+impact inspect(binary.from_hex("47 41 4b 00"))?

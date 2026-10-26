@@ -1,0 +1,11 @@
+requires { file.read }
+import std.cli
+import std.binary
+import std.formats
+
+let source = binary.analyze(cli.arg(0), 16777216)
+let report = formats.probe(source)
+let entry = formats.entry_view(report, 1)
+
+impact formats.field(report, "entry")
+impact binary.deep(entry, 0, "u8")

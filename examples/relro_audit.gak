@@ -1,0 +1,10 @@
+requires { file.read, case.write }
+from std.binary import analyze
+from std.formats import probe
+from std.audit import signal as assess
+from std.cli import arg
+
+let report: Format = probe(analyze(arg(0), 67108864))
+let finding: Finding = assess(report, "elf.relro_now", "present", "elf.relro.now")
+
+impact finding

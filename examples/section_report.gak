@@ -1,0 +1,14 @@
+requires { file.read }
+import std.cli
+import std.binary
+import std.formats
+
+let source = binary.analyze(cli.arg(0), 536870912)
+let report = formats.probe(source)
+let section = formats.section(report, cli.int(1))
+
+impact section
+print formats.name(section)
+print formats.address(section)
+print formats.flags(section)
+print binary.sha256(formats.data(section))

@@ -1,0 +1,9 @@
+requires { process.inspect }
+import std.cli
+from std.process import snapshot
+from std.binary import size, sha256
+
+let source: Source = snapshot(cli.int(0), cli.int(1), cli.int(2))
+print source
+print size(source)
+print sha256(source)

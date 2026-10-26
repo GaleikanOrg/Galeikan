@@ -1,0 +1,31 @@
+import std.iter
+
+fn classify(score: i64) -> str {
+    if score >= 90 {
+        return "critical"
+    } else if score >= 50 {
+        return "review"
+    } else {
+        return "low"
+    }
+}
+
+fn find_target(target: i64) -> i64 {
+    if target > 0 {
+        for index in iter.range(5) {
+            if index == target {
+                return index
+            }
+        }
+        return -1
+    } else {
+        return 0
+    }
+}
+
+print classify(95)
+print classify(55)
+print classify(10)
+print find_target(3)
+print find_target(8)
+print find_target(0)

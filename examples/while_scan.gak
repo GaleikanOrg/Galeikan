@@ -1,0 +1,9 @@
+import std.binary
+
+let source = binary.snapshot(binary.from_hex("00 01 4d 5a 90 00"))
+var offset = 0
+while offset + 2 <= binary.size(source) and binary.value(binary.deep(source, offset, "u16be")) != 0x4d5a {
+    offset = offset + 1
+}
+print offset
+impact binary.deep(source, offset, "u16be")

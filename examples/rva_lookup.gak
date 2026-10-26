@@ -1,0 +1,10 @@
+requires { file.read }
+import std.binary
+import std.formats
+import std.cli
+
+let source = binary.analyze(cli.arg(0), 16777216)
+let image = formats.probe(source)
+let view = formats.rva(image, cli.int(1), cli.int(2))
+print view
+print binary.sha256(view)

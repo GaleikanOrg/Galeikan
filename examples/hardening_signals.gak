@@ -1,0 +1,30 @@
+requires { file.read }
+from std.binary import analyze
+from std.formats import probe, signal
+from std.cli import arg
+
+let report: Format = probe(analyze(arg(0), 67108864))
+impact report
+
+print "pe.dynamic_base"
+print signal(report, "pe.dynamic_base")
+print "pe.nx_compat"
+print signal(report, "pe.nx_compat")
+print "pe.high_entropy_va"
+print signal(report, "pe.high_entropy_va")
+print "pe.guard_cf"
+print signal(report, "pe.guard_cf")
+print "pe.section_wx"
+print signal(report, "pe.section_wx")
+print "elf.et_dyn"
+print signal(report, "elf.et_dyn")
+print "elf.gnu_stack_nx"
+print signal(report, "elf.gnu_stack_nx")
+print "elf.gnu_relro"
+print signal(report, "elf.gnu_relro")
+print "elf.bind_now"
+print signal(report, "elf.bind_now")
+print "elf.relro_now"
+print signal(report, "elf.relro_now")
+print "elf.load_rwx"
+print signal(report, "elf.load_rwx")

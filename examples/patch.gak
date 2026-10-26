@@ -1,0 +1,8 @@
+from std.binary import from_hex, snapshot, patch, deep, diff, sha256
+
+let original = snapshot(from_hex("4d 5a 00 00"))
+let variant = patch(original, 1, from_hex("41 42"))
+
+impact deep(variant, 0, "u16le")
+impact diff(original, variant, 10)
+print sha256(variant)

@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "roots": [
+    "signatures"
+  ],
+  "dependencies": {
+    "markers": {
+      "path": "vendor/markers",
+      "version": "0.1.0",
+      "sha256": "97275e0af15c0e5ddb90416106e808d9d1052d8b668f5e1ed449dce2b812d936",
+      "dependencies": []
+    },
+    "signatures": {
+      "path": "vendor/signatures",
+      "version": "1.0.0",
+      "sha256": "86672104e1b4fca35829d625371e4a69f12bd076404544a375d6e84fcf163cdf",
+      "dependencies": [
+        "markers"
+      ]
+    }
+  }
+}

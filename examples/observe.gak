@@ -1,0 +1,6 @@
+# Also requires --allow-read at startup.
+requires { file.read }
+# Output includes offset and type.
+observe "examples/header.txt" at 0 as u8
+observe "examples/header.txt" at 0 as u16le
+observe "examples/header.txt" at 2 as u32le

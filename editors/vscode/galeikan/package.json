@@ -1,0 +1,41 @@
+{
+  "name": "galeikan-language",
+  "displayName": "Galeikan",
+  "description": "Galeikan syntax highlighting and Eclipse color theme",
+  "version": "0.1.0",
+  "publisher": "galeikan",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GaleikanOrg/Galeikan.git"
+  },
+  "homepage": "https://github.com/GaleikanOrg/Galeikan",
+  "bugs": { "url": "https://github.com/GaleikanOrg/Galeikan/issues" },
+  "keywords": ["Galeikan", "security research", "binary analysis", "syntax highlighting"],
+  "galleryBanner": { "color": "#050A10", "theme": "dark" },
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages", "Themes"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "galeikan",
+        "aliases": ["Galeikan", "GaleikanScript", "GaleikanLang"],
+        "extensions": [".gak", ".gaks"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "galeikan",
+        "scopeName": "source.galeikan",
+        "path": "./syntaxes/galeikan.tmLanguage.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "Galeikan Eclipse",
+        "uiTheme": "vs-dark",
+        "path": "./themes/galeikan-noir-color-theme.json"
+      }
+    ]
+  }
+}

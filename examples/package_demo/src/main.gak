@@ -1,0 +1,6 @@
+import std.binary
+import pkg.signatures
+
+let source = binary.snapshot(binary.from_hex("4d 5a"))
+print signatures.label()
+impact signatures.magic(source)

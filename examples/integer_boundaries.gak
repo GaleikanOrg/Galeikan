@@ -1,0 +1,12 @@
+import std.binary
+import std.bytes
+from std.lab import mutate
+from std.list import count
+
+let header: Source = binary.snapshot(bytes.from_hex("47 41 4b 00 00"))
+let candidates: List<Source> = mutate(header, 3, 2, "integer-boundary:u16le", 5)
+
+print count(candidates)
+for candidate in candidates {
+    impact binary.deep(candidate, 3, "u16le")
+}

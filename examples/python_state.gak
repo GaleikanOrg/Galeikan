@@ -1,0 +1,6 @@
+requires { python.exec }
+import py.python_state_helper as state
+
+print state.bump()
+print state.bump()
+print state.calls

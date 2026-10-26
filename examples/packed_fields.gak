@@ -1,0 +1,11 @@
+from std.bytes import pack, concat, to_hex
+from std.binary import snapshot, deep, value
+
+fn encode_length(length: i64) -> bytes = pack(length, "u16be")
+
+let header = concat(encode_length(4660), pack(305419896, "u32le"))
+let source = snapshot(header)
+
+print to_hex(header)
+print value(deep(source, 0, "u16be"))
+print value(deep(source, 2, "u32le"))

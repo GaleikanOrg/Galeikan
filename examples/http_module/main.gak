@@ -1,0 +1,8 @@
+requires { net.connect }
+import std.cli
+import client
+from std.binary import size, sha256
+
+let source: Source = client.get(cli.arg(0))
+print size(source)
+print sha256(source)

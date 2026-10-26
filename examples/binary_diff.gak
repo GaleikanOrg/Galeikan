@@ -1,0 +1,10 @@
+import std.binary
+
+let baseline = binary.snapshot(binary.from_hex("4d 5a 00 00"))
+let candidate = binary.snapshot(binary.from_hex("4d 5a 90 00"))
+let header = binary.view(candidate, 0, 2)
+
+impact binary.deep(header, 0, "u16le")
+impact binary.diff(baseline, candidate, 16)
+print binary.extract(candidate, 2, 2)
+print binary.value(binary.deep(header, 0, "u16le"))

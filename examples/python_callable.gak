@@ -1,0 +1,11 @@
+import std.binary
+import helpers as h
+
+fn twice(value: i64) -> i64 = value * 2
+
+fn inspect(data: bytes) -> Observation {
+    let source = binary.snapshot(data)
+    return h.signature(source)
+}
+
+fn echo(data: bytes) -> bytes = data

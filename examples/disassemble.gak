@@ -1,0 +1,10 @@
+import std.binary
+import std.asm
+
+let source = binary.snapshot(binary.from_hex("90 e8 02 00 00 00 90 90"))
+var cursor = 0
+while cursor < binary.size(source) {
+    let instruction: Instruction = asm.decode(source, cursor, 64)
+    impact instruction
+    cursor = asm.next(instruction)
+}

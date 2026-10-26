@@ -1,0 +1,7 @@
+requires { case.write }
+import std.binary
+import std.audit
+
+let source: Source = binary.snapshot(binary.from_hex("47 41 4b 00"))
+let signature: Observation = binary.deep(source, 0, "u16le")
+impact audit.expect(signature, 16711, "header.signature")

@@ -1,0 +1,1 @@
+fn adjust(value: i64) -> i64 = value + 2

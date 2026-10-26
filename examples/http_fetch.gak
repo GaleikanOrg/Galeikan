@@ -1,0 +1,9 @@
+requires { net.connect }
+import std.cli
+from std.net import fetch
+from std.binary import size, sha256
+
+let response = fetch(cli.arg(0), 65536, 5000)
+print response
+print size(response)
+print sha256(response)

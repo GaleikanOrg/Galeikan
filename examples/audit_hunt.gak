@@ -1,0 +1,7 @@
+requires { file.read, case.write }
+from std.cli import arg
+from std.binary import analyze
+from std.audit import hunt
+
+let source: Source = analyze(arg(0), 67108864)
+impact hunt(source, "hex:4d 5a", "pe.header.marker")

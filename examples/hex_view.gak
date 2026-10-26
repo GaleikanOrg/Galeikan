@@ -1,0 +1,9 @@
+import std.binary
+from std.binary import hexdump
+
+let source: Source = binary.snapshot(binary.from_hex("47 41 4b 00 41 42 43 7f"))
+let view: Source = binary.view(source, 4, 3)
+
+print hexdump(source)
+print hexdump(source, 3, 4)
+print hexdump(view)

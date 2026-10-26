@@ -1,0 +1,10 @@
+requires { python.exec }
+from py.list_python_helper import scale, markers
+from std.list import count
+
+let source: List<i64> = markers
+let doubled: List<i64> = scale(source, 2)
+
+print count(doubled)
+print doubled[0]
+print doubled[1]

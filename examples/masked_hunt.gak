@@ -1,0 +1,6 @@
+import std.binary
+
+let source = binary.snapshot(binary.from_hex("4d 5a 90 01 4d 5a 80 02"))
+for offset in binary.hunt(source, "hex:4d 5a ?0 ??") {
+    impact binary.deep(source, offset, "u16be")
+}

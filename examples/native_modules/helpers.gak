@@ -1,0 +1,8 @@
+var offset = 2
+
+fn score(n: i64) -> i64 = n * 2 + offset
+
+fn set_offset(n: i64) -> i64 {
+    offset = n
+    return offset
+}

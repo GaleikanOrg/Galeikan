@@ -1,0 +1,13 @@
+requires { process.inspect }
+import std.cli
+import std.iter
+import std.process
+
+let images: Regions = process.images(cli.int(0))
+let limit: i64 = if process.count(images) < 10 { process.count(images) } else { 10 }
+print process.count(images)
+for index in iter.range(limit) {
+    let image: Region = process.at(images, index)
+    print process.label(image)
+    print process.start(image)
+}

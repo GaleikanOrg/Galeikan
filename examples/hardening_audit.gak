@@ -1,0 +1,13 @@
+requires { file.read, case.write }
+from std.binary import analyze
+from std.formats import probe, signal
+from std.audit import signal as assess
+from std.cli import arg
+
+let report: Format = probe(analyze(arg(0), 67108864))
+let finding: Finding = if signal(report, "pe.nx_compat") == "not_applicable" {
+    assess(report, "elf.gnu_stack_nx", "present", "elf.stack.nonexec")
+} else {
+    assess(report, "pe.nx_compat", "present", "pe.nx.compat")
+}
+impact finding

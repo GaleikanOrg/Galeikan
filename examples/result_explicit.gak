@@ -1,0 +1,15 @@
+from std.binary import from_hex, snapshot, size, deep
+from std.result import ok, fail, message
+
+fn require_marker(data: bytes) -> Result<Observation> {
+    let source: Source = snapshot(data)
+    return if size(source) < 3 {
+        fail("marker needs at least three bytes")
+    } else {
+        ok(deep(source, 0, "u8"))
+    }
+}
+
+let short: Result<Observation> = require_marker(from_hex("47"))
+print message(short)
+impact require_marker(from_hex("47 41 4b"))?

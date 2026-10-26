@@ -1,0 +1,16 @@
+from std.list import append, count
+from list_workflow_helper import normalize
+
+fn first(values: List<i64>) -> i64 = values[0]
+
+let baseline: List<i64> = [4, 8]
+let values: List<i64> = append(baseline, normalize(11))
+var total: i64 = 0
+
+for value in values {
+    total = total + value
+}
+
+print count(values)
+print first(values)
+print total

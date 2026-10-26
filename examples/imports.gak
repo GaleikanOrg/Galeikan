@@ -1,0 +1,12 @@
+requires { file.read }
+import std.binary
+import std.formats
+import std.iter
+import std.cli
+
+let source = binary.analyze(cli.arg(0), 16777216)
+let report = formats.probe(source)
+print formats.import_count(report)
+for index in iter.range(formats.import_count(report)) {
+    print formats.import_summary(report, index)
+}

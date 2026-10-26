@@ -1,0 +1,12 @@
+requires { case.write }
+from std.lab import mutate
+from std.list import count
+import std.binary
+
+let original: Source = binary.snapshot(binary.from_hex("47 41 4b 00"))
+let variants: List<Source> = mutate(original, 1, 2, "byte-boundary", 4)
+
+print count(variants)
+for candidate in variants {
+    impact binary.deep(candidate, 1, "u8")
+}

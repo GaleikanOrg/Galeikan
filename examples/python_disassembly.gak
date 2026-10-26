@@ -1,0 +1,9 @@
+import std.binary
+import std.formats
+import std.asm
+
+fn entry(data: bytes) -> Instruction = asm.entry(formats.probe(binary.snapshot(data)))
+
+fn linear(data: bytes, count: i64) -> Disassembly = asm.linear(formats.probe(binary.snapshot(data)), count)
+
+fn instruction(data: bytes, count: i64, index: i64) -> Instruction = asm.at(asm.linear(formats.probe(binary.snapshot(data)), count), index)

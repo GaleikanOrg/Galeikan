@@ -1,0 +1,5 @@
+import std.binary
+
+let source = binary.snapshot(binary.from_hex("4d 5a 90 00"))
+let has_header = binary.size(source) >= 2 and binary.value(binary.deep(source, 0, "u16be")) == 0x4d5a
+print if has_header and not false { "MZ header present" } else { "unknown header" }

@@ -1,0 +1,9 @@
+requires { net.connect }
+import std.cli
+import std.net
+import std.binary
+
+let request = binary.from_hex(cli.arg(2))
+let response = net.exchange(cli.arg(0), cli.int(1), request, 65536, 3000)
+print response
+print binary.sha256(response)

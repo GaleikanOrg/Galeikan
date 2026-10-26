@@ -1,0 +1,21 @@
+requires { file.read }
+from std.binary import analyze
+from std.formats import (
+    probe,
+    delay_dependency_count,
+    delay_dependency_name,
+    delay_import_count,
+    delay_import_summary,
+)
+from std.iter import range
+from std.cli import arg
+
+let report = probe(analyze(arg(0), 16777216))
+print delay_dependency_count(report)
+for index in range(delay_dependency_count(report)) {
+    print delay_dependency_name(report, index)
+}
+print delay_import_count(report)
+for index in range(delay_import_count(report)) {
+    print delay_import_summary(report, index)
+}

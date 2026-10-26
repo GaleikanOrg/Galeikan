@@ -1,0 +1,9 @@
+requires { net.connect }
+import std.cli
+import std.net
+import std.binary
+
+let request = binary.from_hex(cli.arg(2))
+let response = net.datagram(cli.arg(0), cli.int(1), request, 4096, 3000)
+print response
+print binary.sha256(response)

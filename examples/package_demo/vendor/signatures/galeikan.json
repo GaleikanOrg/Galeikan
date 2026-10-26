@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "package": { "name": "signatures", "version": "1.0.0" },
+  "dependencies": {
+    "markers": { "path": "vendor/markers", "version": "0.1.0" }
+  }
+}

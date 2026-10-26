@@ -1,0 +1,11 @@
+requires { file.read }
+import std.cli
+import std.binary
+import std.formats
+import std.asm
+
+let source: Source = binary.analyze(cli.arg(0), 67108864)
+let report: Format = formats.probe(source)
+let instruction: Instruction = asm.entry(report)
+
+impact instruction

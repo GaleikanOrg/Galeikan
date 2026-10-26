@@ -1,0 +1,13 @@
+requires { case.write }
+import std.binary
+import std.bytes
+
+let original = binary.snapshot(bytes.from_hex("41 42 43 44"))
+let inserted = binary.splice(original, 2, 0, bytes.from_hex("ff 00"))
+let removed = binary.splice(inserted, 1, 3, bytes.from_hex(""))
+let result = binary.splice(removed, 3, 0, bytes.from_hex("45"))
+
+print bytes.to_hex(binary.extract(inserted, 0, binary.size(inserted)))
+print bytes.to_hex(binary.extract(removed, 0, binary.size(removed)))
+print bytes.to_hex(binary.extract(result, 0, binary.size(result)))
+impact binary.deep(result, 0, "u8")

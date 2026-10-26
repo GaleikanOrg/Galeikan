@@ -1,0 +1,24 @@
+var findings: i64 = 0
+
+fn classify(score: i64) -> i64 {
+    var level: i64 = 0
+    if score >= 90 {
+        level = 2
+    } else if score >= 50 {
+        level = 1
+    } else {
+        level = 0
+    }
+    return level
+}
+
+if classify(95) == 2 {
+    let label: str = "high"
+    print label
+    findings = findings + 1
+} else {
+    print "low"
+}
+print findings
+print classify(55)
+print classify(10)

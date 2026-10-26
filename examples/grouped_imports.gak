@@ -1,0 +1,8 @@
+from std.bytes import (
+    from_hex,
+    to_hex,
+    xor,
+)
+
+let masked = from_hex("6d 7a")
+print to_hex(xor(masked, from_hex("20")))

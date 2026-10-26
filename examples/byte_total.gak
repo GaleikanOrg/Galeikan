@@ -1,0 +1,12 @@
+import std.binary
+
+fn byte_total(data: bytes) -> i64 {
+    var total = 0
+    for byte in data {
+        total = total + byte
+    }
+    return total
+}
+
+let sample = binary.from_hex("47 41 4b 00")
+print byte_total(sample)

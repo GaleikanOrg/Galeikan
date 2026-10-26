@@ -1,0 +1,9 @@
+requires { file.read }
+import std.binary
+import helpers
+
+let source = binary.analyze("header.txt", 4096)
+let signature = helpers.signature(source)
+impact signature
+print binary.sha256(source)
+print binary.hunt(source, "GA")

@@ -1,0 +1,5 @@
+requires { python.exec }
+from py.python_settings import threshold as baseline, verdict
+
+let score: i64 = baseline + 2
+print verdict(score)

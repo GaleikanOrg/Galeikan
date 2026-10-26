@@ -1,0 +1,9 @@
+requires { file.read }
+from std.cli import arg
+from std.binary import analyze, size, sha256
+from std.formats import probe, overlay
+
+let source: Source = analyze(arg(0), 67108864)
+let tail: Source = overlay(probe(source))
+print size(tail)
+print sha256(tail)

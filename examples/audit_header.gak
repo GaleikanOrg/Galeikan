@@ -1,0 +1,9 @@
+import std.binary
+import std.audit
+
+let source = binary.snapshot(binary.from_hex("10 00 47 41"))
+let header_length = binary.deep(source, 0, "u16le")
+let finding = audit.bound(header_length, 0, 12, "header.length")
+
+impact finding
+print audit.failed(finding)

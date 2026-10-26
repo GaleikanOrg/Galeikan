@@ -1,0 +1,10 @@
+requires { process.inspect }
+import std.cli
+import std.process
+from std.list import count
+
+let paths: List<str> = process.modules(cli.int(0))
+print count(paths)
+for path in paths {
+    print path
+}

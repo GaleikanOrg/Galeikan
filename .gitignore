@@ -1,0 +1,10 @@
+/build/
+/target/
+/dist/
+__pycache__/
+*.pyc
+/python/build/
+*.egg-info/
+/site/
+/docs/legacy-de/
+/AGENTS.md

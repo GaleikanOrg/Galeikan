@@ -1,0 +1,10 @@
+requires { file.read }
+from std.cli import arg
+from std.binary import analyze
+from std.formats import probe, needed_count, needed_name
+from std.iter import range as indices
+
+let report = probe(analyze(arg(0), 16777216))
+for index in indices(needed_count(report)) {
+    print needed_name(report, index)
+}
