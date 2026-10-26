@@ -363,7 +363,7 @@ $udpProcess = Start-Process -FilePath "$udpNativeSource.exe" -ArgumentList @('--
 if ($udpProcess.ExitCode -eq 0 -or (Get-Content -LiteralPath $udpStderr -Raw) -notlike '*request exceeds 65507 bytes*') {
     throw 'Installed native UDP request limit was not enforced'
 }
-Remove-Item -LiteralPath $udpNativeSource, "$udpNativeSource.exe", "$udpNativeSource.win64.S", "$udpNativeSource.native_file.c", "$udpNativeSource.native_net.c", $udpStdout, $udpStderr
+Remove-SmokeFiles -Paths @($udpNativeSource, "$udpNativeSource.exe", "$udpNativeSource.win64.S", "$udpNativeSource.native_file.c", "$udpNativeSource.native_net.c", $udpStdout, $udpStderr)
 & $binary check (Join-Path $smokeRoot 'examples\http_fetch.gak')
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI does not recognize the HTTP API' }
 & $binary check (Join-Path $smokeRoot 'examples\http_request.gak')
