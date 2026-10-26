@@ -6,6 +6,8 @@ Galeikan is a hybrid programming language for security research, binary inspecti
 
 **Status: 0.1.0 development preview.** Native feature coverage is narrower than interpreter coverage. The packages are unsigned, and effect declarations do not provide an operating-system sandbox.
 
+Visit the [Galeikan website](https://galeikanorg.github.io/Galeikan/) for downloads, technical details, and FAQs.
+
 ## Get started
 
 Download the Windows x64 installer, Debian 13 amd64 package, or Visual Studio Code syntax extension from [Releases](https://github.com/GaleikanOrg/Galeikan/releases). The Windows and Debian packages use the public product name **Galeikan**. Both include the command-line tool and English quickstart material.
