@@ -5693,9 +5693,10 @@ fn signed_observations_match_ast_vm_and_native() {
     let s = Sandbox::new();
     let script = s.write(
         "signed-observations.gak",
-        r#"from std.binary import from_hex, snapshot, deep, signed_value, entropy
+        r#"from std.binary import from_hex, snapshot, deep, value, value_u64, signed_value, entropy
 from std.result import is_error, message
 fn signed(data: str, decoder: str) -> i64 = signed_value(deep(snapshot(from_hex(data)), 0, decoder))
+fn read(data: str, decoder: str) -> i64 = value(deep(snapshot(from_hex(data)), 0, decoder))
 fn invalid() -> Result<i64> = signed_value(entropy(snapshot(from_hex("41"))))
 print signed("ff", "u8")
 print signed("80", "u8")
@@ -5706,6 +5707,15 @@ print signed("80 00 00 00", "u32be")
 print signed("00 00 00 00 00 00 00 80", "u64le")
 print signed("80 00 00 00 00 00 00 00", "u64be")
 print signed("7f ff ff ff ff ff ff ff", "u64be")
+print read("ff", "i8")
+print read("00 80", "i16le")
+print read("80 00", "i16be")
+print read("00 00 00 80", "i32le")
+print read("80 00 00 00", "i32be")
+print read("00 00 00 00 00 00 00 80", "i64le")
+print read("80 00 00 00 00 00 00 00", "i64be")
+print signed("ff fe", "i16be")
+print value_u64(deep(snapshot(from_hex("ff fe")), 0, "i16be"))
 print is_error(invalid())
 print message(invalid())
 "#,
@@ -5731,7 +5741,7 @@ print message(invalid())
         String::from_utf8_lossy(&vm.stderr)
     );
     assert_eq!(ast.stdout, vm.stdout);
-    assert_eq!(vm.stdout, b"-1\n-128\n-32768\n-32768\n-2147483648\n-2147483648\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\ntrue\nObservation is not an unsigned integer field\n");
+    assert_eq!(vm.stdout, b"-1\n-128\n-32768\n-32768\n-2147483648\n-2147483648\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-1\n-32768\n-32768\n-2147483648\n-2147483648\n-9223372036854775808\n-9223372036854775808\n-2\n65534\ntrue\nObservation is not an integer field\n");
 
     let built = s.compile(&script);
     assert!(
@@ -5794,7 +5804,7 @@ fn native_binary_deep_errors_match_vm() {
     let s = Sandbox::new();
     for (name, expression) in [
         ("deep-negative.gak", "deep(root, -1, \"u8\")"),
-        ("deep-decoder.gak", "deep(root, 0, \"i32le\")"),
+        ("deep-decoder.gak", "deep(root, 0, \"i128le\")"),
         ("deep-bounds.gak", "deep(root, 1, \"u16le\")"),
         ("deep-large.gak", "deep(root, 9223372036854775807, \"u8\")"),
         (

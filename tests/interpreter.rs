@@ -4907,9 +4907,9 @@ fn packed_fields_round_trip_in_ast_vm_bundle_and_python_call() {
     let s = Sandbox::new();
     let script = s.write(
         "packed.gak",
-        "from std.bytes import pack, concat, to_hex\nfrom std.binary import snapshot, deep, value, signed_value\nfn encode(n: i64) -> bytes = pack(n, \"u32le\")\nlet payload = concat(pack(4660, \"u16be\"), encode(305419896))\nprint to_hex(payload)\nprint value(deep(snapshot(payload), 0, \"u16be\"))\nprint value(deep(snapshot(payload), 2, \"u32le\"))\nprint to_hex(pack(-2, \"i16be\"))\nprint signed_value(deep(snapshot(pack(-2, \"i16be\")), 0, \"u16be\"))\n",
+        "from std.bytes import pack, concat, to_hex\nfrom std.binary import snapshot, deep, value, value_u64\nfn encode(n: i64) -> bytes = pack(n, \"u32le\")\nlet payload = concat(pack(4660, \"u16be\"), encode(305419896))\nprint to_hex(payload)\nprint value(deep(snapshot(payload), 0, \"u16be\"))\nprint value(deep(snapshot(payload), 2, \"u32le\"))\nprint to_hex(pack(-2, \"i16be\"))\nprint value(deep(snapshot(pack(-2, \"i16be\")), 0, \"i16be\"))\nprint value_u64(deep(snapshot(pack(-2, \"i16be\")), 0, \"i16be\"))\n",
     );
-    let expected = "123478563412\n4660\n305419896\nfffe\n-2\n";
+    let expected = "123478563412\n4660\n305419896\nfffe\n-2\n65534\n";
     for engine in ["ast", "vm"] {
         let out = s.run_engine(&script, engine, false, &[]);
         assert!(out.status.success(), "{}", stderr(&out));

@@ -4711,6 +4711,13 @@ impl Runtime {
                     "u32be" => (4, "u32be"),
                     "u64le" => (8, "u64le"),
                     "u64be" => (8, "u64be"),
+                    "i8" => (1, "i8"),
+                    "i16le" => (2, "i16le"),
+                    "i16be" => (2, "i16be"),
+                    "i32le" => (4, "i32le"),
+                    "i32be" => (4, "i32be"),
+                    "i64le" => (8, "i64le"),
+                    "i64be" => (8, "i64be"),
                     _ => return Err("unknown decoder".into()),
                 };
                 let offset = usize::try_from(offset).map_err(|_| "offset too large")?;
@@ -4797,18 +4804,27 @@ impl Runtime {
                     replacement,
                 )?)))
             }
-            ("value", [Value::Observation(observation)]) => Ok(Value::Int(
-                i64::try_from(observation.value)
-                    .map_err(|_| "Observation value does not fit i64")?,
-            )),
+            ("value", [Value::Observation(observation)]) => {
+                let value = if matches!(
+                    observation.decoder,
+                    "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+                ) {
+                    let shift = 64 - observation.width * 8;
+                    ((observation.value << shift) as i64) >> shift
+                } else {
+                    i64::try_from(observation.value)
+                        .map_err(|_| "Observation value does not fit i64")?
+                };
+                Ok(Value::Int(value))
+            }
             ("value_u64", [Value::Observation(observation)]) => Ok(Value::UInt(observation.value)),
             ("signed_value", [Value::Observation(observation)]) => {
                 let width = match observation.decoder {
-                    "u8" => 1,
-                    "u16le" | "u16be" => 2,
-                    "u32le" | "u32be" => 4,
-                    "u64le" | "u64be" => 8,
-                    _ => return Err("Observation is not an unsigned integer field".into()),
+                    "u8" | "i8" => 1,
+                    "u16le" | "u16be" | "i16le" | "i16be" => 2,
+                    "u32le" | "u32be" | "i32le" | "i32be" => 4,
+                    "u64le" | "u64be" | "i64le" | "i64be" => 8,
+                    _ => return Err("Observation is not an integer field".into()),
                 };
                 let shift = 64 - width * 8;
                 Ok(Value::Int(((observation.value << shift) as i64) >> shift))

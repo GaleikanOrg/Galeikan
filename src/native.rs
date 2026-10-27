@@ -4193,6 +4193,13 @@ impl Codegen {
                     ("u32be", 4, true),
                     ("u64le", 8, false),
                     ("u64be", 8, true),
+                    ("i8", 1, false),
+                    ("i16le", 2, false),
+                    ("i16be", 2, true),
+                    ("i32le", 4, false),
+                    ("i32be", 4, true),
+                    ("i64le", 8, false),
+                    ("i64be", 8, true),
                 ] {
                     let next = self.label();
                     let literal = self.literal(format)?;
@@ -4217,7 +4224,7 @@ impl Codegen {
                 if self.expr(observation, scope)? != Scalar::Observation {
                     return Err(format!("binary.{name} expects Observation"));
                 }
-                if name == "signed_value" {
+                if matches!(name, "value" | "signed_value") {
                     let slot = self.reserve_slot()?;
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     let signed8 = self.label();
@@ -4226,23 +4233,43 @@ impl Codegen {
                     let signed64 = self.label();
                     let done = self.label();
                     for (decoder, target) in [
-                        ("u8", &signed8),
-                        ("u16le", &signed16),
-                        ("u16be", &signed16),
-                        ("u32le", &signed32),
-                        ("u32be", &signed32),
-                        ("u64le", &signed64),
-                        ("u64be", &signed64),
+                        ("i8", &signed8),
+                        ("i16le", &signed16),
+                        ("i16be", &signed16),
+                        ("i32le", &signed32),
+                        ("i32be", &signed32),
+                        ("i64le", &signed64),
+                        ("i64be", &signed64),
                     ] {
                         let literal = self.literal(decoder)?;
                         writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [{}+24]\n    lea {}, [rip+{literal}]\n    call gak_str_eq\n    test eax, eax\n    jnz {target}", self.arg0(), slot * 8, self.arg0(), self.arg0(), self.arg1()).unwrap();
                     }
-                    let invalid = self.literal("Observation is not an unsigned integer field")?;
-                    writeln!(self.code, "    lea rax, [rip+{invalid}]\n    jmp gak_analyze_error_dynamic\n{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
+                    if name == "signed_value" {
+                        for (decoder, target) in [
+                            ("u8", &signed8),
+                            ("u16le", &signed16),
+                            ("u16be", &signed16),
+                            ("u32le", &signed32),
+                            ("u32be", &signed32),
+                            ("u64le", &signed64),
+                            ("u64be", &signed64),
+                        ] {
+                            let literal = self.literal(decoder)?;
+                            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [{}+24]\n    lea {}, [rip+{literal}]\n    call gak_str_eq\n    test eax, eax\n    jnz {target}", self.arg0(), slot * 8, self.arg0(), self.arg0(), self.arg1()).unwrap();
+                        }
+                        let invalid = self.literal("Observation is not an integer field")?;
+                        writeln!(
+                            self.code,
+                            "    lea rax, [rip+{invalid}]\n    jmp gak_analyze_error_dynamic"
+                        )
+                        .unwrap();
+                    } else {
+                        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    test rax, rax\n    js gak_observation_value_range\n    jmp {done}", slot * 8).unwrap();
+                    }
+                    writeln!(self.code, "{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
                     return Ok(Scalar::Int);
                 }
                 match name {
-                    "value" => self.code.push_str("    mov rax, QWORD PTR [rax+32]\n    test rax, rax\n    js gak_observation_value_range\n"),
                     "value_u64" => self.code.push_str("    mov rax, QWORD PTR [rax+32]\n"),
                     "offset" => self.code.push_str("    mov rax, QWORD PTR [rax+8]\n"),
                     "width" => self.code.push_str("    mov rax, QWORD PTR [rax+16]\n"),
