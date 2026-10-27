@@ -1402,11 +1402,7 @@ impl Codegen {
                                 mutable: false,
                             },
                         );
-                        arguments.push(Expr {
-                            kind: ExprKind::Var(temporary),
-                            line: 0,
-                            col: 0,
-                        });
+                        arguments.push(Expr::variable(temporary, 0, 0));
                     }
                     let actual = self.function_call_resolved(
                         (module.path.clone(), name.clone()),
@@ -3029,11 +3025,7 @@ impl Codegen {
                 })
                 .is_some();
             if caller_scope.contains_key(first) || imported_value {
-                let receiver = Expr {
-                    kind: ExprKind::Var(receiver_path.to_owned()),
-                    line: 0,
-                    col: 0,
-                };
+                let receiver = Expr::variable(receiver_path.to_owned(), 0, 0);
                 return self.method_call(&receiver, method, args, caller_scope);
             }
         }
@@ -4887,11 +4879,7 @@ impl Codegen {
             },
         );
         let mut method_args = Vec::with_capacity(args.len() + 1);
-        method_args.push(Expr {
-            kind: ExprKind::Var(temporary),
-            line: receiver.line,
-            col: receiver.col,
-        });
+        method_args.push(Expr::variable(temporary, receiver.line, receiver.col));
         method_args.extend_from_slice(args);
         self.function_call_resolved(key, method, &method_args, &method_scope)
     }

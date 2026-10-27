@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+const MAX_EXPR_DEPTH: usize = 128;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     Ident(String),
@@ -384,6 +386,56 @@ pub struct Expr {
     pub kind: ExprKind,
     pub line: usize,
     pub col: usize,
+    depth: u8,
+}
+
+impl Expr {
+    fn new(kind: ExprKind, line: usize, col: usize) -> Result<Self, String> {
+        let child_depth = match &kind {
+            ExprKind::Int(_)
+            | ExprKind::UInt(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::Var(_) => 0,
+            ExprKind::List(items) | ExprKind::Call(_, items) => {
+                items.iter().map(|item| item.depth).max().unwrap_or(0)
+            }
+            ExprKind::Index(left, right) | ExprKind::Binary(left, _, right) => {
+                left.depth.max(right.depth)
+            }
+            ExprKind::Field(value, _)
+            | ExprKind::Neg(value)
+            | ExprKind::BitNot(value)
+            | ExprKind::Not(value)
+            | ExprKind::Try(value) => value.depth,
+            ExprKind::MethodCall(receiver, _, args) => receiver
+                .depth
+                .max(args.iter().map(|arg| arg.depth).max().unwrap_or(0)),
+            ExprKind::If(condition, yes, no) => condition.depth.max(yes.depth).max(no.depth),
+            ExprKind::Match(subject, arms, default) => subject
+                .depth
+                .max(default.depth)
+                .max(arms.iter().map(|(_, value)| value.depth).max().unwrap_or(0)),
+        };
+        if usize::from(child_depth) >= MAX_EXPR_DEPTH {
+            return Err(format!("{line}:{col}: expression nesting too deep"));
+        }
+        Ok(Self {
+            kind,
+            line,
+            col,
+            depth: child_depth + 1,
+        })
+    }
+
+    pub(crate) fn variable(name: String, line: usize, col: usize) -> Self {
+        Self {
+            kind: ExprKind::Var(name),
+            line,
+            col,
+            depth: 1,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub enum ExprKind {
@@ -1012,7 +1064,7 @@ impl Parser {
         }
     }
     fn expr(&mut self, min_prec: u8) -> Result<Expr, String> {
-        if self.expr_depth >= 128 {
+        if self.expr_depth >= MAX_EXPR_DEPTH {
             return Err(self.error("expression nesting too deep"));
         }
         self.expr_depth += 1;
@@ -1023,69 +1075,35 @@ impl Parser {
     fn expr_inner(&mut self, min_prec: u8) -> Result<Expr, String> {
         let token = self.bump();
         let mut left = match token.kind {
-            TokenKind::Number(n) => Expr {
-                kind: ExprKind::Int(n),
-                line: token.line,
-                col: token.col,
-            },
-            TokenKind::Unsigned(n) => Expr {
-                kind: ExprKind::UInt(n),
-                line: token.line,
-                col: token.col,
-            },
-            TokenKind::String(s) => Expr {
-                kind: ExprKind::Str(s),
-                line: token.line,
-                col: token.col,
-            },
-            TokenKind::Ident(name) if name == "true" || name == "false" => Expr {
-                kind: ExprKind::Bool(name == "true"),
-                line: token.line,
-                col: token.col,
-            },
+            TokenKind::Number(n) => Expr::new(ExprKind::Int(n), token.line, token.col)?,
+            TokenKind::Unsigned(n) => Expr::new(ExprKind::UInt(n), token.line, token.col)?,
+            TokenKind::String(s) => Expr::new(ExprKind::Str(s), token.line, token.col)?,
+            TokenKind::Ident(name) if name == "true" || name == "false" => {
+                Expr::new(ExprKind::Bool(name == "true"), token.line, token.col)?
+            }
             TokenKind::Ident(name) if name == "if" => self.if_expression(token.line, token.col)?,
             TokenKind::Ident(name) if name == "match" => {
                 self.match_expression(token.line, token.col)?
             }
             TokenKind::Ident(name) if name == "not" => {
                 let inner = self.expr(3)?;
-                Expr {
-                    kind: ExprKind::Not(Box::new(inner)),
-                    line: token.line,
-                    col: token.col,
-                }
+                Expr::new(ExprKind::Not(Box::new(inner)), token.line, token.col)?
             }
             TokenKind::Ident(name) => {
                 if self.current().kind == TokenKind::LParen {
                     let args = self.call_args()?;
-                    Expr {
-                        kind: ExprKind::Call(name, args),
-                        line: token.line,
-                        col: token.col,
-                    }
+                    Expr::new(ExprKind::Call(name, args), token.line, token.col)?
                 } else {
-                    Expr {
-                        kind: ExprKind::Var(name),
-                        line: token.line,
-                        col: token.col,
-                    }
+                    Expr::variable(name, token.line, token.col)
                 }
             }
             TokenKind::Minus => {
                 let inner = self.expr(11)?;
-                Expr {
-                    kind: ExprKind::Neg(Box::new(inner)),
-                    line: token.line,
-                    col: token.col,
-                }
+                Expr::new(ExprKind::Neg(Box::new(inner)), token.line, token.col)?
             }
             TokenKind::Tilde => {
                 let inner = self.expr(11)?;
-                Expr {
-                    kind: ExprKind::BitNot(Box::new(inner)),
-                    line: token.line,
-                    col: token.col,
-                }
+                Expr::new(ExprKind::BitNot(Box::new(inner)), token.line, token.col)?
             }
             TokenKind::LParen => {
                 self.skip_newlines();
@@ -1110,11 +1128,7 @@ impl Parser {
                     self.skip_newlines();
                 }
                 self.expect(TokenKind::RBracket)?;
-                Expr {
-                    kind: ExprKind::List(items),
-                    line: token.line,
-                    col: token.col,
-                }
+                Expr::new(ExprKind::List(items), token.line, token.col)?
             }
             _ => return Err(format!("{}:{}: expression expected", token.line, token.col)),
         };
@@ -1134,11 +1148,7 @@ impl Parser {
                     } else {
                         ExprKind::Field(Box::new(left), field.to_string())
                     };
-                    left = Expr {
-                        kind,
-                        line: token.line,
-                        col: token.col,
-                    };
+                    left = Expr::new(kind, token.line, token.col)?;
                 }
                 continue;
             }
@@ -1146,22 +1156,18 @@ impl Parser {
                 self.bump();
                 let index = self.expr(0)?;
                 self.expect(TokenKind::RBracket)?;
-                left = Expr {
-                    kind: ExprKind::Index(Box::new(left), Box::new(index)),
-                    line: token.line,
-                    col: token.col,
-                };
+                left = Expr::new(
+                    ExprKind::Index(Box::new(left), Box::new(index)),
+                    token.line,
+                    token.col,
+                )?;
                 continue;
             }
             if self.current().kind == TokenKind::Question {
                 self.bump();
                 let line = left.line;
                 let col = left.col;
-                left = Expr {
-                    kind: ExprKind::Try(Box::new(left)),
-                    line,
-                    col,
-                };
+                left = Expr::new(ExprKind::Try(Box::new(left)), line, col)?;
                 continue;
             }
             let (prec, op) = match self.current().kind {
@@ -1192,11 +1198,11 @@ impl Parser {
             let right = self.expr(prec + 1)?;
             let line = left.line;
             let col = left.col;
-            left = Expr {
-                kind: ExprKind::Binary(Box::new(left), op, Box::new(right)),
+            left = Expr::new(
+                ExprKind::Binary(Box::new(left), op, Box::new(right)),
                 line,
                 col,
-            };
+            )?;
         }
         Ok(left)
     }
@@ -1234,7 +1240,7 @@ impl Parser {
         self.expect(TokenKind::Ident("else".into()))?;
         self.skip_newlines();
         let when_false = if self.current().kind == TokenKind::Ident("if".into()) {
-            if self.expr_depth >= 128 {
+            if self.expr_depth >= MAX_EXPR_DEPTH {
                 return Err(self.error("expression nesting too deep"));
             }
             let next = self.bump();
@@ -1250,15 +1256,15 @@ impl Parser {
             self.expect(TokenKind::RBrace)?;
             value
         };
-        Ok(Expr {
-            kind: ExprKind::If(
+        Expr::new(
+            ExprKind::If(
                 Box::new(condition),
                 Box::new(when_true),
                 Box::new(when_false),
             ),
             line,
             col,
-        })
+        )
     }
 
     fn match_expression(&mut self, line: usize, col: usize) -> Result<Expr, String> {
@@ -1318,11 +1324,11 @@ impl Parser {
                 return Err(self.error("match arms must be separated by a comma or newline"));
             }
         };
-        Ok(Expr {
-            kind: ExprKind::Match(Box::new(subject), arms, Box::new(default)),
+        Expr::new(
+            ExprKind::Match(Box::new(subject), arms, Box::new(default)),
             line,
             col,
-        })
+        )
     }
 }
 
@@ -1607,4 +1613,29 @@ fn valid_binding_name(name: &str) -> bool {
                 | "print"
                 | "impact"
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{lex, parse};
+
+    #[test]
+    fn binary_expression_depth_is_bounded_without_limiting_width() {
+        let accepted = format!("print {}\n", vec!["1"; 128].join(" + "));
+        assert!(parse(lex(&accepted).unwrap()).is_ok());
+
+        let rejected = format!("print {}\n", vec!["1"; 4096].join(" + "));
+        let error = parse(lex(&rejected).unwrap()).unwrap_err();
+        assert!(error.contains("expression nesting too deep"), "{error}");
+
+        let wide = format!("print [{}]\n", vec!["1"; 1000].join(", "));
+        assert!(parse(lex(&wide).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn postfix_expression_depth_is_bounded() {
+        let source = format!("print value{}\n", " . field".repeat(4096));
+        let error = parse(lex(&source).unwrap()).unwrap_err();
+        assert!(error.contains("expression nesting too deep"), "{error}");
+    }
 }

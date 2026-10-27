@@ -4016,11 +4016,8 @@ impl Runtime {
                         .collect::<Result<Vec<_>, _>>()?;
                     if let Some((receiver, method)) = name.rsplit_once('.') {
                         if is_value_method_receiver(module, receiver) {
-                            let receiver_expr = Expr {
-                                kind: ExprKind::Var(receiver.to_owned()),
-                                line: expr.line,
-                                col: expr.col,
-                            };
+                            let receiver_expr =
+                                Expr::variable(receiver.to_owned(), expr.line, expr.col);
                             let receiver_type =
                                 self.infer_expr(module, locals, globals, &receiver_expr)?;
                             return self
