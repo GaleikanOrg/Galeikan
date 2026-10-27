@@ -544,6 +544,104 @@ static void *gak_format_box(const char *text, size_t length) {
     return box;
 }
 
+typedef struct {
+    uint64_t bytes;
+    uint64_t entries;
+    uint8_t id[64];
+    size_t id_size;
+} GakBuildIdScan;
+
+static int gak_scan_build_id_notes(const uint8_t *bytes, uint64_t length,
+                                   uint64_t offset, uint64_t size, int big,
+                                   GakBuildIdScan *scan) {
+    if (!size) return 1;
+    if (size > 16u * 1024u * 1024u - scan->bytes) {
+        gak_format_fail("ELF note data exceeds 16 MiB"); return 0;
+    }
+    scan->bytes += size;
+    if (!gak_span(length, offset, size)) {
+        gak_format_fail("ELF note range outside captured Source"); return 0;
+    }
+    const uint8_t *notes = bytes + offset;
+    uint64_t cursor = 0;
+    while (cursor < size) {
+        if (size - cursor < 12) {
+            gak_format_fail("truncated ELF note header"); return 0;
+        }
+        if (++scan->entries > 100000u) {
+            gak_format_fail("ELF note entry limit exceeded"); return 0;
+        }
+        uint64_t name_size = gak_number(notes, cursor, 4, big);
+        uint64_t data_size = gak_number(notes, cursor + 4, 4, big);
+        uint64_t kind = gak_number(notes, cursor + 8, 4, big);
+        cursor += 12;
+        uint64_t padded_name = (name_size + 3u) & ~(uint64_t)3u;
+        if (padded_name > size - cursor) {
+            gak_format_fail("truncated ELF note name"); return 0;
+        }
+        const uint8_t *name = notes + cursor;
+        cursor += padded_name;
+        uint64_t padded_data = (data_size + 3u) & ~(uint64_t)3u;
+        if (padded_data > size - cursor) {
+            gak_format_fail("truncated ELF note data"); return 0;
+        }
+        const uint8_t *data = notes + cursor;
+        cursor += padded_data;
+        if (kind == 3 && name_size == 4 && memcmp(name, "GNU\0", 4) == 0) {
+            if (!data_size) {
+                gak_format_fail("ELF build ID is empty"); return 0;
+            }
+            if (data_size > sizeof(scan->id)) {
+                gak_format_fail("ELF build ID exceeds 64 bytes"); return 0;
+            }
+            if (scan->id_size &&
+                (scan->id_size != (size_t)data_size ||
+                 memcmp(scan->id, data, (size_t)data_size) != 0)) {
+                gak_format_fail("conflicting ELF build IDs"); return 0;
+            }
+            memcpy(scan->id, data, (size_t)data_size);
+            scan->id_size = (size_t)data_size;
+        }
+    }
+    return 1;
+}
+
+void *gak_native_formats_build_id(const void *value) {
+    gak_formats_error = NULL;
+    const GakFormat *format = value;
+    if (!format) { gak_format_fail("invalid Format"); return NULL; }
+    if (format->kind != 2) {
+        gak_format_fail("ELF build ID requires an ELF image"); return NULL;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t length = source->end - source->start;
+    unsigned width = format->bits == 32 ? 4 : 8;
+    int big = format->big_endian != 0;
+    GakBuildIdScan scan = {0};
+    for (uint64_t index = 0; index < format->program_count; index++) {
+        uint64_t at = format->program_table + index * format->program_stride;
+        if (gak_number(bytes, at, 4, big) != 4) continue;
+        uint64_t offset = gak_number(bytes, at + (width == 4 ? 4 : 8), width, big);
+        uint64_t size = gak_number(bytes, at + (width == 4 ? 16 : 32), width, big);
+        if (!gak_scan_build_id_notes(bytes, length, offset, size, big, &scan)) return NULL;
+    }
+    for (uint64_t index = 1; index < format->sections; index++) {
+        uint64_t at = format->section_table + index * format->section_stride;
+        if (gak_number(bytes, at + 4, 4, big) != 7) continue;
+        uint64_t offset = gak_number(bytes, at + (width == 4 ? 16 : 24), width, big);
+        uint64_t size = gak_number(bytes, at + (width == 4 ? 20 : 32), width, big);
+        if (!gak_scan_build_id_notes(bytes, length, offset, size, big, &scan)) return NULL;
+    }
+    static const char digits[] = "0123456789abcdef";
+    char hex[128];
+    for (size_t index = 0; index < scan.id_size; index++) {
+        hex[2 * index] = digits[scan.id[index] >> 4];
+        hex[2 * index + 1] = digits[scan.id[index] & 15];
+    }
+    return gak_format_box(hex, 2 * scan.id_size);
+}
+
 void *gak_native_formats_summary(const void *value) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

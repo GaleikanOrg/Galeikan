@@ -4062,6 +4062,7 @@ impl Codegen {
             ("bits", [report]) => (report, Scalar::Int, "gak_native_formats_bits"),
             ("endian", [report]) => (report, Scalar::Str, "gak_native_formats_endian"),
             ("arch", [report]) => (report, Scalar::Str, "gak_native_formats_arch"),
+            ("build_id", [report]) => (report, Scalar::Str, "gak_native_formats_build_id"),
             ("count", [report]) => (report, Scalar::Int, "gak_native_formats_count"),
             _ => return Err(format!("native formats.{name} is not yet supported")),
         };
@@ -4078,7 +4079,7 @@ impl Codegen {
         }
         self.uses_formats = true;
         writeln!(self.code, "    mov {}, rax\n    call {helper}", self.arg0()).unwrap();
-        if name == "probe" {
+        if matches!(name, "probe" | "build_id") {
             let ready = self.label();
             writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
         }

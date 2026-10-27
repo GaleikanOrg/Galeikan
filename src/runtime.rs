@@ -5665,6 +5665,9 @@ impl Runtime {
             ("bits", [Value::Format(_, report)]) => Ok(Value::Int(report.bits())),
             ("endian", [Value::Format(_, report)]) => Ok(Value::Str(report.endian().into())),
             ("arch", [Value::Format(_, report)]) => Ok(Value::Str(report.arch().into())),
+            ("build_id", [Value::Format(source, report)]) => {
+                Ok(Value::Str(report.build_id(source.bytes())?))
+            }
             ("probe", [source]) => {
                 let source = source.as_source()?;
                 let report = formats::probe(source.bytes())?;
@@ -7210,7 +7213,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "size") => (&[Type::Any], Int),
         ("binary", "sha256") => (&[Type::Any], Str),
         ("formats", "probe") => (&[Source], Format),
-        ("formats", "kind" | "endian" | "arch") => (&[Format], Str),
+        ("formats", "kind" | "endian" | "arch" | "build_id") => (&[Format], Str),
         ("formats", "bits") => (&[Format], Int),
         ("formats", "signal") => (&[Format, Str], Str),
         ("formats", "count") => (&[Format], Int),

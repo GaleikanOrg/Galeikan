@@ -3369,6 +3369,183 @@ fn native_elf_relr_matches_vm_with_sections_dynamic_tags_and_bitmap_errors() {
 }
 
 #[test]
+fn elf_build_ids_match_ast_vm_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut bytes = vec![0_u8; 0x200];
+    bytes[..4].copy_from_slice(b"\x7fELF");
+    bytes[4..7].copy_from_slice(&[2, 1, 1]);
+    bytes[16..18].copy_from_slice(&2_u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&62_u16.to_le_bytes());
+    bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[32..40].copy_from_slice(&64_u64.to_le_bytes());
+    bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    bytes[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    bytes[56..58].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[64..68].copy_from_slice(&4_u32.to_le_bytes());
+    bytes[72..80].copy_from_slice(&0x100_u64.to_le_bytes());
+    bytes[96..104].copy_from_slice(&20_u64.to_le_bytes());
+    bytes[104..112].copy_from_slice(&20_u64.to_le_bytes());
+    bytes[0x100..0x104].copy_from_slice(&4_u32.to_le_bytes());
+    bytes[0x104..0x108].copy_from_slice(&4_u32.to_le_bytes());
+    bytes[0x108..0x10c].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[0x10c..0x110].copy_from_slice(b"GNU\0");
+    bytes[0x110..0x114].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    let mut big = vec![0_u8; 0x200];
+    big[..4].copy_from_slice(b"\x7fELF");
+    big[4..7].copy_from_slice(&[1, 2, 1]);
+    big[16..18].copy_from_slice(&2_u16.to_be_bytes());
+    big[18..20].copy_from_slice(&3_u16.to_be_bytes());
+    big[20..24].copy_from_slice(&1_u32.to_be_bytes());
+    big[28..32].copy_from_slice(&52_u32.to_be_bytes());
+    big[40..42].copy_from_slice(&52_u16.to_be_bytes());
+    big[42..44].copy_from_slice(&32_u16.to_be_bytes());
+    big[44..46].copy_from_slice(&1_u16.to_be_bytes());
+    big[52..56].copy_from_slice(&4_u32.to_be_bytes());
+    big[56..60].copy_from_slice(&0x100_u32.to_be_bytes());
+    big[68..72].copy_from_slice(&20_u32.to_be_bytes());
+    big[72..76].copy_from_slice(&20_u32.to_be_bytes());
+    big[0x100..0x104].copy_from_slice(&4_u32.to_be_bytes());
+    big[0x104..0x108].copy_from_slice(&4_u32.to_be_bytes());
+    big[0x108..0x10c].copy_from_slice(&3_u32.to_be_bytes());
+    big[0x10c..0x110].copy_from_slice(b"GNU\0");
+    big[0x110..0x114].copy_from_slice(&[0x01, 0x23, 0x45, 0x67]);
+    let file = s.0.join("notes.elf");
+    let script = s.write(
+        "elf-build-id.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, build_id\nprint build_id(probe(analyze(\"notes.elf\", 4096)))\n",
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    for (name, variant, expected) in [
+        ("program note", bytes.clone(), Ok("deadbeef\n")),
+        ("big-endian ELF32", big, Ok("01234567\n")),
+        (
+            "without note",
+            {
+                let mut variant = bytes.clone();
+                variant[64..68].copy_from_slice(&0_u32.to_le_bytes());
+                variant
+            },
+            Ok("\n"),
+        ),
+        (
+            "duplicate section",
+            {
+                let mut variant = bytes.clone();
+                variant[40..48].copy_from_slice(&0x140_u64.to_le_bytes());
+                variant[58..60].copy_from_slice(&64_u16.to_le_bytes());
+                variant[60..62].copy_from_slice(&2_u16.to_le_bytes());
+                variant[0x184..0x188].copy_from_slice(&7_u32.to_le_bytes());
+                variant[0x198..0x1a0].copy_from_slice(&0x100_u64.to_le_bytes());
+                variant[0x1a0..0x1a8].copy_from_slice(&20_u64.to_le_bytes());
+                variant
+            },
+            Ok("deadbeef\n"),
+        ),
+        (
+            "section note without program note",
+            {
+                let mut variant = bytes.clone();
+                variant[64..68].copy_from_slice(&0_u32.to_le_bytes());
+                variant[40..48].copy_from_slice(&0x140_u64.to_le_bytes());
+                variant[58..60].copy_from_slice(&64_u16.to_le_bytes());
+                variant[60..62].copy_from_slice(&2_u16.to_le_bytes());
+                variant[0x184..0x188].copy_from_slice(&7_u32.to_le_bytes());
+                variant[0x198..0x1a0].copy_from_slice(&0x100_u64.to_le_bytes());
+                variant[0x1a0..0x1a8].copy_from_slice(&20_u64.to_le_bytes());
+                variant
+            },
+            Ok("deadbeef\n"),
+        ),
+        (
+            "truncated header",
+            {
+                let mut variant = bytes.clone();
+                variant[96..104].copy_from_slice(&11_u64.to_le_bytes());
+                variant
+            },
+            Err("truncated ELF note header"),
+        ),
+        (
+            "truncated note",
+            {
+                let mut variant = bytes.clone();
+                variant[96..104].copy_from_slice(&19_u64.to_le_bytes());
+                variant
+            },
+            Err("truncated ELF note data"),
+        ),
+        (
+            "oversized build ID",
+            {
+                let mut variant = bytes.clone();
+                variant[96..104].copy_from_slice(&84_u64.to_le_bytes());
+                variant[0x104..0x108].copy_from_slice(&65_u32.to_le_bytes());
+                variant[0x110..0x151].fill(0xaa);
+                variant
+            },
+            Err("ELF build ID exceeds 64 bytes"),
+        ),
+        (
+            "conflicting notes",
+            {
+                let mut variant = bytes.clone();
+                variant[56..58].copy_from_slice(&2_u16.to_le_bytes());
+                variant[0x78..0x7c].copy_from_slice(&4_u32.to_le_bytes());
+                variant[0x80..0x88].copy_from_slice(&0x120_u64.to_le_bytes());
+                variant[0x98..0xa0].copy_from_slice(&20_u64.to_le_bytes());
+                variant[0xa0..0xa8].copy_from_slice(&20_u64.to_le_bytes());
+                let note = variant[0x100..0x114].to_vec();
+                variant[0x120..0x134].copy_from_slice(&note);
+                variant[0x130] = 0xaa;
+                variant
+            },
+            Err("conflicting ELF build IDs"),
+        ),
+    ] {
+        fs::write(&file, variant).unwrap();
+        let run = |engine: &str| {
+            Command::new(env!("CARGO_BIN_EXE_galeikan"))
+                .arg("run")
+                .arg(&script)
+                .args(["--engine", engine, "--allow-read"])
+                .arg(&s.0)
+                .output()
+                .unwrap()
+        };
+        let ast = run("ast");
+        let vm = run("vm");
+        let native = Command::new(&executable)
+            .arg("--allow-read")
+            .arg(&s.0)
+            .output()
+            .unwrap();
+        assert_eq!(ast.status.success(), vm.status.success(), "{name}");
+        assert_eq!(native.status.success(), vm.status.success(), "{name}");
+        assert_eq!(ast.stdout, vm.stdout, "{name}");
+        assert_eq!(native.stdout, vm.stdout, "{name}");
+        match expected {
+            Ok(output) => assert_eq!(vm.stdout, output.as_bytes(), "{name}"),
+            Err(error) => {
+                assert!(
+                    String::from_utf8_lossy(&vm.stderr).contains(error),
+                    "{name}"
+                );
+                assert_eq!(native.stderr, vm.stderr, "{name}");
+            }
+        }
+    }
+}
+
+#[test]
 fn native_elf_relocations_match_vm_from_sections_and_dynamic_tables() {
     if !gcc_available() {
         return;

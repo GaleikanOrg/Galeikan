@@ -211,6 +211,9 @@ const MAX_DEBUG_DIRECTORY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DEBUG_ENTRIES: usize = 4096;
 const MAX_DEBUG_DATA_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PDB_PATH_BYTES: usize = 4096;
+const MAX_ELF_NOTE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ELF_NOTE_ENTRIES: usize = 100_000;
+const MAX_ELF_BUILD_ID_BYTES: usize = 64;
 
 #[derive(Clone)]
 pub struct FormatReport {
@@ -233,6 +236,7 @@ pub struct FormatReport {
     elf_program_headers_present: bool,
     elf_load_segments: Vec<LoadSegment>,
     elf_dynamic: Option<(usize, u64)>,
+    elf_note_segments: Vec<(u64, u64)>,
     elf_file_type: u16,
     elf_section_types: Vec<u32>,
     elf_dynsym_sections: Vec<(usize, usize, usize)>,
@@ -262,6 +266,42 @@ pub struct FormatReport {
 }
 
 impl FormatReport {
+    pub fn build_id(&self, bytes: &[u8]) -> Result<String, String> {
+        if self.kind() != "elf" {
+            return Err("ELF build ID requires an ELF image".into());
+        }
+        let big = self.byte_order == "big-endian";
+        let mut total_bytes = 0_u64;
+        let mut total_entries = 0_usize;
+        let mut found = None;
+        let section_notes = self
+            .section_info
+            .iter()
+            .zip(&self.elf_section_types)
+            .filter(|(_, kind)| **kind == 7)
+            .map(|(section, _)| (section.file_offset as u64, section.file_size as u64));
+        for (offset, size) in self.elf_note_segments.iter().copied().chain(section_notes) {
+            if size == 0 {
+                continue;
+            }
+            total_bytes = total_bytes
+                .checked_add(size)
+                .ok_or("ELF note data exceeds 16 MiB")?;
+            if total_bytes > MAX_ELF_NOTE_BYTES {
+                return Err("ELF note data exceeds 16 MiB".into());
+            }
+            let offset =
+                usize::try_from(offset).map_err(|_| "ELF note range outside captured Source")?;
+            let size =
+                usize::try_from(size).map_err(|_| "ELF note range outside captured Source")?;
+            let notes =
+                span(bytes, offset, size).map_err(|_| "ELF note range outside captured Source")?;
+            scan_elf_build_id_notes(notes, big, &mut total_entries, &mut found)?;
+        }
+        Ok(found.map_or_else(String::new, |id: Vec<u8>| {
+            id.iter().map(|byte| format!("{byte:02x}")).collect()
+        }))
+    }
     pub fn kind(&self) -> &'static str {
         if self.name.starts_with("PE") {
             "pe"
@@ -2357,6 +2397,7 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
         elf_program_headers_present: false,
         elf_load_segments: Vec::new(),
         elf_dynamic: None,
+        elf_note_segments: Vec::new(),
         elf_file_type: 0,
         elf_section_types: Vec::new(),
         elf_dynsym_sections: Vec::new(),
@@ -2384,6 +2425,55 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_certificates: Arc::new(OnceLock::new()),
         pe_debug_entries: Arc::new(OnceLock::new()),
     })
+}
+
+fn scan_elf_build_id_notes(
+    notes: &[u8],
+    big: bool,
+    total_entries: &mut usize,
+    found: &mut Option<Vec<u8>>,
+) -> Result<(), String> {
+    let mut cursor = 0_usize;
+    while cursor < notes.len() {
+        if notes.len() - cursor < 12 {
+            return Err("truncated ELF note header".into());
+        }
+        *total_entries = total_entries
+            .checked_add(1)
+            .ok_or("ELF note entry limit exceeded")?;
+        if *total_entries > MAX_ELF_NOTE_ENTRIES {
+            return Err("ELF note entry limit exceeded".into());
+        }
+        let name_size = number(notes, cursor, 4, big)? as usize;
+        let data_size = number(notes, cursor + 4, 4, big)? as usize;
+        let kind = number(notes, cursor + 8, 4, big)?;
+        cursor += 12;
+        let padded_name = name_size.checked_add(3).ok_or("ELF note range overflow")? & !3;
+        if padded_name > notes.len() - cursor {
+            return Err("truncated ELF note name".into());
+        }
+        let name = &notes[cursor..cursor + name_size];
+        cursor += padded_name;
+        let padded_data = data_size.checked_add(3).ok_or("ELF note range overflow")? & !3;
+        if padded_data > notes.len() - cursor {
+            return Err("truncated ELF note data".into());
+        }
+        let data = &notes[cursor..cursor + data_size];
+        cursor += padded_data;
+        if kind == 3 && name == b"GNU\0" {
+            if data.is_empty() {
+                return Err("ELF build ID is empty".into());
+            }
+            if data.len() > MAX_ELF_BUILD_ID_BYTES {
+                return Err("ELF build ID exceeds 64 bytes".into());
+            }
+            if found.as_ref().is_some_and(|previous| previous != data) {
+                return Err("conflicting ELF build IDs".into());
+            }
+            *found = Some(data.to_vec());
+        }
+    }
+    Ok(())
 }
 
 fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
@@ -2626,6 +2716,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
     }
     let mut elf_load_segments = Vec::new();
     let mut elf_dynamic = None;
+    let mut elf_note_segments = Vec::new();
     let mut elf_stack_flags_field = None;
     let mut elf_relro_segment = false;
     let mut header_end = end;
@@ -2666,6 +2757,9 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
             if kind == 0x6474_e552 {
                 let size_at = offset + if entry_width == 4 { 20 } else { 40 };
                 elf_relro_segment |= number(bytes, size_at, entry_width, big)? > 0;
+            }
+            if kind == 4 && file_size > 0 {
+                elf_note_segments.push((raw_file_offset, file_size));
             }
             if kind != 1 && kind != 2 {
                 continue;
@@ -2737,6 +2831,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
         elf_program_headers_present: phnum > 0,
         elf_load_segments,
         elf_dynamic,
+        elf_note_segments,
         elf_file_type,
         elf_section_types,
         elf_dynsym_sections,
