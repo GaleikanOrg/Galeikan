@@ -2619,8 +2619,9 @@ impl Runtime {
             return Ok(());
         }
         let mut bytes = Vec::new();
-        fs::File::open(path)
+        file_access::open_authorized(path, &[self.project_root.clone()])
             .map_err(|e| format!("cannot capture Python module {}: {e}", path.display()))?
+            .0
             .take((MAX_SCRIPT + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("cannot capture Python module {}: {e}", path.display()))?;
@@ -2973,8 +2974,9 @@ impl Runtime {
         }
         self.loading.insert(path.clone());
         let mut source_bytes = Vec::new();
-        fs::File::open(&path)
+        file_access::open_authorized(&path, &[self.project_root.clone()])
             .map_err(|e| format!("{}: {e}", path.display()))?
+            .0
             .take(MAX_SCRIPT as u64 + 1)
             .read_to_end(&mut source_bytes)
             .map_err(|e| format!("{}: {e}", path.display()))?;

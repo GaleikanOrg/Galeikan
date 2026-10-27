@@ -2,7 +2,7 @@ use crate::syntax::{
     self, BlockStmt, BlockStmtKind, Expr, ExprKind, FunctionBody, MatchPattern, Op, Param, Stmt,
     StmtKind,
 };
-use crate::{project, runtime};
+use crate::{file_access, project, runtime};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -624,18 +624,17 @@ fn python_module_target(
     if !path.starts_with(&project.root) {
         return Err(format!("Python import outside project: {}", path.display()));
     }
-    let metadata = fs::metadata(&path)
+    let (file, _) = file_access::open_authorized(&path, &[project.root.clone()])
+        .map_err(|e| format!("cannot read Python module {}: {e}", path.display()))?;
+    let metadata = file
+        .metadata()
         .map_err(|e| format!("cannot inspect Python module {}: {e}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "Python module is not a regular file: {}",
-            path.display()
-        ));
-    }
     if metadata.len() > MAX_SOURCE {
         return Err(format!("Python module exceeds 8 MiB: {}", path.display()));
     }
-    let source = fs::read(&path)
+    let mut source = Vec::new();
+    file.take(MAX_SOURCE + 1)
+        .read_to_end(&mut source)
         .map_err(|e| format!("cannot read Python module {}: {e}", path.display()))?;
     if source.len() as u64 > MAX_SOURCE {
         return Err(format!("Python module exceeds 8 MiB: {}", path.display()));
@@ -691,8 +690,9 @@ fn collect_module(
         return Err("native import depth exceeds 64 modules".into());
     }
     let mut source_bytes = Vec::new();
-    fs::File::open(&path)
+    file_access::open_authorized(&path, &[project.root.clone()])
         .map_err(|e| format!("{}: {e}", path.display()))?
+        .0
         .take(MAX_SOURCE + 1)
         .read_to_end(&mut source_bytes)
         .map_err(|e| format!("{}: {e}", path.display()))?;

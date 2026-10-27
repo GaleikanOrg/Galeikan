@@ -1,3 +1,4 @@
+use crate::file_access;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -462,8 +463,9 @@ fn hash_package(root: &Path) -> Result<String, String> {
     for (relative, path) in files {
         let mut bytes = Vec::new();
         let remaining = MAX_PACKAGE_BYTES - total;
-        fs::File::open(&path)
+        file_access::open_authorized(&path, &[root.to_path_buf()])
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+            .0
             .take(remaining + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
