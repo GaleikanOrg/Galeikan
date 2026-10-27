@@ -117,6 +117,190 @@ fn malformed_string_escapes_have_source_locations() {
 }
 
 #[test]
+fn native_format_print_matches_ast_vm_and_bundle() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut elf = [0_u8; 64];
+    elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    elf[16..18].copy_from_slice(&1_u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&0x400000_u64.to_le_bytes());
+    elf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    fs::write(s.0.join("header.elf"), elf).unwrap();
+    let script = s.write(
+        "format-print.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe\nlet report: Format = probe(analyze(\"header.elf\", 64))\nprint report\n",
+    );
+    let binary = env!("CARGO_BIN_EXE_galeikan");
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(binary)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-read"])
+            .arg(&s.0)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(bytes) = &expected {
+            assert_eq!(&output.stdout, bytes, "{engine}");
+        } else {
+            expected = Some(output.stdout);
+        }
+    }
+    let built = Command::new(binary)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(binary)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let expected = expected.unwrap();
+    assert_eq!(bundle.stdout, expected);
+    assert_eq!(native.stdout, expected);
+    assert!(String::from_utf8_lossy(&expected).ends_with(
+        "ELF64 little-endian machine=0x003e entry_va=0x400000 sections=0 header=[0..64)\n"
+    ));
+
+    let mut pe = vec![0_u8; 0x110];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x40_u32.to_le_bytes());
+    pe[0x40..0x44].copy_from_slice(b"PE\0\0");
+    pe[0x44..0x46].copy_from_slice(&0x8664_u16.to_le_bytes());
+    pe[0x46..0x48].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x54..0x56].copy_from_slice(&112_u16.to_le_bytes());
+    pe[0x58..0x5a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x68..0x6c].copy_from_slice(&0x1234_u32.to_le_bytes());
+    pe[0xc8..0xcc].copy_from_slice(b".x\"\\");
+    pe[0xd0..0xd4].copy_from_slice(&0x20_u32.to_le_bytes());
+    pe[0xd4..0xd8].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[0xd8..0xdc].copy_from_slice(&0x10_u32.to_le_bytes());
+    pe[0xdc..0xe0].copy_from_slice(&0x100_u32.to_le_bytes());
+    pe[0xec..0xf0].copy_from_slice(&0x60000020_u32.to_le_bytes());
+    fs::write(s.0.join("header.pe"), pe).unwrap();
+    let pe_script = s.write(
+        "pe-format-print.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, section\nlet report = probe(analyze(\"header.pe\", 272))\nprint report\nprint section(report, 0)\n",
+    );
+    let vm = Command::new(binary)
+        .arg("run")
+        .arg(&pe_script)
+        .args(["--engine", "vm", "--allow-read"])
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let pe_compiled = s.compile(&pe_script);
+    assert!(
+        pe_compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pe_compiled.stderr)
+    );
+    let pe_executable = PathBuf::from(String::from_utf8(pe_compiled.stdout).unwrap().trim());
+    let pe_native = Command::new(pe_executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        pe_native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pe_native.stderr)
+    );
+    assert_eq!(pe_native.stdout, vm.stdout);
+    let printed = String::from_utf8_lossy(&vm.stdout);
+    assert!(printed.contains(
+        "PE32+ little-endian machine=0x8664 entry_rva=0x1234 sections=1 header=[0..240)\nsection(\".x\\\"\\\\\", file=[256..272), va=0x1000, virtual_size=32, flags=0x60000020, writable=false, executable=true, source_sha256:"
+    ), "{printed}");
+    assert!(printed.ends_with(")\n"));
+
+    let mut unnamed_elf = [0_u8; 128];
+    unnamed_elf[..64].copy_from_slice(&elf);
+    unnamed_elf[40..48].copy_from_slice(&64_u64.to_le_bytes());
+    unnamed_elf[58..60].copy_from_slice(&64_u16.to_le_bytes());
+    unnamed_elf[60..62].copy_from_slice(&1_u16.to_le_bytes());
+    fs::write(s.0.join("unnamed.elf"), unnamed_elf).unwrap();
+    let unnamed_script = s.write(
+        "unnamed-section.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, section\nprint section(probe(analyze(\"unnamed.elf\", 128)), 0)\n",
+    );
+    let vm = Command::new(binary)
+        .arg("run")
+        .arg(&unnamed_script)
+        .args(["--engine", "vm", "--allow-read"])
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let compiled = s.compile(&unnamed_script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(String::from_utf8_lossy(&vm.stdout).starts_with("section(\"<name unavailable>\""));
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;

@@ -544,6 +544,32 @@ static void *gak_format_box(const char *text, size_t length) {
     return box;
 }
 
+void *gak_native_formats_summary(const void *value) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (!format) { gak_format_fail("invalid Format"); return NULL; }
+    const char *name = format->kind == 1
+        ? (format->bits == 32 ? "PE32" : "PE32+")
+        : (format->bits == 32 ? "ELF32" : "ELF64");
+    const char *order = format->big_endian ? "big-endian" : "little-endian";
+    const char *entry_kind = format->kind == 1 ? "rva" : "va";
+    uint64_t header_end = format->kind == 1 ? 0 : (format->bits == 32 ? 52 : 64);
+    uint64_t section_end = format->section_table + format->sections * format->section_stride;
+    uint64_t program_end = format->program_table + format->program_count * format->program_stride;
+    if (section_end > header_end) header_end = section_end;
+    if (program_end > header_end) header_end = program_end;
+    char text[256];
+    int length = snprintf(text, sizeof(text),
+        "%s %s machine=0x%04llx entry_%s=0x%llx sections=%llu header=[0..%llu)",
+        name, order, (unsigned long long)format->machine, entry_kind,
+        (unsigned long long)format->entry, (unsigned long long)format->sections,
+        (unsigned long long)header_end);
+    if (length < 0 || (size_t)length >= sizeof(text)) {
+        gak_format_fail("format summary exceeds native limit"); return NULL;
+    }
+    return gak_format_box(text, (size_t)length);
+}
+
 void *gak_native_formats_section_name(const void *value) {
     const GakSection *section = value;
     gak_formats_error = NULL;
@@ -599,6 +625,46 @@ void *gak_native_formats_section_name(const void *value) {
         }
     }
     format_memory += escaped + 8;
+    return box;
+}
+
+void *gak_native_formats_section_display_name(const void *value) {
+    const uint8_t *name = gak_native_formats_section_name(value);
+    static const char fallback[] = "<name unavailable>";
+    const uint8_t *characters;
+    size_t length;
+    if (name) {
+        uint64_t wide;
+        memcpy(&wide, name, 8);
+        length = (size_t)wide;
+        characters = name + 8;
+    } else {
+        static const char unavailable[] = "section name unavailable in captured Source";
+        if (error_text.length != sizeof(unavailable) - 1u ||
+            memcmp(error_text.text, unavailable, sizeof(unavailable) - 1u) != 0)
+            return NULL;
+        gak_formats_error = NULL;
+        characters = (const uint8_t *)fallback;
+        length = sizeof(fallback) - 1u;
+    }
+    size_t escaped = length;
+    for (size_t index = 0; index < length; index++)
+        if (characters[index] == '\\' || characters[index] == '"') escaped++;
+    if (escaped > 64u * 1024u * 1024u - 8u ||
+        format_memory > 64u * 1024u * 1024u - 8u - escaped) {
+        gak_format_fail("format memory limit"); return NULL;
+    }
+    uint8_t *box = malloc(escaped + 8u);
+    if (!box) { gak_format_fail("native allocation failed"); return NULL; }
+    uint64_t wide = (uint64_t)escaped;
+    memcpy(box, &wide, 8);
+    size_t cursor = 8;
+    for (size_t index = 0; index < length; index++) {
+        uint8_t ch = characters[index];
+        if (ch == '\\' || ch == '"') box[cursor++] = '\\';
+        box[cursor++] = ch;
+    }
+    format_memory += escaped + 8u;
     return box;
 }
 

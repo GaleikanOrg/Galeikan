@@ -1925,8 +1925,8 @@ impl Codegen {
             }
             Scalar::Bytes => self.print_bytes(depth + 1)?,
             Scalar::Source => self.print_source(depth + 1)?,
-            Scalar::Format => return Err("native Format printing is not yet supported".into()),
-            Scalar::Section => return Err("native Section printing is not yet supported".into()),
+            Scalar::Format => self.print_format(depth + 1)?,
+            Scalar::Section => self.print_section(depth + 1)?,
             Scalar::Observation => self.print_observation(depth + 1)?,
             Scalar::Offsets => self.print_offsets(depth + 1)?,
             Scalar::Regions => {
@@ -2263,6 +2263,135 @@ impl Codegen {
         writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]\n    sub rax, QWORD PTR [r10+16]", source_slot * 8).unwrap();
         self.print_value(Scalar::UInt, depth)?;
         self.write_const(" bytes)")
+    }
+
+    fn print_format(&mut self, depth: usize) -> Result<(), String> {
+        let format_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10",
+            format_slot * 8,
+            source_slot * 8
+        )
+        .unwrap();
+        self.print_source_label(source_slot, depth)?;
+        self.write_const(" [sha256:")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+            source_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const("] ")?;
+        let ready = self.label();
+        writeln!(
+            self.code,
+            "    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_summary\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:",
+            self.arg0(),
+            format_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, depth)
+    }
+
+    fn print_hex_u64(&mut self) -> Result<(), String> {
+        let format = self.literal("%llx")?;
+        writeln!(
+            self.code,
+            "    mov {}, rax\n    lea {}, [rip+{format}+8]",
+            self.arg1(),
+            self.arg0()
+        )
+        .unwrap();
+        if !self.windows {
+            self.code.push_str("    xor eax, eax\n");
+        }
+        self.code.push_str("    call printf\n");
+        Ok(())
+    }
+
+    fn print_section(&mut self, depth: usize) -> Result<(), String> {
+        let section_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10",
+            section_slot * 8,
+            source_slot * 8
+        )
+        .unwrap();
+        self.write_const("section(\"")?;
+        let ready = self.label();
+        writeln!(
+            self.code,
+            "    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_section_display_name\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:",
+            self.arg0(),
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const("\", file=[")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]",
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const("..")?;
+        let no_overflow = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]\n    add rax, QWORD PTR [r10+24]\n    jnc {no_overflow}\n    mov rax, -1\n{no_overflow}:",
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const("), va=0x")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]",
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_hex_u64()?;
+        self.write_const(", virtual_size=")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const(", flags=0x")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+48]",
+            section_slot * 8
+        )
+        .unwrap();
+        self.print_hex_u64()?;
+        for (offset, prefix) in [(56, ", writable="), (64, ", executable=")] {
+            self.write_const(prefix)?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+{offset}]",
+                section_slot * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Bool, depth)?;
+        }
+        self.write_const(", source_sha256:")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+            source_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const(")")
     }
 
     fn print_source_origin(&mut self, source_slot: usize, depth: usize) -> Result<(), String> {
