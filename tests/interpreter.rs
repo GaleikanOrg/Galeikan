@@ -5017,6 +5017,58 @@ fn audit_rules_produce_traceable_findings() {
 }
 
 #[test]
+fn signed_audit_uses_decoded_values_across_ast_vm_and_bundle() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "signed-audit.gak",
+        "import std.binary\nimport std.audit\nfn inspect() -> Finding {\n    let source = binary.snapshot(binary.from_hex(\"ff fe\"))\n    return audit.bound(binary.deep(source, 0, \"i16be\"), -3, -1, \"signed.range\")\n}\nlet source = binary.snapshot(binary.from_hex(\"fe ff ff ff ff ff ff ff\"))\nlet mismatch = audit.expect(binary.deep(source, 0, \"i8\"), -1, \"signed.mismatch\")\nprint audit.passed(audit.bound(binary.deep(source, 0, \"i8\"), -2, -2, \"signed.byte\"))\nprint audit.passed(inspect())\nprint audit.passed(audit.expect(binary.deep(source, 0, \"i64le\"), -2, \"signed.word\"))\nprint audit.failed(mismatch)\nimpact mismatch\n",
+    );
+    for engine in ["ast", "vm"] {
+        let out = s.run_engine(&script, engine, false, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let output = stdout(&out);
+        assert!(output.starts_with("true\ntrue\ntrue\ntrue\n"), "{output}");
+        assert!(output.contains("expected: \"equal -1\", actual: -2"));
+
+        let called = call_json(&script, "inspect", engine, r#"{"version":1,"args":[]}"#);
+        assert!(called.status.success(), "{}", stderr(&called));
+        let body: serde_json::Value = serde_json::from_slice(&called.stdout).unwrap();
+        assert_eq!(body["value"]["passed"], true);
+        assert_eq!(body["value"]["expected"], "between -3 and -1");
+        assert_eq!(body["value"]["actual"], -2);
+        assert_eq!(body["value"]["raw_value"], 65534);
+    }
+
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["build", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    let bundle = script.with_extension("gakb");
+    fs::remove_file(script).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["exec", bundle.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).starts_with("true\ntrue\ntrue\ntrue\n"));
+    let called = call_json(&bundle, "inspect", "vm", r#"{"version":1,"args":[]}"#);
+    assert!(called.status.success(), "{}", stderr(&called));
+    let body: serde_json::Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_eq!(body["value"]["actual"], -2);
+
+    let unsigned = s.write(
+        "unsigned-audit.gak",
+        "import std.binary\nimport std.audit\nlet source = binary.snapshot(binary.from_hex(\"fe\"))\nprint audit.bound(binary.deep(source, 0, \"u8\"), -3, -1, \"unsigned.range\")\n",
+    );
+    for engine in ["ast", "vm"] {
+        let out = s.run_engine(&unsigned, engine, false, &[]);
+        assert!(!out.status.success());
+        assert!(stderr(&out).contains("minimum must not be negative"));
+    }
+}
+
+#[test]
 fn binary_profile_metadata_is_simple_typed_and_matches_ast_vm_bundle() {
     let s = Sandbox::new();
     let section_table = 0x80 + 4 + 20 + 0xf0;

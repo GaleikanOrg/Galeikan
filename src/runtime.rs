@@ -417,6 +417,19 @@ struct Observation {
     decoder: &'static str,
     value: u64,
 }
+impl Observation {
+    fn is_signed(&self) -> bool {
+        matches!(
+            self.decoder,
+            "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+        )
+    }
+
+    fn signed_value(&self) -> i64 {
+        let shift = 64 - self.width * 8;
+        ((self.value << shift) as i64) >> shift
+    }
+}
 struct Diff {
     left: Arc<Source>,
     right: Arc<Source>,
@@ -450,12 +463,23 @@ enum FindingEvidence {
 enum Constraint {
     Equal(u64),
     Bound(u64, u64),
+    SignedEqual(i64),
+    SignedBound(i64, i64),
 }
 impl Constraint {
     fn display(&self) -> String {
         match self {
             Self::Equal(value) => format!("equal {value}"),
             Self::Bound(min, max) => format!("between {min} and {max}"),
+            Self::SignedEqual(value) => format!("equal {value}"),
+            Self::SignedBound(min, max) => format!("between {min} and {max}"),
+        }
+    }
+
+    fn actual(&self, observation: &Observation) -> JsonValue {
+        match self {
+            Self::SignedEqual(_) | Self::SignedBound(_, _) => json!(observation.signed_value()),
+            Self::Equal(_) | Self::Bound(_, _) => json!(observation.value),
         }
     }
 }
@@ -546,7 +570,7 @@ impl Value {
                     finding.rule,
                     if finding.passed { "pass" } else { "fail" },
                     constraint.display(),
-                    observation.value,
+                    constraint.actual(observation),
                     observation.source.label,
                     observation.source.sha256,
                     observation.offset,
@@ -1583,7 +1607,8 @@ fn encode_call_value(value: Value) -> Result<JsonValue, String> {
             } => json!({
                 "$galeikan": "Finding", "kind": "numeric",
                 "rule": finding.rule, "passed": finding.passed,
-                "expected": constraint.display(), "actual": observation.value,
+                "expected": constraint.display(), "actual": constraint.actual(observation),
+                "raw_value": observation.value,
                 "offset": observation.offset, "width": observation.width,
                 "decoder": observation.decoder,
                 "source": observation.source.label,
@@ -2483,7 +2508,7 @@ fn format_impact(value: Value) -> Result<String, String> {
                         finding.rule,
                         if finding.passed { "pass" } else { "fail" },
                         constraint.display(),
-                        observation.value,
+                        constraint.actual(observation),
                         observation.source.label,
                         observation.source.provenance(),
                         observation.source.sha256,
@@ -4805,12 +4830,8 @@ impl Runtime {
                 )?)))
             }
             ("value", [Value::Observation(observation)]) => {
-                let value = if matches!(
-                    observation.decoder,
-                    "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
-                ) {
-                    let shift = 64 - observation.width * 8;
-                    ((observation.value << shift) as i64) >> shift
+                let value = if observation.is_signed() {
+                    observation.signed_value()
                 } else {
                     i64::try_from(observation.value)
                         .map_err(|_| "Observation value does not fit i64")?
@@ -4826,8 +4847,8 @@ impl Runtime {
                     "u64le" | "u64be" | "i64le" | "i64be" => 8,
                     _ => return Err("Observation is not an integer field".into()),
                 };
-                let shift = 64 - width * 8;
-                Ok(Value::Int(((observation.value << shift) as i64) >> shift))
+                debug_assert_eq!(width, observation.width);
+                Ok(Value::Int(observation.signed_value()))
             }
             ("offset", [Value::Observation(observation)]) => Ok(Value::Int(
                 i64::try_from(observation.offset).map_err(|_| "offset out of range")?,
@@ -6489,34 +6510,59 @@ impl Runtime {
     fn audit(&self, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
             ("bound", [Value::Observation(observation), min, max, rule]) => {
-                let min =
-                    u64::try_from(min.as_int()?).map_err(|_| "minimum must not be negative")?;
-                let max =
-                    u64::try_from(max.as_int()?).map_err(|_| "maximum must not be negative")?;
-                if max < min {
-                    return Err("maximum must be at least minimum".into());
-                }
+                let (constraint, passed) = if observation.is_signed() {
+                    let min = min.as_int()?;
+                    let max = max.as_int()?;
+                    if max < min {
+                        return Err("maximum must be at least minimum".into());
+                    }
+                    (
+                        Constraint::SignedBound(min, max),
+                        (min..=max).contains(&observation.signed_value()),
+                    )
+                } else {
+                    let min =
+                        u64::try_from(min.as_int()?).map_err(|_| "minimum must not be negative")?;
+                    let max =
+                        u64::try_from(max.as_int()?).map_err(|_| "maximum must not be negative")?;
+                    if max < min {
+                        return Err("maximum must be at least minimum".into());
+                    }
+                    (
+                        Constraint::Bound(min, max),
+                        (min..=max).contains(&observation.value),
+                    )
+                };
                 let rule = checked_rule_id(rule)?;
                 Ok(Value::Finding(Arc::new(Finding {
                     rule,
                     evidence: FindingEvidence::Numeric {
                         observation: observation.clone(),
-                        constraint: Constraint::Bound(min, max),
+                        constraint,
                     },
-                    passed: (min..=max).contains(&observation.value),
+                    passed,
                 })))
             }
             ("expect", [Value::Observation(observation), expected, rule]) => {
-                let expected = u64::try_from(expected.as_int()?)
-                    .map_err(|_| "expected value must not be negative")?;
+                let (constraint, passed) = if observation.is_signed() {
+                    let expected = expected.as_int()?;
+                    (
+                        Constraint::SignedEqual(expected),
+                        observation.signed_value() == expected,
+                    )
+                } else {
+                    let expected = u64::try_from(expected.as_int()?)
+                        .map_err(|_| "expected value must not be negative")?;
+                    (Constraint::Equal(expected), observation.value == expected)
+                };
                 let rule = checked_rule_id(rule)?;
                 Ok(Value::Finding(Arc::new(Finding {
                     rule,
                     evidence: FindingEvidence::Numeric {
                         observation: observation.clone(),
-                        constraint: Constraint::Equal(expected),
+                        constraint,
                     },
-                    passed: observation.value == expected,
+                    passed,
                 })))
             }
             ("hunt", [Value::Source(source), pattern, rule]) => {
