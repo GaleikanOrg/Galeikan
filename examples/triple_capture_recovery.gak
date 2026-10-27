@@ -75,7 +75,8 @@ if size(first) == size(second) and size(second) == size(third) {
     print "ambiguous positions:"
     print ambiguous
     if ambiguous == 0 {
-        let recovered: Source = snapshot(recover(first, second, third))
+        let reconstructed: bytes = recover(first, second, third)
+        let recovered: Source = snapshot(reconstructed)
         let first_damage = damaged_offsets(first, recovered)
         let second_damage = damaged_offsets(second, recovered)
         let third_damage = damaged_offsets(third, recovered)
@@ -83,7 +84,7 @@ if size(first) == size(second) and size(second) == size(third) {
         print "record valid:"
         print valid_record(recovered)
         print "recovered bytes:"
-        print to_hex(recover(first, second, third))
+        print to_hex(reconstructed)
         print "sha256:"
         print sha256(recovered)
         print "capture 1 damaged offsets:"
