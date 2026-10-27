@@ -1,0 +1,22 @@
+# A small GaleikanScript workflow. The .gaks suffix signals intended use;
+# the language is identical to .gak and this file can also be compiled
+# if every construct is supported by the native backend.
+import std.binary
+import std.iter
+
+let sample: Source = binary.snapshot(binary.from_hex("47 41 4b 00 90 90 00 01"))
+var zero_bytes: i64 = 0
+
+for offset in iter.range(binary.size(sample)) {
+    let byte: Observation = binary.deep(sample, offset, "u8")
+    if binary.value(byte) == 0 {
+        zero_bytes = zero_bytes + 1
+    }
+}
+
+print "bytes:"
+print binary.size(sample)
+print "zero bytes:"
+print zero_bytes
+print "sha256:"
+print binary.sha256(sample)

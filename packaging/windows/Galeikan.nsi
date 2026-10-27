@@ -8,7 +8,7 @@ Unicode true
   !error "Pass -DOUTPUT_EXE=<absolute path> to makensis"
 !endif
 
-Name "Galeikan 0.1.0 Preview"
+Name "Galeikan 0.1.0 Preview 1.1"
 OutFile "${OUTPUT_EXE}"
 InstallDir "$LOCALAPPDATA\Programs\Galeikan"
 RequestExecutionLevel user
@@ -19,6 +19,7 @@ SetCompressor /SOLID lzma
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_BITMAP "assets/header.bmp"
 !define MUI_WELCOMEFINISHPAGE_BITMAP "assets/welcome.bmp"
+!define MUI_FINISHPAGE_TEXT "Galeikan is ready. Open a new terminal and run galeikan --help. Terminals already open before installation may need to be restarted."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -48,6 +49,18 @@ Section "Galeikan CLI" SEC_CLI
   File /r "${PROJECT_ROOT}/editors/vscode/galeikan/*"
   SetOutPath "$INSTDIR\editor"
   File "${PROJECT_ROOT}/dist/galeikan-language-0.1.0.vsix"
+
+  SetOutPath "$INSTDIR\tools"
+  File /oname=galeikan-path.exe "${PROJECT_ROOT}/dist/galeikan-path.exe"
+  ExecWait '"$INSTDIR\tools\galeikan-path.exe" add "$INSTDIR"' $0
+  StrCmp $0 0 path_ready
+    MessageBox MB_ICONSTOP|MB_OK "Galeikan could not update your user PATH (error $0). Installation cannot complete."
+    Abort
+  path_ready:
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe" "" "$INSTDIR\galeikan.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe" "Path" "$INSTDIR"
+  CreateDirectory "$SMPROGRAMS\Galeikan"
+  CreateShortCut "$SMPROGRAMS\Galeikan\Galeikan CLI.lnk" "$SYSDIR\cmd.exe" '/k ""$INSTDIR\galeikan.exe" --help"' "$INSTDIR\icons\galeikan.ico"
 
   WriteRegStr HKCU "Software\Classes\Galeikan.Lang" "" "Galeikan source (.gak)"
   WriteRegStr HKCU "Software\Classes\Galeikan.Lang\DefaultIcon" "" "$INSTDIR\icons\galeikan.ico"
@@ -81,7 +94,7 @@ Section "Galeikan CLI" SEC_CLI
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview 1.1"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayIcon" "$INSTDIR\icons\galeikan.ico"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "InstallLocation" "$INSTDIR"
@@ -90,6 +103,18 @@ Section "Galeikan CLI" SEC_CLI
 SectionEnd
 
 Section "Uninstall"
+  ExecWait '"$INSTDIR\tools\galeikan-path.exe" remove "$INSTDIR"' $0
+  StrCmp $0 0 path_removed
+    MessageBox MB_ICONSTOP|MB_OK "Galeikan could not remove its user PATH entry (error $0). Please retry the uninstaller."
+    Abort
+  path_removed:
+  StrCpy $0 ""
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe" ""
+  StrCmp $0 "$INSTDIR\galeikan.exe" 0 app_path_done
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe"
+  app_path_done:
+  Delete "$SMPROGRAMS\Galeikan\Galeikan CLI.lnk"
+  RMDir "$SMPROGRAMS\Galeikan"
   SetOutPath "$TEMP"
   Delete "$INSTDIR\galeikan.exe"
   Delete "$INSTDIR\README.md"
@@ -99,6 +124,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\icons"
   RMDir /r "$INSTDIR\brand"
   RMDir /r "$INSTDIR\editor"
+  RMDir /r "$INSTDIR\tools"
   ClearErrors
   Delete "$INSTDIR\Uninstall.exe"
   IfErrors retry_self_delete self_delete_done

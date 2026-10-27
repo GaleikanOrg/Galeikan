@@ -1,13 +1,13 @@
 # Getting started with Galeikan
 
-Galeikan accepts both `.gak` and `.gaks` as source files. They have identical language semantics. Use the extension that best communicates whether a file is mainly a program or a script; either file can use `run`, `build`, or `compile`.
+Galeikan accepts both `.gak` and `.gaks` as source files. They have identical language semantics. Use `.gaks` to signal a script and `.gak` to signal a program; either file can use `run`, `build`, or `compile`. On Windows, the installer adds Galeikan to your user PATH. Open a new terminal after installation before running these commands. The Debian package installs the CLI at `/usr/bin/galeikan`.
 
 ```sh
 galeikan check examples/hello.gak
-galeikan run examples/hello.gak
-galeikan run examples/hello.gak --engine vm
-galeikan build examples/hello.gak
-galeikan exec examples/hello.gakb
+galeikan run examples/inspect_script.gaks
+galeikan run examples/inspect_script.gaks --engine vm
+galeikan build examples/inspect_script.gaks
+galeikan exec examples/inspect_script.gakb
 galeikan compile examples/native_scalar.gak
 ```
 

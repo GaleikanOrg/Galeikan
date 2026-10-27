@@ -18,8 +18,13 @@ $binary = Join-Path $projectRoot 'target\release\galeikan.exe'
 if (-not (Test-Path -LiteralPath $binary)) { throw "Missing binary: $binary" }
 & (Join-Path $PSScriptRoot 'build-vscode-extension.ps1') | Out-Null
 
+$pathHelper = Join-Path $distDir 'galeikan-path.exe'
+$pathHelperSource = Join-Path $projectRoot 'packaging\windows\path_helper.c'
+& gcc -O2 -std=c11 -Wall -Wextra -Werror -municode -mwindows -static -o $pathHelper $pathHelperSource -ladvapi32 -luser32 -lshell32
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pathHelper)) { throw 'Galeikan PATH helper build failed' }
+
 $script = Join-Path $projectRoot 'packaging\windows\Galeikan.nsi'
-$output = Join-Path $distDir 'Galeikan-0.1.0-preview-windows-x64-setup.exe'
+$output = Join-Path $distDir 'Galeikan-0.1.0-preview1.1-windows-x64-setup.exe'
 $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 Push-Location (Split-Path -Parent $script)
 try {

@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview-windows-x64-setup.exe'
+$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview1.1-windows-x64-setup.exe'
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
 if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -9,6 +9,12 @@ if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::Ordina
 }
 if (-not (Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
 if (Test-Path -LiteralPath $smokeRoot) { throw "Smoke target already exists: $smokeRoot" }
+if (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan') {
+    throw 'A Galeikan installation already exists; the isolated smoke test will not overwrite it'
+}
+$registryEnvironment = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+$originalUserPath = $registryEnvironment.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$registryEnvironment.Dispose()
 
 function Remove-SmokeFiles([string[]]$Paths) {
     $smokePrefix = $smokeRoot.TrimEnd('\') + '\'
@@ -46,6 +52,14 @@ function Remove-CaseArtifact([string]$casePath) {
 
 $install = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$smokeRoot" -Wait -PassThru -WindowStyle Hidden
 if ($install.ExitCode -ne 0) { throw "Silent install failed with exit code $($install.ExitCode)" }
+$registryEnvironment = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+$installedUserPath = $registryEnvironment.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$registryEnvironment.Dispose()
+if (-not $installedUserPath.EndsWith(";$smokeRoot") -and $installedUserPath -ne $smokeRoot) {
+    throw 'Installer did not add Galeikan to the user PATH'
+}
+$appPath = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe').GetValue('')
+if ($appPath -ne (Join-Path $smokeRoot 'galeikan.exe')) { throw 'Installer did not register the CLI App Path' }
 $binary = Join-Path $smokeRoot 'galeikan.exe'
 $example = Join-Path $smokeRoot 'examples\hello.gak'
 if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $example)) {
@@ -87,7 +101,7 @@ if ($langIcon -ne (Join-Path $smokeRoot 'icons\galeikan.ico') -or $scriptIcon -n
     throw 'Installed Galeikan file type icon registration is invalid'
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
-if ($productName -ne 'Galeikan 0.1.0 Preview') { throw 'Installed product name is not Galeikan' }
+if ($productName -ne 'Galeikan 0.1.0 Preview 1.1') { throw 'Installed product name is not Galeikan' }
 $installedGuide = Join-Path $smokeRoot 'docs\quickstart.md'
 $sourceGuide = Join-Path $projectRoot 'packaging\docs\quickstart.md'
 if (-not (Test-Path -LiteralPath $installedGuide) -or
@@ -573,6 +587,10 @@ if (Test-Path -LiteralPath $smokeRoot) {
     }
 }
 if (Test-Path -LiteralPath $smokeRoot) { throw "Uninstaller left files in $smokeRoot" }
+$registryEnvironment = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+$uninstalledUserPath = $registryEnvironment.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$registryEnvironment.Dispose()
+if ($uninstalledUserPath -cne $originalUserPath) { throw 'Uninstaller did not restore the user PATH' }
 if ((Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Lang') -or
     (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Script') -or
     (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan')) {
