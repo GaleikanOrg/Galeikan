@@ -5583,6 +5583,55 @@ fn native_binary_hexdump_errors_match_vm() {
 }
 
 #[test]
+fn utf16be_binary_text_matches_ast_vm_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "utf16be-text.gak",
+        "from std.binary import from_hex, snapshot, read_text, strings\nfrom std.result import is_error\nfn probe(source: Source) -> Result<str> = read_text(source, 0, 1, \"utf16be\")\nlet source = snapshot(from_hex(\"00 41 00 42 00 00 41 00 42 00 00 43\"))\nlet truncated = snapshot(from_hex(\"00\"))\nprint read_text(source, 0, 2, \"utf16be\")\nprint read_text(source, 5, 2, \"utf16be\")\nprint read_text(source, 6, 2, \"utf16le\")\nprint read_text(source, 10, 1, \"utf16be\")\nprint strings(source, 2, \"utf16be\")\nprint strings(source, 2, \"utf16le\")\nprint strings(truncated, 1, \"utf16be\")\nprint is_error(probe(truncated))\n",
+    );
+    let run = |engine: &str| {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap()
+    };
+    let ast = run("ast");
+    let vm = run("vm");
+    assert!(
+        ast.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ast.stderr)
+    );
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(ast.stdout, vm.stdout);
+    assert_eq!(vm.stdout, b"AB\nAB\nAB\nC\n[0, 5]\n[1, 6]\n[]\ntrue\n");
+
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_read_text_matches_vm_for_ascii_utf16le_and_views() {
     if !gcc_available() {
         return;

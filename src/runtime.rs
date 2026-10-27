@@ -7441,6 +7441,7 @@ fn diff_offsets(left: &[u8], right: &[u8], limit: usize) -> Result<Vec<usize>, S
 enum TextEncoding {
     Ascii,
     Utf16Le,
+    Utf16Be,
 }
 
 impl TextEncoding {
@@ -7448,27 +7449,27 @@ impl TextEncoding {
         match name {
             "ascii" => Ok(Self::Ascii),
             "utf16le" => Ok(Self::Utf16Le),
-            _ => Err("text encoding must be ascii or utf16le".into()),
+            "utf16be" => Ok(Self::Utf16Be),
+            _ => Err("text encoding must be ascii, utf16le, or utf16be".into()),
         }
     }
 
     fn width(self) -> usize {
         match self {
             Self::Ascii => 1,
-            Self::Utf16Le => 2,
+            Self::Utf16Le | Self::Utf16Be => 2,
         }
     }
 
     fn printable(self, bytes: &[u8], offset: usize) -> Option<u8> {
         let first = *bytes.get(offset)?;
-        if !(0x20..=0x7e).contains(&first) {
-            return None;
-        }
-        match self {
-            Self::Ascii => Some(first),
-            Self::Utf16Le if bytes.get(offset + 1) == Some(&0) => Some(first),
-            Self::Utf16Le => None,
-        }
+        let character = match self {
+            Self::Ascii => first,
+            Self::Utf16Le if bytes.get(offset + 1) == Some(&0) => first,
+            Self::Utf16Be if first == 0 => *bytes.get(offset + 1)?,
+            _ => return None,
+        };
+        (0x20..=0x7e).contains(&character).then_some(character)
     }
 }
 
