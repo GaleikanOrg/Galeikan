@@ -1,0 +1,100 @@
+# Three damaged captures of the same 32-byte evidence record.
+# No file or network permissions are needed: all input is embedded below.
+from std.binary import from_hex, snapshot, deep, value, size, sha256
+from std.bytes import concat, pack, to_hex
+from std.iter import range
+from std.list import append, count
+
+fn at(source: Source, offset: i64) -> i64 {
+    return value(deep(source, offset, "u8"))
+}
+
+fn majority(left: i64, middle: i64, right: i64) -> i64 {
+    if left == middle or left == right {
+        return left
+    }
+    if middle == right {
+        return middle
+    }
+    return -1
+}
+
+fn ambiguous_count(first: Source, second: Source, third: Source) -> i64 {
+    var total: i64 = 0
+    for offset in range(size(first)) {
+        if majority(at(first, offset), at(second, offset), at(third, offset)) == -1 {
+            total = total + 1
+        }
+    }
+    return total
+}
+
+fn recover(first: Source, second: Source, third: Source) -> bytes {
+    var output: bytes = from_hex("")
+    for offset in range(size(first)) {
+        let chosen = majority(at(first, offset), at(second, offset), at(third, offset))
+        output = concat(output, pack(chosen, "u8"))
+    }
+    return output
+}
+
+fn damaged_offsets(capture: Source, recovered: Source) -> List<i64> {
+    var offsets: List<i64> = []
+    for offset in range(size(recovered)) {
+        if at(capture, offset) != at(recovered, offset) {
+            offsets = append(offsets, offset)
+        }
+    }
+    return offsets
+}
+
+fn checksum(source: Source) -> i64 {
+    var total: i64 = 0
+    for offset in range(size(source) - 2) {
+        total = total + at(source, offset)
+    }
+    return total
+}
+
+fn valid_record(source: Source) -> bool {
+    if size(source) != 32 {
+        return false
+    }
+    let magic = value(deep(source, 0, "u32be"))
+    let payload_length = at(source, 4)
+    let stored_checksum = value(deep(source, size(source) - 2, "u16be"))
+    return magic == 0x47414b31 and payload_length == size(source) - 7 and stored_checksum == checksum(source)
+}
+
+let first: Source = snapshot(from_hex("47 41 5a 31 19 72 65 62 65 61 72 63 68 2d 65 67 69 64 65 6e 63 65 3c 32 30 32 36 2d 31 30 09 5f"))
+let second: Source = snapshot(from_hex("47 41 4b 31 3b 72 65 73 65 43 72 63 68 2d 65 76 69 64 47 6e 63 65 2d 32 30 10 36 2d 31 30 09 5f"))
+let third: Source = snapshot(from_hex("47 72 4b 31 19 72 65 73 65 61 72 50 68 2d 65 76 69 64 65 6e 50 65 2d 32 30 32 36 2d 31 03 09 5f"))
+
+if size(first) == size(second) and size(second) == size(third) {
+    let ambiguous = ambiguous_count(first, second, third)
+    print "ambiguous positions:"
+    print ambiguous
+    if ambiguous == 0 {
+        let recovered: Source = snapshot(recover(first, second, third))
+        let first_damage = damaged_offsets(first, recovered)
+        let second_damage = damaged_offsets(second, recovered)
+        let third_damage = damaged_offsets(third, recovered)
+
+        print "record valid:"
+        print valid_record(recovered)
+        print "recovered bytes:"
+        print to_hex(recover(first, second, third))
+        print "sha256:"
+        print sha256(recovered)
+        print "capture 1 damaged offsets:"
+        print first_damage
+        print "capture 2 damaged offsets:"
+        print second_damage
+        print "capture 3 damaged offsets:"
+        print third_damage
+        print "total damaged positions:"
+        print count(first_damage) + count(second_damage) + count(third_damage)
+    }
+} else {
+    print "capture lengths differ"
+}

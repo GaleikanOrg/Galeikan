@@ -69,6 +69,7 @@ Galeikan is designed to make effects explicit and binary observations traceable.
 - [Quickstart](docs/quickstart.md)
 - [Technical overview](docs/technical.md)
 - [Language examples](examples/)
+- [Triple-capture coding challenge](docs/triple-capture-challenge.md)
 - [Visual Studio Code extension](editors/vscode/galeikan/)
 
 The public release documentation is in English. The project is under active development.
