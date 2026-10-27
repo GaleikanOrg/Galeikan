@@ -12,6 +12,7 @@ pub enum TokenKind {
     Minus,
     Star,
     Slash,
+    Percent,
     Ampersand,
     Pipe,
     Caret,
@@ -104,6 +105,10 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             '/' => {
                 lexer.bump();
                 TokenKind::Slash
+            }
+            '%' => {
+                lexer.bump();
+                TokenKind::Percent
             }
             '&' => {
                 lexer.bump();
@@ -484,6 +489,7 @@ pub enum Op {
     Shl,
     Shr,
     Ushr,
+    Rem,
 }
 
 #[derive(Clone, Debug)]
@@ -1189,6 +1195,7 @@ impl Parser {
                 TokenKind::Minus => (9, Op::Sub),
                 TokenKind::Star => (10, Op::Mul),
                 TokenKind::Slash => (10, Op::Div),
+                TokenKind::Percent => (10, Op::Rem),
                 _ => break,
             };
             if prec < min_prec {

@@ -10,6 +10,107 @@ use std::time::{Duration, Instant};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn remainder_operator_matches_ast_vm_bundle_and_native() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "remainder.gak",
+        "fn rem(n: i64, d: i64) -> i64 = n % d\nprint rem(-17, 5)\nprint 17 % -5\nprint -17 % -5\nprint 17u64 % 5u64\nprint 18446744073709551615u64 % 10u64\nprint 2 + 9 % 4 * 3\nprint (2 + 9) % 4\n",
+    );
+    let expected = b"-2\n2\n-2\n2\n5\n5\n3\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
+fn remainder_operator_rejects_zero_and_signed_overflow_across_engines() {
+    let s = Sandbox::new();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for (name, expression, message) in [
+        ("zero", "5 % 0", "division by zero"),
+        ("unsigned-zero", "5u64 % 0u64", "division by zero"),
+        (
+            "overflow",
+            "(-9223372036854775807 - 1) % -1",
+            "integer overflow",
+        ),
+    ] {
+        let script = s.write(&format!("{name}.gak"), &format!("print {expression}\n"));
+        for engine in ["ast", "vm"] {
+            let output = Command::new(galeikan)
+                .arg("run")
+                .arg(&script)
+                .args(["--engine", engine])
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{name} {engine}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        }
+        if gcc_available() {
+            let compiled = s.compile(&script);
+            assert!(
+                compiled.status.success(),
+                "{}",
+                String::from_utf8_lossy(&compiled.stderr)
+            );
+            let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+            let native = Command::new(executable).output().unwrap();
+            assert!(!native.status.success(), "{name}");
+            assert!(String::from_utf8_lossy(&native.stderr).contains(message));
+        }
+    }
+}
+
+#[test]
 fn escaped_string_literals_match_all_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(

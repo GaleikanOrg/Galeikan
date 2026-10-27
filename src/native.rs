@@ -5482,17 +5482,22 @@ impl Codegen {
                 });
                 Ok(left_kind)
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Div if left_kind == Scalar::UInt => {
+            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem if left_kind == Scalar::UInt => {
                 match op {
                     Op::Add => self.code.push_str("    add rax, r10\n    jc gak_overflow\n"),
                     Op::Sub => self.code.push_str("    sub r10, rax\n    jc gak_overflow\n    mov rax, r10\n"),
                     Op::Mul => self.code.push_str("    mov r11, rax\n    mov rax, r10\n    mul r11\n    test rdx, rdx\n    jnz gak_overflow\n"),
-                    Op::Div => self.code.push_str("    mov r11, rax\n    test r11, r11\n    jz gak_divzero\n    mov rax, r10\n    xor edx, edx\n    div r11\n"),
+                    Op::Div | Op::Rem => {
+                        self.code.push_str("    mov r11, rax\n    test r11, r11\n    jz gak_divzero\n    mov rax, r10\n    xor edx, edx\n    div r11\n");
+                        if matches!(op, Op::Rem) {
+                            self.code.push_str("    mov rax, rdx\n");
+                        }
+                    }
                     _ => unreachable!(),
                 }
                 Ok(Scalar::UInt)
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Div if left_kind == Scalar::Int => {
+            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem if left_kind == Scalar::Int => {
                 match op {
                     Op::Add => self
                         .code
@@ -5503,9 +5508,12 @@ impl Codegen {
                     Op::Mul => self
                         .code
                         .push_str("    imul rax, r10\n    jo gak_overflow\n"),
-                    Op::Div => {
+                    Op::Div | Op::Rem => {
                         let safe = self.label();
                         writeln!(self.code, "    mov r11, rax\n    test r11, r11\n    jz gak_divzero\n    mov rax, r10\n    mov r10, 0x8000000000000000\n    cmp rax, r10\n    jne {safe}\n    cmp r11, -1\n    je gak_overflow\n{safe}:\n    cqo\n    idiv r11").unwrap();
+                        if matches!(op, Op::Rem) {
+                            self.code.push_str("    mov rax, rdx\n");
+                        }
                     }
                     _ => unreachable!(),
                 }

@@ -3891,6 +3891,7 @@ impl Runtime {
                         | Op::Sub
                         | Op::Mul
                         | Op::Div
+                        | Op::Rem
                         | Op::BitAnd
                         | Op::BitOr
                         | Op::BitXor
@@ -3914,6 +3915,7 @@ impl Runtime {
                                     | Op::Sub
                                     | Op::Mul
                                     | Op::Div
+                                    | Op::Rem
                                     | Op::BitAnd
                                     | Op::BitOr
                                     | Op::BitXor
@@ -6757,7 +6759,7 @@ fn apply_try(value: Value) -> Result<Value, String> {
 fn apply_binary(left: Value, op: Op, right: Value) -> Result<Value, String> {
     match op {
         Op::And | Op::Or => Err("logical operators require short-circuit evaluation".into()),
-        Op::Add | Op::Sub | Op::Mul | Op::Div => match (left, right) {
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem => match (left, right) {
             (Value::Str(a), Value::Str(b)) if matches!(op, Op::Add) => {
                 let length = a
                     .len()
@@ -6780,10 +6782,11 @@ fn apply_binary(left: Value, op: Op, right: Value) -> Result<Value, String> {
                     Op::Sub => a.checked_sub(b),
                     Op::Mul => a.checked_mul(b),
                     Op::Div => a.checked_div(b),
+                    Op::Rem => a.checked_rem(b),
                     _ => unreachable!(),
                 };
                 result.map(Value::Int).ok_or_else(|| {
-                    if matches!(op, Op::Div) && b == 0 {
+                    if matches!(op, Op::Div | Op::Rem) && b == 0 {
                         "division by zero".into()
                     } else {
                         "integer overflow".into()
@@ -6796,10 +6799,11 @@ fn apply_binary(left: Value, op: Op, right: Value) -> Result<Value, String> {
                     Op::Sub => a.checked_sub(b),
                     Op::Mul => a.checked_mul(b),
                     Op::Div => a.checked_div(b),
+                    Op::Rem => a.checked_rem(b),
                     _ => unreachable!(),
                 };
                 result.map(Value::UInt).ok_or_else(|| {
-                    if matches!(op, Op::Div) && b == 0 {
+                    if matches!(op, Op::Div | Op::Rem) && b == 0 {
                         "division by zero".into()
                     } else {
                         "integer overflow".into()
