@@ -9,7 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/GaleikanOrg/Galeikan?include_prereleases&style=flat-square&label=release&color=7ccfff)](https://github.com/GaleikanOrg/Galeikan/releases)
 ![Development preview](https://img.shields.io/badge/status-development%20preview-16344b?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%7C%20Debian%2013-16344b?style=flat-square)
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/galeikan.galeikan-language?style=flat-square&label=VS%20Code&color=7ccfff)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
+[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-7ccfff?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
 **Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical overview](docs/technical.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
