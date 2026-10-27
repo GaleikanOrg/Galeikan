@@ -19,6 +19,7 @@
     { "scope": "comment.line.number-sign.galeikan", "settings": { "foreground": "#7891A2", "fontStyle": "italic" } },
     { "scope": "string.quoted.double.galeikan", "settings": { "foreground": "#BBE4FF" } },
     { "scope": "constant.character.escape.galeikan", "settings": { "foreground": "#73C8FF" } },
+    { "scope": "invalid.illegal.escape.galeikan", "settings": { "foreground": "#FF758A", "fontStyle": "underline" } },
     { "scope": "keyword.control.galeikan, storage.type.function.galeikan", "settings": { "foreground": "#69C6FF", "fontStyle": "bold" } },
     { "scope": "entity.name.function.galeikan, entity.name.function.call.galeikan", "settings": { "foreground": "#FFFFFF" } },
     { "scope": "storage.type.primitive.galeikan, entity.name.type.galeikan", "settings": { "foreground": "#9CD9FF" } },

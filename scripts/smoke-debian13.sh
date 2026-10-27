@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0~preview1_amd64.deb"
+package="$project_root/dist/galeikan_0.1.0~preview2_amd64.deb"
 if [[ "$(id -u)" != 0 ]]; then
   printf 'Run this isolated Debian smoke test as root.\n' >&2
   exit 1

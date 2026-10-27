@@ -2,13 +2,17 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0~preview1_amd64.deb"
+package="$project_root/dist/galeikan_0.1.0~preview2_amd64.deb"
 if [[ ! -f "$package" ]]; then
   printf 'Missing package: %s\n' "$package" >&2
   exit 1
 fi
 [[ "$(dpkg-deb --field "$package" Package)" == galeikan ]] || {
   printf 'Debian product name is not Galeikan.\n' >&2
+  exit 1
+}
+[[ "$(dpkg-deb --field "$package" Version)" == '0.1.0~preview2' ]] || {
+  printf 'Debian package version is not Preview 2.\n' >&2
   exit 1
 }
 staging="$(mktemp -d)"
@@ -20,7 +24,7 @@ test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan.png"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"
 cmp "$project_root/logo_GaleikanEcosystem.jpg" "$staging/usr/share/galeikan/brand/logo_GaleikanEcosystem.jpg"
 test -f "$staging/usr/share/galeikan/editor/vscode/package.json"
-for asset in language-configuration.json syntaxes/galeikan.tmLanguage.json themes/galeikan-noir-color-theme.json; do
+for asset in package.json language-configuration.json syntaxes/galeikan.tmLanguage.json themes/galeikan-noir-color-theme.json; do
   cmp "$project_root/editors/vscode/galeikan/$asset" "$staging/usr/share/galeikan/editor/vscode/$asset"
 done
 for asset in pyproject.toml galeikan_bridge/__init__.py galeikan_bridge/_runner.py; do

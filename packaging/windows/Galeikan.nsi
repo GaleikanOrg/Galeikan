@@ -8,7 +8,7 @@ Unicode true
   !error "Pass -DOUTPUT_EXE=<absolute path> to makensis"
 !endif
 
-Name "Galeikan 0.1.0 Preview 1.1"
+Name "Galeikan 0.1.0 Preview 2"
 OutFile "${OUTPUT_EXE}"
 InstallDir "$LOCALAPPDATA\Programs\Galeikan"
 RequestExecutionLevel user
@@ -48,7 +48,7 @@ Section "Galeikan CLI" SEC_CLI
   SetOutPath "$INSTDIR\editor\vscode"
   File /r "${PROJECT_ROOT}/editors/vscode/galeikan/*"
   SetOutPath "$INSTDIR\editor"
-  File "${PROJECT_ROOT}/dist/galeikan-language-0.1.0.vsix"
+  File "${PROJECT_ROOT}/dist/galeikan-language-0.1.1.vsix"
 
   SetOutPath "$INSTDIR\tools"
   File /oname=galeikan-path.exe "${PROJECT_ROOT}/dist/galeikan-path.exe"
@@ -94,7 +94,7 @@ Section "Galeikan CLI" SEC_CLI
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview 1.1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview 2"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayIcon" "$INSTDIR\icons\galeikan.ico"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "InstallLocation" "$INSTDIR"

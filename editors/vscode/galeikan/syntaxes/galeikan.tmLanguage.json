@@ -23,7 +23,10 @@
         "name": "string.quoted.double.galeikan",
         "begin": "\"",
         "end": "\"",
-        "patterns": [{ "name": "constant.character.escape.galeikan", "match": "\\\\[ntr\"\\\\]" }]
+        "patterns": [
+          { "name": "constant.character.escape.galeikan", "match": "\\\\(?:[ntr0\"\\\\]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})" },
+          { "name": "invalid.illegal.escape.galeikan", "match": "\\\\(?:x[0-9A-Fa-f]?|u\\{[^}\\n]*\\}?|.)" }
+        ]
       }]
     },
     "comments": { "patterns": [{ "name": "comment.line.number-sign.galeikan", "match": "#.*$" }] },

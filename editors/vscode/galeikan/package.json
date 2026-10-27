@@ -2,7 +2,7 @@
   "name": "galeikan-language",
   "displayName": "Galeikan",
   "description": "Galeikan syntax highlighting and Eclipse color theme",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "galeikan",
   "icon": "icon.png",
   "repository": {

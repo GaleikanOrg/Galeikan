@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview1.1-windows-x64-setup.exe'
+$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview2-windows-x64-setup.exe'
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
 if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -66,11 +66,17 @@ if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $exam
     throw 'Installer did not produce the expected binary and example.'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $smokeRoot 'icons\galeikan.ico')) -or
-    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\galeikan-language-0.1.0.vsix')) -or
+    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\galeikan-language-0.1.1.vsix')) -or
     -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\package.json'))) {
     throw 'Installed file icons or editor assets are missing'
 }
-foreach ($asset in @('language-configuration.json', 'syntaxes\galeikan.tmLanguage.json', 'themes\galeikan-noir-color-theme.json')) {
+$installedVsix = Join-Path $smokeRoot 'editor\galeikan-language-0.1.1.vsix'
+$builtVsix = Join-Path $projectRoot 'dist\galeikan-language-0.1.1.vsix'
+if ((Get-FileHash -LiteralPath $installedVsix -Algorithm SHA256).Hash -ne
+    (Get-FileHash -LiteralPath $builtVsix -Algorithm SHA256).Hash) {
+    throw 'Installed VS Code extension does not match the current build'
+}
+foreach ($asset in @('package.json', 'language-configuration.json', 'syntaxes\galeikan.tmLanguage.json', 'themes\galeikan-noir-color-theme.json')) {
     $installedAsset = Join-Path (Join-Path $smokeRoot 'editor\vscode') $asset
     $sourceAsset = Join-Path (Join-Path $projectRoot 'editors\vscode\galeikan') $asset
     if (-not (Test-Path -LiteralPath $installedAsset) -or
@@ -101,7 +107,7 @@ if ($langIcon -ne (Join-Path $smokeRoot 'icons\galeikan.ico') -or $scriptIcon -n
     throw 'Installed Galeikan file type icon registration is invalid'
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
-if ($productName -ne 'Galeikan 0.1.0 Preview 1.1') { throw 'Installed product name is not Galeikan' }
+if ($productName -ne 'Galeikan 0.1.0 Preview 2') { throw 'Installed product name is not Galeikan' }
 $installedGuide = Join-Path $smokeRoot 'docs\quickstart.md'
 $sourceGuide = Join-Path $projectRoot 'packaging\docs\quickstart.md'
 if (-not (Test-Path -LiteralPath $installedGuide) -or

@@ -24,7 +24,7 @@ $pathHelperSource = Join-Path $projectRoot 'packaging\windows\path_helper.c'
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pathHelper)) { throw 'Galeikan PATH helper build failed' }
 
 $script = Join-Path $projectRoot 'packaging\windows\Galeikan.nsi'
-$output = Join-Path $distDir 'Galeikan-0.1.0-preview1.1-windows-x64-setup.exe'
+$output = Join-Path $distDir 'Galeikan-0.1.0-preview2-windows-x64-setup.exe'
 $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 Push-Location (Split-Path -Parent $script)
 try {
