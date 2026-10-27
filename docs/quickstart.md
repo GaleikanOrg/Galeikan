@@ -22,3 +22,5 @@ Effectful operations require declarations in the source and matching command-lin
 The preview is designed for bounded, reproducible research. It does not yet implement every planned language feature or a general sandbox for untrusted code. The native backend supports a smaller subset than the interpreter and VM.
 
 Integer bit operations include `&`, `|`, `^`, `~`, `<<`, arithmetic `>>`, and logical `>>>`. Shift counts must be between 0 and 63. Hexadecimal literals may describe any 64-bit pattern; patterns with the high bit set are interpreted as signed `i64` values.
+
+String literals support `\n`, `\t`, `\r`, `\0`, `\"`, `\\`, `\xNN` (exactly two hexadecimal digits), and `\u{N}` (one to six hexadecimal digits forming a valid Unicode scalar value). `\xNN` inserts the corresponding Unicode character, so values above `0x7f` are encoded as UTF-8 when used as text. Use `bytes.from_hex(...)` when exact raw byte values matter.

@@ -213,17 +213,64 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                             break;
                         }
                         Some('\\') => {
+                            let escape_line = lexer.line;
+                            let escape_col = lexer.col;
                             lexer.bump();
                             let escaped = match lexer.peek() {
                                 Some('n') => '\n',
                                 Some('t') => '\t',
                                 Some('r') => '\r',
+                                Some('0') => '\0',
                                 Some('"') => '"',
                                 Some('\\') => '\\',
+                                Some('x') => {
+                                    lexer.bump();
+                                    let codepoint = lexer.read_hex_digits(2).ok_or_else(|| {
+                                        format!(
+                                            "{escape_line}:{escape_col}: expected two hex digits after \\x"
+                                        )
+                                    })?;
+                                    value.push(char::from_u32(codepoint).unwrap());
+                                    continue;
+                                }
+                                Some('u') => {
+                                    lexer.bump();
+                                    if lexer.peek() != Some('{') {
+                                        return Err(format!(
+                                            "{escape_line}:{escape_col}: expected '{{' after \\u"
+                                        ));
+                                    }
+                                    lexer.bump();
+                                    let mut codepoint = 0_u32;
+                                    let mut digits = 0;
+                                    while let Some(digit) =
+                                        lexer.peek().and_then(|ch| ch.to_digit(16))
+                                    {
+                                        if digits == 6 {
+                                            return Err(format!(
+                                                "{escape_line}:{escape_col}: Unicode escape exceeds six hex digits"
+                                            ));
+                                        }
+                                        codepoint = codepoint * 16 + digit;
+                                        digits += 1;
+                                        lexer.bump();
+                                    }
+                                    if digits == 0 || lexer.peek() != Some('}') {
+                                        return Err(format!(
+                                            "{escape_line}:{escape_col}: expected 1-6 hex digits and '}}' in Unicode escape"
+                                        ));
+                                    }
+                                    lexer.bump();
+                                    value.push(char::from_u32(codepoint).ok_or_else(|| {
+                                        format!(
+                                            "{escape_line}:{escape_col}: invalid Unicode scalar value"
+                                        )
+                                    })?);
+                                    continue;
+                                }
                                 _ => {
                                     return Err(format!(
-                                        "{}:{}: invalid escape sequence",
-                                        lexer.line, lexer.col
+                                        "{escape_line}:{escape_col}: invalid escape sequence"
                                     ))
                                 }
                             };
@@ -320,6 +367,15 @@ impl Lexer<'_> {
                 self.col += 1;
             }
         }
+    }
+    fn read_hex_digits(&mut self, count: usize) -> Option<u32> {
+        let mut value = 0_u32;
+        for _ in 0..count {
+            let digit = self.peek()?.to_digit(16)?;
+            value = value * 16 + digit;
+            self.bump();
+        }
+        Some(value)
     }
 }
 

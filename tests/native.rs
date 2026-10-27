@@ -10,6 +10,113 @@ use std::time::{Duration, Instant};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn escaped_string_literals_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "escaped-strings.gak",
+        r#"from std.text import length, byte_length
+print "\u{1F600}"
+print "\x41\0B"
+print "\u{e9}" == "é"
+print "\xE9" == "é"
+print byte_length("\xE9")
+print length("\u{1F600}")
+print byte_length("\u{1F600}")
+"#,
+    );
+    let binary = env!("CARGO_BIN_EXE_galeikan");
+    let expected = "😀\nA\0B\ntrue\ntrue\n2\n1\n4\n".as_bytes();
+    for engine in ["ast", "vm"] {
+        let output = Command::new(binary)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(binary)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executed = Command::new(binary)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    assert_eq!(executed.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
+fn malformed_string_escapes_have_source_locations() {
+    let s = Sandbox::new();
+    for (name, literal, message) in [
+        ("short-hex", r#""\x4""#, "expected two hex digits after \\x"),
+        (
+            "invalid-hex",
+            r#""\x4G""#,
+            "expected two hex digits after \\x",
+        ),
+        ("empty-unicode", r#""\u{}""#, "expected 1-6 hex digits"),
+        ("surrogate", r#""\u{d800}""#, "invalid Unicode scalar value"),
+        (
+            "too-large",
+            r#""\u{110000}""#,
+            "invalid Unicode scalar value",
+        ),
+        (
+            "too-long",
+            r#""\u{0000000}""#,
+            "Unicode escape exceeds six hex digits",
+        ),
+        ("missing-brace", r#""\u1234""#, "expected '{' after \\u"),
+    ] {
+        let script = s.write(&format!("{name}.gak"), &format!("print {literal}\n"));
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("check")
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{name}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("1:8:"), "{name}: {error}");
+        assert!(error.contains(message), "{name}: {error}");
+    }
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;
