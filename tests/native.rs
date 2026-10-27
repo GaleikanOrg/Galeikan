@@ -5415,7 +5415,7 @@ fn native_bytes_pack_matches_vm_across_widths_and_endianness() {
     let s = Sandbox::new();
     let script = s.write(
         "bytes-pack.gak",
-        "from std.bytes import pack, to_hex\nprint to_hex(pack(0xab, \"u8\"))\nprint to_hex(pack(0x1234, \"u16le\"))\nprint to_hex(pack(0x1234, \"u16be\"))\nprint to_hex(pack(0x12345678, \"u32le\"))\nprint to_hex(pack(0x12345678, \"u32be\"))\nprint to_hex(pack(0x123456789abcdefu64, \"u64le\"))\nprint to_hex(pack(0x123456789abcdefu64, \"u64be\"))\nprint to_hex(pack(18446744073709551615u64, \"u64be\"))\n",
+        "from std.bytes import pack, to_hex\nprint to_hex(pack(0xab, \"u8\"))\nprint to_hex(pack(0x1234, \"u16le\"))\nprint to_hex(pack(0x1234, \"u16be\"))\nprint to_hex(pack(0x12345678, \"u32le\"))\nprint to_hex(pack(0x12345678, \"u32be\"))\nprint to_hex(pack(0x123456789abcdefu64, \"u64le\"))\nprint to_hex(pack(0x123456789abcdefu64, \"u64be\"))\nprint to_hex(pack(18446744073709551615u64, \"u64be\"))\nprint to_hex(pack(-128, \"i8\"))\nprint to_hex(pack(-2, \"i16le\"))\nprint to_hex(pack(-2, \"i16be\"))\nprint to_hex(pack(-2, \"i32le\"))\nprint to_hex(pack(-2, \"i32be\"))\nprint to_hex(pack(-2, \"i64le\"))\nprint to_hex(pack(-2, \"i64be\"))\nprint to_hex(pack((-9223372036854775807 - 1), \"i64be\"))\nprint to_hex(pack(127u64, \"i8\"))\n",
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("run")
@@ -5442,7 +5442,7 @@ fn native_bytes_pack_matches_vm_across_widths_and_endianness() {
         String::from_utf8_lossy(&native.stderr)
     );
     assert_eq!(native.stdout, vm.stdout);
-    assert_eq!(native.stdout, b"ab\n3412\n1234\n78563412\n12345678\nefcdab8967452301\n0123456789abcdef\nffffffffffffffff\n");
+    assert_eq!(native.stdout, b"ab\n3412\n1234\n78563412\n12345678\nefcdab8967452301\n0123456789abcdef\nffffffffffffffff\n80\nfeff\nfffe\nfeffffff\nfffffffe\nfeffffffffffffff\nfffffffffffffffe\n8000000000000000\n7f\n");
 }
 
 #[test]
@@ -5457,6 +5457,15 @@ fn native_bytes_pack_errors_match_vm() {
         ("pack-u16-range.gak", "pack(65536, \"u16be\")"),
         ("pack-u32-range.gak", "pack(4294967296u64, \"u32le\")"),
         ("pack-encoding.gak", "pack(1, \"u128le\")"),
+        ("pack-negative-encoding.gak", "pack(-1, \"u128le\")"),
+        ("pack-i8-low.gak", "pack(-129, \"i8\")"),
+        ("pack-i8-high.gak", "pack(128, \"i8\")"),
+        ("pack-i16-high.gak", "pack(32768, \"i16be\")"),
+        ("pack-i32-low.gak", "pack(-2147483649, \"i32le\")"),
+        (
+            "pack-i64-unsigned.gak",
+            "pack(18446744073709551615u64, \"i64be\")",
+        ),
     ] {
         let script = s.write(
             name,

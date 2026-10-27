@@ -319,13 +319,20 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_pack_negative", "pack expects a nonnegative value"),
     (
         "gak_pack_encoding",
-        "pack encoding must be u8, u16le/be, u32le/be, or u64le/be",
+        "pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be",
     ),
     ("gak_pack_range_u8", "pack value out of range for u8"),
     ("gak_pack_range_u16le", "pack value out of range for u16le"),
     ("gak_pack_range_u16be", "pack value out of range for u16be"),
     ("gak_pack_range_u32le", "pack value out of range for u32le"),
     ("gak_pack_range_u32be", "pack value out of range for u32be"),
+    ("gak_pack_range_i8", "pack value out of range for i8"),
+    ("gak_pack_range_i16le", "pack value out of range for i16le"),
+    ("gak_pack_range_i16be", "pack value out of range for i16be"),
+    ("gak_pack_range_i32le", "pack value out of range for i32le"),
+    ("gak_pack_range_i32be", "pack value out of range for i32be"),
+    ("gak_pack_range_i64le", "pack value out of range for i64le"),
+    ("gak_pack_range_i64be", "pack value out of range for i64be"),
     (
         "gak_result_invalid",
         "result.fail needs a nonempty message of at most 4096 bytes",
@@ -4641,46 +4648,108 @@ impl Codegen {
                     encoding_slot * 8
                 )
                 .unwrap();
-                if kind == Scalar::Int {
-                    writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_pack_negative", value_slot * 8).unwrap();
-                }
                 let done = self.label();
-                for (format, width, max, instruction) in [
-                    ("u8", 1, Some(255_u64), "mov BYTE PTR [rax+8], r10b"),
-                    ("u16le", 2, Some(65535), "mov WORD PTR [rax+8], r10w"),
+                for (format, width, max, signed_bounds, instruction) in [
+                    ("u8", 1, Some(255_u64), None, "mov BYTE PTR [rax+8], r10b"),
+                    ("u16le", 2, Some(65535), None, "mov WORD PTR [rax+8], r10w"),
                     (
                         "u16be",
                         2,
                         Some(65535),
+                        None,
                         "rol r10w, 8\n    mov WORD PTR [rax+8], r10w",
                     ),
                     (
                         "u32le",
                         4,
                         Some(u32::MAX as u64),
+                        None,
                         "mov DWORD PTR [rax+8], r10d",
                     ),
                     (
                         "u32be",
                         4,
                         Some(u32::MAX as u64),
+                        None,
                         "bswap r10d\n    mov DWORD PTR [rax+8], r10d",
                     ),
-                    ("u64le", 8, None, "mov QWORD PTR [rax+8], r10"),
+                    ("u64le", 8, None, None, "mov QWORD PTR [rax+8], r10"),
                     (
                         "u64be",
                         8,
                         None,
+                        None,
+                        "bswap r10\n    mov QWORD PTR [rax+8], r10",
+                    ),
+                    (
+                        "i8",
+                        1,
+                        None,
+                        Some((-128, 127)),
+                        "mov BYTE PTR [rax+8], r10b",
+                    ),
+                    (
+                        "i16le",
+                        2,
+                        None,
+                        Some((-32768, 32767)),
+                        "mov WORD PTR [rax+8], r10w",
+                    ),
+                    (
+                        "i16be",
+                        2,
+                        None,
+                        Some((-32768, 32767)),
+                        "rol r10w, 8\n    mov WORD PTR [rax+8], r10w",
+                    ),
+                    (
+                        "i32le",
+                        4,
+                        None,
+                        Some((i32::MIN as i64, i32::MAX as i64)),
+                        "mov DWORD PTR [rax+8], r10d",
+                    ),
+                    (
+                        "i32be",
+                        4,
+                        None,
+                        Some((i32::MIN as i64, i32::MAX as i64)),
+                        "bswap r10d\n    mov DWORD PTR [rax+8], r10d",
+                    ),
+                    (
+                        "i64le",
+                        8,
+                        None,
+                        Some((i64::MIN, i64::MAX)),
+                        "mov QWORD PTR [rax+8], r10",
+                    ),
+                    (
+                        "i64be",
+                        8,
+                        None,
+                        Some((i64::MIN, i64::MAX)),
                         "bswap r10\n    mov QWORD PTR [rax+8], r10",
                     ),
                 ] {
                     let next = self.label();
                     let label = self.literal(format)?;
                     writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{label}]\n    call gak_str_eq\n    test eax, eax\n    jz {next}", self.arg0(), encoding_slot * 8, self.arg1()).unwrap();
+                    if let Some((min, max)) = signed_bounds {
+                        if kind == Scalar::UInt {
+                            writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov r10, {max}\n    cmp rax, r10\n    ja gak_pack_range_{format}", value_slot * 8).unwrap();
+                        } else if min != i64::MIN || max != i64::MAX {
+                            writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov r10, {min}\n    cmp rax, r10\n    jl gak_pack_range_{format}\n    mov r10, {max}\n    cmp rax, r10\n    jg gak_pack_range_{format}", value_slot * 8).unwrap();
+                        }
+                    } else if kind == Scalar::Int {
+                        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_pack_negative", value_slot * 8).unwrap();
+                    }
                     if let Some(max) = max {
                         writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov r10, {max}\n    cmp rax, r10\n    ja gak_pack_range_{format}", value_slot * 8).unwrap();
                     }
                     writeln!(self.code, "    mov eax, {width}\n    call gak_alloc_bytes\n    mov r10, QWORD PTR [rbp-{}]\n    {instruction}\n    jmp {done}\n{next}:", value_slot * 8).unwrap();
+                }
+                if kind == Scalar::Int {
+                    writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_pack_negative", value_slot * 8).unwrap();
                 }
                 writeln!(self.code, "    jmp gak_pack_encoding\n{done}:").unwrap();
                 Ok(Scalar::Bytes)
@@ -5592,8 +5661,11 @@ impl Codegen {
         out.push_str("gak_text_limit_prefix: .ascii \"LimitExceeded: text exceeds \"\ngak_text_limit_prefix_end:\ngak_text_limit_suffix: .ascii \" characters\"\ngak_text_limit_suffix_end:\n");
         out.push_str("gak_source_depth_msg: .ascii \"LimitExceeded: Source derivation depth exceeds 64\\n\"\ngak_source_depth_msg_end:\ngak_source_limit_msg: .ascii \"native Source memory exceeds 64 MiB\\n\"\ngak_source_limit_msg_end:\ngak_source_backing_limit_msg: .ascii \"native Source backing memory exceeds 512 MiB\\n\"\ngak_source_backing_limit_msg_end:\n");
         out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\n");
-        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, u16le/be, u32le/be, or u64le/be\\n\"\ngak_pack_encoding_msg_end:\n");
-        for format in ["u8", "u16le", "u16be", "u32le", "u32be"] {
+        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be\\n\"\ngak_pack_encoding_msg_end:\n");
+        for format in [
+            "u8", "u16le", "u16be", "u32le", "u32be", "i8", "i16le", "i16be", "i32le", "i32be",
+            "i64le", "i64be",
+        ] {
             writeln!(out, "gak_pack_range_{format}_msg: .ascii \"pack value out of range for {format}\\n\"\ngak_pack_range_{format}_msg_end:").unwrap();
         }
         out.push_str("gak_result_limit_msg: .ascii \"result memory exceeds 64 MiB\\n\"\ngak_result_limit_msg_end:\ngak_result_invalid_msg: .ascii \"result.fail needs a nonempty message of at most 4096 bytes\\n\"\ngak_result_invalid_msg_end:\ngak_result_message_success_msg: .ascii \"result.message requires a failed Result\\n\"\ngak_result_message_success_msg_end:\ngak_result_untyped_success_msg: .ascii \"untyped Result cannot contain success\\n\"\ngak_result_untyped_success_msg_end:\n");
@@ -6636,6 +6708,13 @@ gak_cli_utf8_done:
             ("gak_pack_range_u16be", "gak_pack_range_u16be_msg"),
             ("gak_pack_range_u32le", "gak_pack_range_u32le_msg"),
             ("gak_pack_range_u32be", "gak_pack_range_u32be_msg"),
+            ("gak_pack_range_i8", "gak_pack_range_i8_msg"),
+            ("gak_pack_range_i16le", "gak_pack_range_i16le_msg"),
+            ("gak_pack_range_i16be", "gak_pack_range_i16be_msg"),
+            ("gak_pack_range_i32le", "gak_pack_range_i32le_msg"),
+            ("gak_pack_range_i32be", "gak_pack_range_i32be_msg"),
+            ("gak_pack_range_i64le", "gak_pack_range_i64le_msg"),
+            ("gak_pack_range_i64be", "gak_pack_range_i64be_msg"),
             ("gak_result_invalid", "gak_result_invalid_msg"),
             (
                 "gak_result_message_success",

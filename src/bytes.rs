@@ -104,11 +104,25 @@ pub fn to_hex(data: &[u8]) -> Result<String, String> {
 }
 
 pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
+    if matches!(
+        encoding,
+        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+    ) {
+        return pack_signed(value, encoding);
+    }
     let unsigned = u64::try_from(value).map_err(|_| "pack expects a nonnegative value")?;
     pack_unsigned(unsigned, encoding)
 }
 
 pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
+    if matches!(
+        encoding,
+        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+    ) {
+        let signed = i64::try_from(unsigned)
+            .map_err(|_| format!("pack value out of range for {encoding}"))?;
+        return pack_signed(signed, encoding);
+    }
     let out = match encoding {
         "u8" => vec![u8::try_from(unsigned).map_err(|_| "pack value out of range for u8")?],
         "u16le" => u16::try_from(unsigned)
@@ -129,7 +143,36 @@ pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
             .to_vec(),
         "u64le" => unsigned.to_le_bytes().to_vec(),
         "u64be" => unsigned.to_be_bytes().to_vec(),
-        _ => return Err("pack encoding must be u8, u16le/be, u32le/be, or u64le/be".into()),
+        _ => return Err("pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be".into()),
+    };
+    Ok(out)
+}
+
+fn pack_signed(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
+    let out = match encoding {
+        "i8" => i8::try_from(value)
+            .map_err(|_| "pack value out of range for i8")?
+            .to_le_bytes()
+            .to_vec(),
+        "i16le" => i16::try_from(value)
+            .map_err(|_| "pack value out of range for i16le")?
+            .to_le_bytes()
+            .to_vec(),
+        "i16be" => i16::try_from(value)
+            .map_err(|_| "pack value out of range for i16be")?
+            .to_be_bytes()
+            .to_vec(),
+        "i32le" => i32::try_from(value)
+            .map_err(|_| "pack value out of range for i32le")?
+            .to_le_bytes()
+            .to_vec(),
+        "i32be" => i32::try_from(value)
+            .map_err(|_| "pack value out of range for i32be")?
+            .to_be_bytes()
+            .to_vec(),
+        "i64le" => value.to_le_bytes().to_vec(),
+        "i64be" => value.to_be_bytes().to_vec(),
+        _ => unreachable!("signed encodings are selected before calling pack_signed"),
     };
     Ok(out)
 }
@@ -210,7 +253,23 @@ mod tests {
             pack(0x123456789abcdef, "u64be").unwrap(),
             [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
         );
+        assert_eq!(pack(-128, "i8").unwrap(), [0x80]);
+        assert_eq!(pack(-2, "i16le").unwrap(), [0xfe, 0xff]);
+        assert_eq!(pack(-2, "i16be").unwrap(), [0xff, 0xfe]);
+        assert_eq!(pack(-2, "i32le").unwrap(), [0xfe, 0xff, 0xff, 0xff]);
+        assert_eq!(pack(-2, "i32be").unwrap(), [0xff, 0xff, 0xff, 0xfe]);
+        assert_eq!(pack(-2, "i64le").unwrap()[0], 0xfe);
+        assert_eq!(pack(-2, "i64be").unwrap()[7], 0xfe);
+        assert_eq!(pack_unsigned(127, "i8").unwrap(), [0x7f]);
         assert!(pack(-1, "u8").unwrap_err().contains("nonnegative"));
+        assert!(pack(-129, "i8").unwrap_err().contains("out of range"));
+        assert!(pack(128, "i8").unwrap_err().contains("out of range"));
+        assert!(pack_unsigned(128, "i8")
+            .unwrap_err()
+            .contains("out of range"));
+        assert!(pack_unsigned(u64::MAX, "i64be")
+            .unwrap_err()
+            .contains("out of range"));
         assert!(pack(256, "u8").unwrap_err().contains("out of range"));
         assert!(pack(65536, "u16le").unwrap_err().contains("out of range"));
         assert!(pack(4294967296, "u32be")
