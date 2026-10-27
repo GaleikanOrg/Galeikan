@@ -4801,6 +4801,17 @@ impl Runtime {
                     .map_err(|_| "Observation value does not fit i64")?,
             )),
             ("value_u64", [Value::Observation(observation)]) => Ok(Value::UInt(observation.value)),
+            ("signed_value", [Value::Observation(observation)]) => {
+                let width = match observation.decoder {
+                    "u8" => 1,
+                    "u16le" | "u16be" => 2,
+                    "u32le" | "u32be" => 4,
+                    "u64le" | "u64be" => 8,
+                    _ => return Err("Observation is not an unsigned integer field".into()),
+                };
+                let shift = 64 - width * 8;
+                Ok(Value::Int(((observation.value << shift) as i64) >> shift))
+            }
             ("offset", [Value::Observation(observation)]) => Ok(Value::Int(
                 i64::try_from(observation.offset).map_err(|_| "offset out of range")?,
             )),
@@ -7189,6 +7200,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "splice") => (&[Source, Int, Int, Bytes], Source),
         ("binary", "value" | "offset" | "width") => (&[Observation], Int),
         ("binary", "value_u64") => (&[Observation], UInt),
+        ("binary", "signed_value") => (&[Observation], Int),
         ("binary", "diff") => (&[Source, Source, Int], Diff),
         ("binary", "diff_offsets") => (&[Diff], Offsets),
         ("binary", "diff_count") => (&[Diff], Int),

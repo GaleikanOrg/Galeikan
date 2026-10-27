@@ -4213,9 +4213,33 @@ impl Codegen {
                 writeln!(self.code, "    jmp gak_binary_unknown_decoder\n{done}:").unwrap();
                 Ok(Scalar::Observation)
             }
-            ("value" | "value_u64" | "offset" | "width", [observation]) => {
+            ("value" | "value_u64" | "signed_value" | "offset" | "width", [observation]) => {
                 if self.expr(observation, scope)? != Scalar::Observation {
                     return Err(format!("binary.{name} expects Observation"));
+                }
+                if name == "signed_value" {
+                    let slot = self.reserve_slot()?;
+                    writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                    let signed8 = self.label();
+                    let signed16 = self.label();
+                    let signed32 = self.label();
+                    let signed64 = self.label();
+                    let done = self.label();
+                    for (decoder, target) in [
+                        ("u8", &signed8),
+                        ("u16le", &signed16),
+                        ("u16be", &signed16),
+                        ("u32le", &signed32),
+                        ("u32be", &signed32),
+                        ("u64le", &signed64),
+                        ("u64be", &signed64),
+                    ] {
+                        let literal = self.literal(decoder)?;
+                        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [{}+24]\n    lea {}, [rip+{literal}]\n    call gak_str_eq\n    test eax, eax\n    jnz {target}", self.arg0(), slot * 8, self.arg0(), self.arg0(), self.arg1()).unwrap();
+                    }
+                    let invalid = self.literal("Observation is not an unsigned integer field")?;
+                    writeln!(self.code, "    lea rax, [rip+{invalid}]\n    jmp gak_analyze_error_dynamic\n{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
+                    return Ok(Scalar::Int);
                 }
                 match name {
                     "value" => self.code.push_str("    mov rax, QWORD PTR [rax+32]\n    test rax, rax\n    js gak_observation_value_range\n"),
@@ -6630,9 +6654,7 @@ gak_cli_utf8_done:
         if self.uses_file_read || self.uses_python || self.uses_process || self.uses_net {
             out.push_str("gak_native_init_error:\n    mov rax, QWORD PTR [rip+gak_file_error]\n    mov edx, 1\n    call gak_alloc_result\n    jmp gak_uncaught_result\n");
         }
-        if self.uses_file_read || self.uses_process || self.uses_net || self.uses_formats {
-            out.push_str("gak_analyze_error_dynamic:\n    mov edx, 1\n    call gak_alloc_result\n    jmp gak_uncaught_result\n");
-        }
+        out.push_str("gak_analyze_error_dynamic:\n    mov edx, 1\n    call gak_alloc_result\n    jmp gak_uncaught_result\n");
         if self.uses_python {
             out.push_str("gak_python_error_dynamic:\n    mov edx, 1\n    call gak_alloc_result\n    jmp gak_uncaught_result\n");
         }

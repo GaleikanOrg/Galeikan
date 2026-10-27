@@ -5399,6 +5399,70 @@ fn native_sha256_matches_vm_for_bytes_and_source_views() {
 }
 
 #[test]
+fn signed_observations_match_ast_vm_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "signed-observations.gak",
+        r#"from std.binary import from_hex, snapshot, deep, signed_value, entropy
+from std.result import is_error, message
+fn signed(data: str, decoder: str) -> i64 = signed_value(deep(snapshot(from_hex(data)), 0, decoder))
+fn invalid() -> Result<i64> = signed_value(entropy(snapshot(from_hex("41"))))
+print signed("ff", "u8")
+print signed("80", "u8")
+print signed("00 80", "u16le")
+print signed("80 00", "u16be")
+print signed("00 00 00 80", "u32le")
+print signed("80 00 00 00", "u32be")
+print signed("00 00 00 00 00 00 00 80", "u64le")
+print signed("80 00 00 00 00 00 00 00", "u64be")
+print signed("7f ff ff ff ff ff ff ff", "u64be")
+print is_error(invalid())
+print message(invalid())
+"#,
+    );
+    let run = |engine: &str| {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap()
+    };
+    let ast = run("ast");
+    let vm = run("vm");
+    assert!(
+        ast.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ast.stderr)
+    );
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(ast.stdout, vm.stdout);
+    assert_eq!(vm.stdout, b"-1\n-128\n-32768\n-32768\n-2147483648\n-2147483648\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\ntrue\nObservation is not an unsigned integer field\n");
+
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_deep_matches_vm_for_decoders_and_observations() {
     if !gcc_available() {
         return;
