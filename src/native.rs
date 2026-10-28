@@ -610,6 +610,7 @@ struct Codegen {
     uses_net: bool,
     uses_text: bool,
     uses_formats: bool,
+    uses_bits: bool,
 }
 
 struct NativeHunt {
@@ -989,6 +990,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
         uses_net: false,
         uses_text: false,
         uses_formats: false,
+        uses_bits: false,
     };
     for module_path in &order {
         let module = &modules[module_path];
@@ -1431,6 +1433,7 @@ impl Codegen {
                     self.uses_net,
                     self.uses_text,
                     self.uses_formats,
+                    self.uses_bits,
                 );
                 let compiled = (|| -> Result<(), String> {
                     let next = self.label();
@@ -1512,6 +1515,7 @@ impl Codegen {
                     self.uses_net = checkpoint.13;
                     self.uses_text = checkpoint.14;
                     self.uses_formats = checkpoint.15;
+                    self.uses_bits = checkpoint.16;
                 }
             }
         }
@@ -4906,6 +4910,7 @@ impl Codegen {
                 Ok(Scalar::Observation)
             }
             ("bits" | "signed_bits", [source, offset, count, order]) => {
+                self.uses_bits = true;
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err(format!("binary.{name} expects Source"));
                 }
@@ -4951,6 +4956,7 @@ impl Codegen {
                 }
             }
             ("patch_bits" | "patch_signed_bits", [source, offset, count, value, order]) => {
+                self.uses_bits = true;
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.patch_bits expects Source".into());
                 }
@@ -7751,7 +7757,9 @@ gak_cli_utf8_done:
                 if self.windows { "    add rsp, 32" } else { "" },
             );
         out.push_str(&patch_runtime);
-        out.push_str(include_str!("native_bits.S"));
+        if self.uses_bits {
+            out.push_str(include_str!("native_bits.S"));
+        }
         let splice_runtime = include_str!("native_splice.S")
             .replace(
                 "__SHADOW_ENTER__",
