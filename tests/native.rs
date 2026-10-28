@@ -5804,7 +5804,37 @@ fn native_numeric_audit_matches_vm_for_signed_fields_and_errors() {
     let s = Sandbox::new();
     let script = s.write(
         "numeric-audit.gak",
-        "from std.binary import from_hex, snapshot, deep\nfrom std.audit import bound, expect, passed, failed\nfrom std.result import is_error\nfn inspect() -> Finding {\n    let source = snapshot(from_hex(\"ff fe\"))\n    return bound(deep(source, 0, \"i16be\"), -3, -1, \"signed.range\")\n}\nfn invalid_rule() -> Result<Finding> {\n    let source = snapshot(from_hex(\"fe\"))\n    return expect(deep(source, 0, \"i8\"), -2, \"bad rule\")\n}\nlet source = snapshot(from_hex(\"fe ff ff ff ff ff ff ff\"))\nlet finding: Finding = inspect()\nlet mismatch: Finding = expect(deep(source, 0, \"i8\"), -1, \"signed.mismatch\")\nprint passed(finding)\nprint failed(mismatch)\nprint passed(expect(deep(source, 0, \"i64le\"), -2, \"signed.word\"))\nprint passed(bound(deep(source, 0, \"u8\"), 200, 255, \"unsigned.range\"))\nprint failed(bound(deep(source, 0, \"u64le\"), 0, 9223372036854775807, \"unsigned.high\"))\nprint is_error(invalid_rule())\nimpact finding\nprint mismatch\n",
+        r#"from std.binary import from_hex, snapshot, deep
+from std.audit import bound, expect, passed, failed
+from std.result import is_error
+from std.list import count, append
+fn inspect() -> Finding {
+    let source = snapshot(from_hex("ff fe"))
+    return bound(deep(source, 0, "i16be"), -3, -1, "signed.range")
+}
+fn invalid_rule() -> Result<Finding> {
+    let source = snapshot(from_hex("fe"))
+    return expect(deep(source, 0, "i8"), -2, "bad rule")
+}
+let source = snapshot(from_hex("fe ff ff ff ff ff ff ff"))
+let finding: Finding = inspect()
+let mismatch: Finding = expect(deep(source, 0, "i8"), -1, "signed.mismatch")
+let findings: List<Finding> = [finding, mismatch]
+let collected: List<Finding> = append(findings, inspect())
+print passed(finding)
+print failed(mismatch)
+print passed(expect(deep(source, 0, "i64le"), -2, "signed.word"))
+print passed(bound(deep(source, 0, "u8"), 200, 255, "unsigned.range"))
+print failed(bound(deep(source, 0, "u64le"), 0, 9223372036854775807, "unsigned.high"))
+print is_error(invalid_rule())
+print count(findings)
+print passed(findings[0])
+print count(collected)
+print passed(collected[2])
+impact finding
+print mismatch
+print findings
+"#,
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .args(["run", script.to_str().unwrap(), "--engine", "vm"])
@@ -5831,11 +5861,11 @@ fn native_numeric_audit_matches_vm_for_signed_fields_and_errors() {
     let vm_text = String::from_utf8(vm.stdout).unwrap();
     let native_text = String::from_utf8(native.stdout).unwrap();
     assert!(
-        vm_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n"),
+        vm_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n2\ntrue\n3\ntrue\n"),
         "{vm_text}"
     );
     assert!(
-        native_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n"),
+        native_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n2\ntrue\n3\ntrue\n"),
         "{native_text}"
     );
     assert!(
