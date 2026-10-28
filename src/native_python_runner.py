@@ -18,14 +18,15 @@ executable = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else None
 
 def module_identity(path):
     directory = os.path.dirname(path)
-    parts = [os.path.splitext(os.path.basename(path))[0]]
+    stem = os.path.splitext(os.path.basename(path))[0]
+    parts = [] if stem == "__init__" else [stem]
     root = directory
     while os.path.isfile(os.path.join(root, "__init__.py")):
         parts.insert(0, os.path.basename(root))
         root = os.path.dirname(root)
         if len(parts) > 16:
             raise ImportError("Python package nesting exceeds 16 levels")
-    if len(parts) == 1:
+    if len(parts) == 1 and stem != "__init__":
         if directory not in sys.path:
             sys.path.insert(0, directory)
         return "galeikan_user_module", False

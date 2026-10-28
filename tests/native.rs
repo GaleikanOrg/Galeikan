@@ -1280,7 +1280,10 @@ fn native_python_package_relative_imports_match_vm() {
         return;
     }
     let s = Sandbox::new();
-    s.write("pkg/__init__.py", "bonus = 1\n");
+    s.write(
+        "pkg/__init__.py",
+        "bonus = 1\ndef value():\n    return bonus\n",
+    );
     s.write(
         "pkg/helper.py",
         "def double(value):\n    return value * 2\n",
@@ -1289,7 +1292,7 @@ fn native_python_package_relative_imports_match_vm() {
     s.write("pkg/sub/consumer.py", "from ..helper import double\nfrom .. import bonus\ndef answer(value):\n    return double(value) + bonus\n");
     let script = s.write(
         "main.gak",
-        "requires { python.exec }\nimport py.pkg.sub.consumer\nlet answer: i64 = consumer.answer(21)\nprint answer\n",
+        "requires { python.exec }\nimport py.pkg\nimport py.pkg.sub.consumer\nlet base: i64 = pkg.value()\nlet answer: i64 = consumer.answer(21)\nprint base\nprint answer\n",
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("run")
@@ -1302,7 +1305,7 @@ fn native_python_package_relative_imports_match_vm() {
         "{}",
         String::from_utf8_lossy(&vm.stderr)
     );
-    assert_eq!(vm.stdout, b"43\n");
+    assert_eq!(vm.stdout, b"1\n43\n");
     let built = s.compile(&script);
     assert!(
         built.status.success(),

@@ -671,20 +671,8 @@ fn python_module_target(
     target: &str,
     project: &project::Project,
 ) -> Result<(PathBuf, String), String> {
-    let filename = if let Some(module) = target.strip_prefix("py.") {
-        format!("{}.py", module.replace('.', "/"))
-    } else {
-        let module = target.strip_prefix("py:").ok_or("invalid Python import")?;
-        if module.ends_with(".py") {
-            module.to_owned()
-        } else {
-            format!("{module}.py")
-        }
-    };
-    let requested = importer
-        .parent()
-        .ok_or("module has no parent")?
-        .join(filename);
+    let requested =
+        project::python_module_path(importer.parent().ok_or("module has no parent")?, target)?;
     let path = requested
         .canonicalize()
         .map_err(|e| format!("cannot read Python module {}: {e}", requested.display()))?;

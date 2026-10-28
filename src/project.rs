@@ -108,6 +108,32 @@ pub fn source_module_path(base: &Path, target: &str) -> Result<PathBuf, String> 
     }
 }
 
+pub fn python_module_path(base: &Path, target: &str) -> Result<PathBuf, String> {
+    let explicit_file = target
+        .strip_prefix("py:")
+        .is_some_and(|module| module.ends_with(".py"));
+    let filename = if let Some(module) = target.strip_prefix("py.") {
+        format!("{}.py", module.replace('.', "/"))
+    } else {
+        let module = target.strip_prefix("py:").ok_or("invalid Python import")?;
+        if module.ends_with(".py") {
+            module.to_owned()
+        } else {
+            format!("{module}.py")
+        }
+    };
+    let file = base.join(filename);
+    if explicit_file || file.is_file() {
+        return Ok(file);
+    }
+    let package = file.with_extension("").join("__init__.py");
+    if package.is_file() {
+        Ok(package)
+    } else {
+        Ok(file)
+    }
+}
+
 pub fn resolve(entry: &Path) -> Result<Project, String> {
     let parent = entry.parent().ok_or("entry has no parent directory")?;
     let Some(root) = parent

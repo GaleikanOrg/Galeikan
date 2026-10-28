@@ -3405,17 +3405,7 @@ impl Runtime {
             let child = project::source_module_path(package_path, module)?;
             Import::Local(self.load_module(&child, false)?)
         } else if target.starts_with("py.") || target.starts_with("py:") {
-            let filename = if let Some(module) = target.strip_prefix("py.") {
-                format!("{}.py", module.replace('.', "/"))
-            } else {
-                let module = target.strip_prefix("py:").unwrap();
-                if module.ends_with(".py") {
-                    module.to_string()
-                } else {
-                    format!("{module}.py")
-                }
-            };
-            let python_path = path.parent().unwrap().join(filename);
+            let python_path = project::python_module_path(path.parent().unwrap(), target)?;
             let python_path = python_path.canonicalize().map_err(|e| {
                 format!("{}:{line}: cannot read Python module: {e}", path.display())
             })?;
