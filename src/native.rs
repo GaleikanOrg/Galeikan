@@ -310,6 +310,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_audit_expected_negative", "expected value must not be negative"),
     ("gak_audit_range", "maximum must be at least minimum"),
     ("gak_audit_rule", "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'"),
+    ("gak_audit_signal_expectation", "signal expectation must be present or absent"),
     ("gak_audit_pattern_limit", "search pattern exceeds 4096 bytes"),
     (
         "gak_source_depth",
@@ -1819,8 +1820,12 @@ impl Codegen {
     }
 
     fn print_finding(&mut self, impact: bool) -> Result<(), String> {
+        let other = self.label();
         let numeric = self.label();
         let done = self.label();
+        writeln!(self.code, "    test QWORD PTR [rax+32], 16\n    jz {other}").unwrap();
+        self.print_signal_finding(impact)?;
+        writeln!(self.code, "    jmp {done}\n{other}:").unwrap();
         writeln!(
             self.code,
             "    test QWORD PTR [rax+32], 8\n    jz {numeric}"
@@ -1831,6 +1836,117 @@ impl Codegen {
         self.print_numeric_finding(impact)?;
         writeln!(self.code, "{done}:").unwrap();
         Ok(())
+    }
+
+    fn print_signal_finding(&mut self, impact: bool) -> Result<(), String> {
+        let finding = self.reserve_slot()?;
+        let source = self.reserve_slot()?;
+        let field = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10\n    mov r10, QWORD PTR [rax+48]\n    mov QWORD PTR [rbp-{}], r10", finding * 8, source * 8, field * 8).unwrap();
+        self.write_const(if impact {
+            "impact { rule: \""
+        } else {
+            "finding(rule: \""
+        })?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]",
+            finding * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", status: ")?;
+        let failed = self.label();
+        let status_done = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    test QWORD PTR [r10+32], 4\n    jz {failed}",
+            finding * 8
+        )
+        .unwrap();
+        self.write_const("pass")?;
+        writeln!(self.code, "    jmp {status_done}\n{failed}:").unwrap();
+        self.write_const("fail")?;
+        writeln!(self.code, "{status_done}:").unwrap();
+        self.write_const(", signal: \"")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]",
+            finding * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", expected: \"")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]",
+            finding * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", actual: ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+            finding * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(", ")?;
+        if impact {
+            self.print_impact_source_fields(source, 0, "source", "origin", "sha256", None)?;
+        } else {
+            self.write_const("source: \"")?;
+            self.print_source_label(source, 0)?;
+            self.write_const("\", sha256: ")?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+                source * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Str, 0)?;
+        }
+        self.write_const(", field: ")?;
+        let unavailable = self.label();
+        let complete = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    jz {unavailable}",
+            field * 8
+        )
+        .unwrap();
+        self.write_const("[")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]",
+            field * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const("..")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]\n    add rax, QWORD PTR [r10+16]", field * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const(") ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]",
+            field * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(" = ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]",
+            field * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        writeln!(self.code, "    jmp {complete}\n{unavailable}:").unwrap();
+        self.write_const("unavailable")?;
+        writeln!(self.code, "{complete}:").unwrap();
+        self.write_const(if impact { " }" } else { ")" })
     }
 
     fn print_numeric_finding(&mut self, impact: bool) -> Result<(), String> {
@@ -4395,6 +4511,81 @@ impl Codegen {
             writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10]\n    mov QWORD PTR [rax+16], r10", hunt.needle * 8).unwrap();
             return Ok(Scalar::Finding);
         }
+        if let ("signal", [report, signal, expected, rule]) = (name, args) {
+            if self.expr(report, scope)? != Scalar::Format {
+                return Err("audit.signal expects Format".into());
+            }
+            let report_slot = self.reserve_slot()?;
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                report_slot * 8
+            )
+            .unwrap();
+            if self.expr(signal, scope)? != Scalar::Str {
+                return Err("audit.signal name must be str".into());
+            }
+            let signal_slot = self.reserve_slot()?;
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                signal_slot * 8
+            )
+            .unwrap();
+            if self.expr(expected, scope)? != Scalar::Str {
+                return Err("audit.signal expectation must be str".into());
+            }
+            let expected_slot = self.reserve_slot()?;
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                expected_slot * 8
+            )
+            .unwrap();
+            let present = self.literal("present")?;
+            let absent = self.literal("absent")?;
+            let valid = self.label();
+            writeln!(self.code, "    mov {}, rax\n    lea {}, [rip+{present}]\n    call gak_str_eq\n    test eax, eax\n    jnz {valid}\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{absent}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_audit_signal_expectation\n{valid}:", self.arg0(), self.arg1(), self.arg0(), expected_slot * 8, self.arg1()).unwrap();
+            if self.expr(rule, scope)? != Scalar::Str {
+                return Err("audit.signal rule must be str".into());
+            }
+            let rule_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    call gak_validate_rule\n    test eax, eax\n    jz gak_audit_rule", rule_slot * 8).unwrap();
+            self.uses_formats = true;
+            let actual_slot = self.reserve_slot()?;
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_signal\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax", self.arg0(), report_slot * 8, self.arg1(), signal_slot * 8, actual_slot * 8).unwrap();
+            let flags_slot = self.reserve_slot()?;
+            let unequal = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_str_eq\n    test eax, eax\n    jz {unequal}\n    mov QWORD PTR [rbp-{}], 20\n    jmp {unequal}_done\n{unequal}:\n    mov QWORD PTR [rbp-{}], 16\n{unequal}_done:", self.arg0(), actual_slot * 8, self.arg1(), expected_slot * 8, flags_slot * 8, flags_slot * 8).unwrap();
+            let field_slot = self.reserve_slot()?;
+            let field_ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_signal_field\n    test rax, rax\n    jnz {field_ready}\n    mov r10, QWORD PTR [rip+gak_formats_error]\n    test r10, r10\n    jz {field_ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{field_ready}:\n    mov QWORD PTR [rbp-{}], rax", self.arg0(), report_slot * 8, self.arg1(), signal_slot * 8, field_slot * 8).unwrap();
+            self.code.push_str("    mov r10, QWORD PTR [rip+gak_finding_bytes]\n    add r10, 56\n    jc gak_finding_limit\n    cmp r10, 67108864\n    ja gak_finding_limit\n    mov QWORD PTR [rip+gak_finding_bytes], r10\n");
+            writeln!(
+                self.code,
+                "    mov {}, 56\n    call malloc\n    test rax, rax\n    jz gak_alloc_failure",
+                self.arg0()
+            )
+            .unwrap();
+            for (offset, slot) in [
+                (8, rule_slot),
+                (16, signal_slot),
+                (24, expected_slot),
+                (32, flags_slot),
+                (40, actual_slot),
+                (48, field_slot),
+            ] {
+                writeln!(
+                    self.code,
+                    "    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rax+{offset}], r10",
+                    slot * 8
+                )
+                .unwrap();
+            }
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10]\n    mov QWORD PTR [rax], r10", report_slot * 8).unwrap();
+            return Ok(Scalar::Finding);
+        }
         let (observation, min, max, rule) = match (name, args) {
             ("bound", [observation, min, max, rule]) => (observation, min, Some(max), rule),
             ("expect", [observation, expected, rule]) => (observation, expected, None, rule),
@@ -6150,6 +6341,10 @@ impl Codegen {
                 "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'",
             ),
             (
+                "gak_audit_signal_expectation",
+                "signal expectation must be present or absent",
+            ),
+            (
                 "gak_audit_pattern_limit",
                 "search pattern exceeds 4096 bytes",
             ),
@@ -7256,6 +7451,10 @@ gak_cli_utf8_done:
             ),
             ("gak_audit_range", "gak_audit_range_msg"),
             ("gak_audit_rule", "gak_audit_rule_msg"),
+            (
+                "gak_audit_signal_expectation",
+                "gak_audit_signal_expectation_msg",
+            ),
             ("gak_audit_pattern_limit", "gak_audit_pattern_limit_msg"),
             ("gak_finding_limit", "gak_finding_limit_msg"),
             ("gak_source_depth", "gak_source_depth_msg"),

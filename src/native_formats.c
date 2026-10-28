@@ -29,6 +29,9 @@ typedef struct {
     uint64_t load_count;
     uint64_t load_rwx;
     uint64_t bind_now; /* 0 = unknown, 1 = absent, 2 = present */
+    uint64_t bind_now_field_available;
+    uint64_t bind_now_field_at;
+    uint64_t bind_now_field_value;
     uint64_t machine_at;
     uint64_t entry_at;
     uint64_t entry_width;
@@ -348,20 +351,37 @@ static int gak_elf(const uint8_t *bytes, uint64_t length, GakFormat *report) {
     if (dynamic_seen && dynamic_size > 0 && dynamic_size <= 1024u * 1024u &&
         dynamic_size % (width * 2u) == 0 && gak_span(length, dynamic_offset, dynamic_size)) {
         int marker = 0, flags_seen = 0, flags1_seen = 0, duplicate = 0, terminated = 0;
-        uint64_t flags = 0, flags1 = 0;
+        uint64_t flags = 0, flags1 = 0, marker_at = 0, flags_at = 0, flags1_at = 0;
         for (uint64_t index = 0; index < dynamic_size / (width * 2u); index++) {
             uint64_t at = dynamic_offset + index * (width * 2u);
             uint64_t tag = gak_number(bytes, at, width, big);
             if (tag == 0) { terminated = 1; break; }
             if (tag != 24 && tag != 30 && tag != 0x6ffffffbu) continue;
             uint64_t value = gak_number(bytes, at + width, width, big);
-            if (tag == 24) { if (marker) duplicate = 1; marker = 1; }
-            if (tag == 30) { if (flags_seen) duplicate = 1; flags_seen = 1; flags = value; }
-            if (tag == 0x6ffffffbu) { if (flags1_seen) duplicate = 1; flags1_seen = 1; flags1 = value; }
+            if (tag == 24) { if (marker) duplicate = 1; marker = 1; marker_at = at; }
+            if (tag == 30) { if (flags_seen) duplicate = 1; flags_seen = 1; flags = value; flags_at = at + width; }
+            if (tag == 0x6ffffffbu) { if (flags1_seen) duplicate = 1; flags1_seen = 1; flags1 = value; flags1_at = at + width; }
         }
         if (terminated && !duplicate) {
             report->bind_now = marker || (flags_seen && (flags & 8u)) ||
                                (flags1_seen && (flags1 & 1u)) ? 2 : 1;
+            if (marker) {
+                report->bind_now_field_available = 1;
+                report->bind_now_field_at = marker_at;
+                report->bind_now_field_value = 24;
+            } else if (flags_seen && (flags & 8u)) {
+                report->bind_now_field_available = 1;
+                report->bind_now_field_at = flags_at;
+                report->bind_now_field_value = flags;
+            } else if (flags1_seen) {
+                report->bind_now_field_available = 1;
+                report->bind_now_field_at = flags1_at;
+                report->bind_now_field_value = flags1;
+            } else if (flags_seen) {
+                report->bind_now_field_available = 1;
+                report->bind_now_field_at = flags_at;
+                report->bind_now_field_value = flags;
+            }
         }
     }
     report->kind = 2;
@@ -2969,4 +2989,56 @@ const void *gak_native_formats_signal(const void *value, const void *name) {
     }
     gak_format_fail("unknown format signal");
     return NULL;
+}
+
+/* Optional evidence for audit.signal; an unavailable field is not an error. */
+void *gak_native_formats_signal_field(const void *value, const void *name) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (!format || !name) { gak_format_fail("invalid format signal"); return NULL; }
+    uint64_t offset = 0, width = 0, number = 0;
+    if (gak_format_name(name, "pe.high_entropy_va") ||
+        gak_format_name(name, "pe.dynamic_base") ||
+        gak_format_name(name, "pe.nx_compat") ||
+        gak_format_name(name, "pe.guard_cf")) {
+        if (!format->dll_available) return NULL;
+        offset = format->dll_at; width = 2; number = format->dll_characteristics;
+    } else if (gak_format_name(name, "pe.section_wx")) {
+        if (format->kind != 1 || !format->section_wx) return NULL;
+        const GakSourceHead *source = format->source;
+        const uint8_t *bytes = source->backing + 8 + source->start;
+        for (uint64_t index = 0; index < format->sections; index++) {
+            uint64_t at = format->section_table + index * format->section_stride + 36;
+            uint64_t flags = gak_number(bytes, at, 4, 0);
+            if ((flags & 0xa0000000u) == 0xa0000000u) {
+                offset = at; width = 4; number = flags; break;
+            }
+        }
+        if (!width) return NULL;
+    } else if (gak_format_name(name, "elf.et_dyn")) {
+        if (format->kind != 2) return NULL;
+        offset = 16; width = 2; number = format->file_type;
+    } else if (gak_format_name(name, "elf.gnu_stack_nx")) {
+        if (!format->stack_available) return NULL;
+        offset = format->stack_flags_at; width = 4; number = format->stack_flags;
+    } else if (gak_format_name(name, "elf.bind_now")) {
+        if (!format->bind_now_field_available) return NULL;
+        offset = format->bind_now_field_at;
+        width = format->bits / 8;
+        number = format->bind_now_field_value;
+    } else {
+        return NULL;
+    }
+    const void *decoder = width == 2 ?
+        (format->big_endian ? (const void *)&text_u16be : (const void *)&text_u16le) :
+        width == 4 ? (format->big_endian ? (const void *)&text_u32be : (const void *)&text_u32le) :
+                     (format->big_endian ? (const void *)&text_u64be : (const void *)&text_u64le);
+    if (format_memory > 64u * 1024u * 1024u - sizeof(GakNumericField)) {
+        gak_format_fail("format memory limit"); return NULL;
+    }
+    GakNumericField *field = malloc(sizeof(*field));
+    if (!field) { gak_format_fail("native allocation failed"); return NULL; }
+    *field = (GakNumericField){format->source, offset, width, number, decoder};
+    format_memory += sizeof(*field);
+    return field;
 }

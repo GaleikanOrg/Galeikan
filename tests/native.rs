@@ -5920,6 +5920,76 @@ print findings
 }
 
 #[test]
+fn native_signal_audit_matches_vm_for_pe_elf_fields_and_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x98 + 0xf0 + 40];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x98 + 0xf0 + 36..0x98 + 0xf0 + 40].copy_from_slice(&0xe000_0020_u32.to_le_bytes());
+    let mut elf = vec![0_u8; 0x220];
+    elf[..4].copy_from_slice(b"\x7fELF");
+    elf[4..7].copy_from_slice(&[2, 1, 1]);
+    elf[16..18].copy_from_slice(&3_u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    elf[32..40].copy_from_slice(&64_u64.to_le_bytes());
+    elf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    elf[56..58].copy_from_slice(&2_u16.to_le_bytes());
+    elf[64..68].copy_from_slice(&0x6474_e552_u32.to_le_bytes());
+    elf[64 + 40..64 + 48].copy_from_slice(&16_u64.to_le_bytes());
+    elf[120..124].copy_from_slice(&2_u32.to_le_bytes());
+    elf[120 + 8..120 + 16].copy_from_slice(&0x200_u64.to_le_bytes());
+    elf[120 + 32..120 + 40].copy_from_slice(&32_u64.to_le_bytes());
+    elf[120 + 40..120 + 48].copy_from_slice(&32_u64.to_le_bytes());
+    elf[0x200..0x208].copy_from_slice(&0x6fff_fffb_u64.to_le_bytes());
+    elf[0x208..0x210].copy_from_slice(&1_u64.to_le_bytes());
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let script = s.write(
+        "signal-audit.gak",
+        &format!(
+            "from std.binary import from_hex, snapshot\nfrom std.formats import probe\nfrom std.audit import signal, passed, failed\nfrom std.result import is_error, message\nlet pe = probe(snapshot(from_hex(\"{}\")))\nlet elf = probe(snapshot(from_hex(\"{}\")))\nfn invalid_expectation() -> Result<Finding> = signal(pe, \"pe.section_wx\", \"unknown\", \"invalid.expected\")\nfn invalid_name() -> Result<Finding> = signal(pe, \"invalid.signal\", \"present\", \"invalid.name\")\nfn invalid_rule() -> Result<Finding> = signal(pe, \"pe.section_wx\", \"present\", \"bad rule\")\nlet wx = signal(pe, \"pe.section_wx\", \"absent\", \"pe.wx\")\nlet bind = signal(elf, \"elf.bind_now\", \"present\", \"elf.bind\")\nprint failed(wx)\nprint passed(bind)\nprint signal(pe, \"pe.guard_cf\", \"absent\", \"pe.guard\")\nprint signal(elf, \"elf.gnu_relro\", \"present\", \"elf.relro\")\nprint is_error(invalid_expectation())\nprint message(invalid_expectation())\nprint is_error(invalid_name())\nprint is_error(invalid_rule())\nprint message(invalid_rule())\nimpact wx\nimpact bind\n",
+            hex(&pe), hex(&elf)
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_pattern_audit_matches_vm_for_bytes_text_and_masked_hex() {
     if !gcc_available() {
         return;
