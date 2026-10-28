@@ -119,6 +119,17 @@ impl Session {
         self.request(module, function, "call", args, expected_sha256)
     }
 
+    pub fn invoke(
+        &mut self,
+        module: &Path,
+        function: &str,
+        args: &[Value],
+        expected_sha256: Option<&str>,
+    ) -> Result<(), String> {
+        self.request(module, function, "invoke", args, expected_sha256)?;
+        Ok(())
+    }
+
     pub fn get(
         &mut self,
         module: &Path,

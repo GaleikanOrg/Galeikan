@@ -1411,6 +1411,76 @@ fn standalone_calls_execute_across_ast_vm_bundle_and_native() {
 }
 
 #[test]
+fn standalone_python_calls_accept_none_across_engines_and_native() {
+    if !gcc_available() || !python_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write(
+        "helper.py",
+        "count = 0\ndef tick(value):\n    global count\n    count += value\ndef current():\n    return count\n",
+    );
+    let script = s.write(
+        "python-invoke.gak",
+        "requires { python.exec }\nimport py.helper\nfrom py.helper import tick as advance\nfn current() -> i64 = helper.current()\nhelper.tick(20)\nfor value in [1, 1] {\n    advance(value)\n}\nprint current()\n",
+    );
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-python", python_command()])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"22\n");
+    }
+    let bundle = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    let artifact = PathBuf::from(String::from_utf8(bundle.stdout).unwrap().trim());
+    let executed = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(artifact)
+        .args(["--allow-python", python_command()])
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    assert_eq!(executed.stdout, b"22\n");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable)
+        .args(["--allow-python", python_command()])
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, b"22\n");
+}
+
+#[test]
 fn native_python_module_values_match_vm_and_remain_permission_gated() {
     if !gcc_available() || !python_available() {
         return;

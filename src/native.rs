@@ -1682,8 +1682,13 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
         expected: Scalar,
         get_value: bool,
+        discard: bool,
     ) -> Result<Scalar, String> {
-        let tag = Self::python_kind(expected)?;
+        let tag = if discard {
+            11
+        } else {
+            Self::python_kind(expected)?
+        };
         if args.len() > 64 {
             return Err("native Python call exceeds 64 arguments".into());
         }
@@ -1733,7 +1738,9 @@ impl Codegen {
         .unwrap();
         self.code.push_str("    call gak_native_python_call\n");
         self.python_check();
-        self.code.push_str("    mov rax, QWORD PTR [rax+8]\n");
+        if !discard {
+            self.code.push_str("    mov rax, QWORD PTR [rax+8]\n");
+        }
         Ok(expected)
     }
 
@@ -1747,8 +1754,9 @@ impl Codegen {
             match &expr.kind {
                 ExprKind::Call(name, args) => {
                     if let Some((path, digest, function)) = self.python_import(name) {
-                        return self
-                            .python_call(&path, &digest, &function, args, scope, expected, false);
+                        return self.python_call(
+                            &path, &digest, &function, args, scope, expected, false, false,
+                        );
                     }
                 }
                 ExprKind::Var(name) => {
@@ -1761,6 +1769,7 @@ impl Codegen {
                             scope,
                             expected,
                             true,
+                            false,
                         );
                     }
                 }
@@ -1838,6 +1847,21 @@ impl Codegen {
         expr: &Expr,
         scope: &HashMap<String, Binding>,
     ) -> Result<(), String> {
+        if let ExprKind::Call(name, args) = &expr.kind {
+            if let Some((path, digest, function)) = self.python_import(name) {
+                self.python_call(
+                    &path,
+                    &digest,
+                    &function,
+                    args,
+                    scope,
+                    Scalar::Bool,
+                    false,
+                    true,
+                )?;
+                return Ok(());
+            }
+        }
         let kind = self.expr(expr, scope)?;
         if matches!(kind, Scalar::Result(_)) {
             return Err("standalone call returns Result; handle the result explicitly".into());

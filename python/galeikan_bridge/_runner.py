@@ -155,7 +155,7 @@ def main(request):
         not isinstance(path, str)
         or not isinstance(function, str)
         or not isinstance(args, list)
-        or operation not in ("call", "get")
+        or operation not in ("call", "get", "invoke")
         or (expected_sha256 is not None and (
             not isinstance(expected_sha256, str)
             or len(expected_sha256) != 64
@@ -166,10 +166,12 @@ def main(request):
     module = load_module(path, expected_sha256)
     with contextlib.redirect_stdout(sys.stderr):
         callback = getattr(module, function)
-        if operation == "call":
+        if operation in ("call", "invoke"):
             if not callable(callback):
                 raise TypeError("Python target is not callable")
             result = callback(*(decode_arg(value) for value in args))
+            if operation == "invoke":
+                return True
         else:
             if args:
                 raise TypeError("Python value lookup takes no arguments")

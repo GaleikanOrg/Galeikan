@@ -64,6 +64,7 @@ typedef struct {
 uint8_t *gak_python_error;
 static int gak_py_started;
 static size_t gak_py_allocated;
+static GakPythonResult gak_py_void_result;
 
 static uint8_t *gak_py_box(const char *data, size_t size) {
     if (size > GAK_PY_LIMIT || gak_py_allocated > GAK_PY_MEMORY_LIMIT - 8 ||
@@ -143,7 +144,7 @@ static uint64_t gak_py_length(const uint8_t *box) {
 void *gak_python_request_new(const uint8_t *module, const uint8_t *digest,
                              const uint8_t *function, uint64_t expected) {
     gak_python_error = NULL;
-    if (expected < 1 || expected > 10) {
+    if (expected < 1 || expected > 11) {
         gak_py_fail("invalid native Python result type");
         return NULL;
     }
@@ -156,7 +157,7 @@ void *gak_python_request_new(const uint8_t *module, const uint8_t *digest,
     request->digest = digest;
     request->function = function;
     request->expected = expected;
-    request->operation = 'C';
+    request->operation = expected == 11 ? 'V' : 'C';
     return request;
 }
 
@@ -189,6 +190,7 @@ static char gak_py_kind(uint64_t kind) {
         case 8: return 'B';
         case 9: return 'S';
         case 10: return 'X';
+        case 11: return 'v';
         default: return 0;
     }
 }
@@ -233,7 +235,7 @@ static char *gak_py_encode(const GakPythonRequest *request, size_t *length) {
     if (!buffer) return NULL;
     size_t used = 0;
     char operation[2] = {request->operation, '\t'};
-    if ((request->operation != 'C' && request->operation != 'G') ||
+    if ((request->operation != 'C' && request->operation != 'G' && request->operation != 'V') ||
         (request->operation == 'G' && request->count != 0) ||
         gak_py_append(buffer, &used, operation, sizeof(operation)) < 0 ||
         gak_py_append_hex(buffer, &used, request->module + 8, (size_t)gak_py_length(request->module)) < 0 ||
@@ -652,6 +654,13 @@ static GakPythonResult *gak_py_decode(char *response, size_t size, uint64_t expe
         return NULL;
     }
     size_t hex_size = size - 5;
+    if (expected == 11) {
+        if (hex_size != 0) {
+            gak_py_fail("invalid Python worker value");
+            return NULL;
+        }
+        return &gak_py_void_result;
+    }
     if (hex_size & 1 || hex_size > GAK_PY_LIMIT - 5) {
         gak_py_fail("invalid Python worker value");
         return NULL;

@@ -169,9 +169,11 @@ def load_module(path, expected_sha256):
 
 
 def call(parts):
-    if len(parts) < 6 or parts[0] not in (b"C", b"G"):
+    if len(parts) < 6 or parts[0] not in (b"C", b"G", b"V"):
         raise ValueError("invalid native request")
     expected = parts[4]
+    if parts[0] == b"V" and expected != b"v":
+        raise ValueError("invalid native invoke result type")
     argc = int(parts[5])
     if argc < 0 or argc > 64 or len(parts) != 6 + argc:
         raise ValueError("invalid native argument count")
@@ -197,7 +199,10 @@ def call(parts):
         if not callable(target):
             raise TypeError("Python target is not callable")
         args = [decode_argument(field) for field in parts[6:]]
-        return encode_result(target(*args), expected)
+        result = target(*args)
+        if parts[0] == b"V":
+            return b"v", b""
+        return encode_result(result, expected)
 
 
 while True:

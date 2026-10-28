@@ -2232,7 +2232,14 @@ impl Runtime {
             }
             if matches!(action.kind, ActionKind::If) {
                 let condition = self
-                    .execute_expr(module, locals, action.expr.as_ref(), &action.code, depth)
+                    .execute_expr(
+                        module,
+                        locals,
+                        action.expr.as_ref(),
+                        &action.code,
+                        depth,
+                        false,
+                    )
                     .map_err(&at)?
                     .as_bool()
                     .map_err(&at)?;
@@ -2267,7 +2274,14 @@ impl Runtime {
                 loop {
                     self.tick_action().map_err(&at)?;
                     let condition = self
-                        .execute_expr(module, locals, action.expr.as_ref(), &action.code, depth)
+                        .execute_expr(
+                            module,
+                            locals,
+                            action.expr.as_ref(),
+                            &action.code,
+                            depth,
+                            false,
+                        )
                         .map_err(&at)?
                         .as_bool()
                         .map_err(&at)?;
@@ -2301,7 +2315,14 @@ impl Runtime {
                 continue;
             }
             let mut value = self
-                .execute_expr(module, locals, action.expr.as_ref(), &action.code, depth)
+                .execute_expr(
+                    module,
+                    locals,
+                    action.expr.as_ref(),
+                    &action.code,
+                    depth,
+                    matches!(action.kind, ActionKind::Expr),
+                )
                 .map_err(&at)?;
             match action.kind {
                 ActionKind::Let | ActionKind::Var => {
@@ -3790,6 +3811,7 @@ impl Runtime {
                     binding.expr.as_ref(),
                     &binding.code,
                     0,
+                    false,
                 )
                 .map_err(|e| format!("{}:{}: {e}", module.path.display(), binding.line))?;
             if let Some(expected) = binding.annotation {
@@ -4215,10 +4237,23 @@ impl Runtime {
         expr: Option<&Expr>,
         program: &Program,
         depth: usize,
+        discard: bool,
     ) -> Result<Value, String> {
         match self.engine {
-            Engine::Ast => self.eval(module, locals, expr.ok_or("AST expression missing")?, depth),
-            Engine::Vm => self.eval_bytecode(module, locals, program, depth),
+            Engine::Ast => {
+                let expr = expr.ok_or("AST expression missing")?;
+                if discard {
+                    if let ExprKind::Call(name, args) = &expr.kind {
+                        let args = args
+                            .iter()
+                            .map(|arg| self.eval(module, locals, arg, depth))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        return self.invoke_discard(module, locals, name, args, depth);
+                    }
+                }
+                self.eval(module, locals, expr, depth)
+            }
+            Engine::Vm => self.eval_bytecode(module, locals, program, depth, discard),
         }
     }
 
@@ -4331,6 +4366,7 @@ impl Runtime {
         locals: &HashMap<String, Value>,
         program: &Program,
         depth: usize,
+        discard: bool,
     ) -> Result<Value, String> {
         if depth > MAX_CALL_DEPTH {
             return Err("call depth exceeded".into());
@@ -4400,7 +4436,11 @@ impl Runtime {
                         .checked_sub(*count)
                         .ok_or("invalid bytecode stack")?;
                     let args = stack.split_off(start);
-                    stack.push(self.invoke(module, locals, name, args, depth)?);
+                    stack.push(if discard && pc + 1 == code.len() {
+                        self.invoke_discard(module, locals, name, args, depth)?
+                    } else {
+                        self.invoke(module, locals, name, args, depth)?
+                    });
                 }
                 Instruction::MethodCall(method, count) => {
                     let start = stack
@@ -4517,6 +4557,26 @@ impl Runtime {
         }
     }
 
+    fn invoke_discard(
+        &self,
+        module: &Rc<Module>,
+        locals: &HashMap<String, Value>,
+        name: &str,
+        args: Vec<Value>,
+        depth: usize,
+    ) -> Result<Value, String> {
+        if let Some((alias, function)) = name.split_once('.') {
+            if !is_value_method_receiver(module, alias) {
+                if let Some(Import::Python(path)) = module.imports.get(alias) {
+                    self.invoke_python(module, path, function, &args)?;
+                    return Ok(Value::Bool(true));
+                }
+            }
+        }
+        self.invoke(module, locals, name, args, depth)?;
+        Ok(Value::Bool(true))
+    }
+
     fn invoke_method(
         &self,
         receiver: Value,
@@ -4606,7 +4666,7 @@ impl Runtime {
                 .result_code
                 .as_ref()
                 .ok_or("function fell through without return")?;
-            self.execute_expr(module, &locals, result_expr, result_code, depth)
+            self.execute_expr(module, &locals, result_expr, result_code, depth, false)
         })();
         let result = if matches!(function.result_type, Some(Type::Result(_))) {
             match evaluated {
@@ -6797,6 +6857,37 @@ impl Runtime {
         }
         let result = result?;
         Self::python_result(result)
+    }
+
+    fn invoke_python(
+        &self,
+        module: &Rc<Module>,
+        path: &Path,
+        function: &str,
+        args: &[Value],
+    ) -> Result<(), String> {
+        self.check_effect(module, "python.exec")?;
+        let executable = self
+            .python_executable
+            .as_ref()
+            .ok_or("Python execution not allowed; pass --allow-python")?;
+        let args: Vec<JsonValue> = args
+            .iter()
+            .map(encode_python_arg)
+            .collect::<Result<_, String>>()?;
+        let expected = self.expected_python_hash(path)?;
+        let mut session = self.python_session.borrow_mut();
+        if session.is_none() {
+            *session = Some(python_bridge::Session::start(executable)?);
+        }
+        let result = session
+            .as_mut()
+            .unwrap()
+            .invoke(path, function, &args, expected.as_deref());
+        if session.as_ref().is_some_and(python_bridge::Session::broken) {
+            session.take();
+        }
+        result
     }
 
     fn get_python(&self, module: &Rc<Module>, path: &Path, name: &str) -> Result<Value, String> {
