@@ -5121,11 +5121,12 @@ fn native_format_address_mapping_boundaries_match_vm() {
     elf[0x110..0x120].copy_from_slice(b"ELF-OVERLAY-TST!");
 
     for (label, bytes, mapper, missing) in [("pe", pe, "rva", 0x2000), ("elf", elf, "va", 0x2000)] {
+        let wrong = if mapper == "rva" { "va" } else { "rva" };
         let file = s.0.join(format!("{label}.bin"));
         fs::write(&file, bytes).unwrap();
         let script = s.write(
             &format!("{label}-mapping.gak"),
-            &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size\nfrom std.formats import probe, overlay, entry_view, rva, va\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"{label}.bin\", 1024))\nfn header() -> Result<Source> = {mapper}(report, 0, 4)\nfn virtual_only() -> Result<Source> = {mapper}(report, 0x1010, 1)\nfn crossing() -> Result<Source> = {mapper}(report, 0x100f, 2)\nfn missing() -> Result<Source> = {mapper}(report, {missing}, 1)\nfn empty() -> Result<Source> = {mapper}(report, 0x1000, 0)\nprint entry_view(report, 8)\nprint sha256({mapper}(report, 0x1000, 16))\nprint size(overlay(report))\nprint is_error(header())\nprint is_error(virtual_only())\nprint is_error(crossing())\nprint is_error(missing())\nprint is_error(empty())\n"),
+            &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size\nfrom std.formats import probe, overlay, entry_view, rva, va, rva_offset, va_offset\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"{label}.bin\", 1024))\nfn header() -> Result<Source> = {mapper}(report, 0, 4)\nfn virtual_only() -> Result<Source> = {mapper}(report, 0x1010, 1)\nfn crossing() -> Result<Source> = {mapper}(report, 0x100f, 2)\nfn missing() -> Result<Source> = {mapper}(report, {missing}, 1)\nfn empty() -> Result<Source> = {mapper}(report, 0x1000, 0)\nfn missing_offset() -> Result<i64> = {mapper}_offset(report, {missing})\nfn wrong_offset() -> Result<i64> = {wrong}_offset(report, 0x1000)\nprint entry_view(report, 8)\nprint sha256({mapper}(report, 0x1000, 16))\nprint size(overlay(report))\nprint is_error(header())\nprint is_error(virtual_only())\nprint is_error(crossing())\nprint is_error(missing())\nprint is_error(empty())\nprint {mapper}_offset(report, 0x1000)\nprint {mapper}_offset(report, 0x100f)\nprint is_error(missing_offset())\nprint is_error(wrong_offset())\n"),
         );
         let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("run")
@@ -5139,6 +5140,19 @@ fn native_format_address_mapping_boundaries_match_vm() {
             "{label}: {}",
             String::from_utf8_lossy(&vm.stderr)
         );
+        let ast = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", "ast", "--allow-read"])
+            .arg(&s.0)
+            .output()
+            .unwrap();
+        assert!(
+            ast.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&ast.stderr)
+        );
+        assert_eq!(ast.stdout, vm.stdout, "{label}");
         let built = s.compile(&script);
         assert!(
             built.status.success(),
@@ -5157,6 +5171,7 @@ fn native_format_address_mapping_boundaries_match_vm() {
             String::from_utf8_lossy(&native.stderr)
         );
         assert_eq!(native.stdout, vm.stdout, "{label}");
+        assert!(vm.stdout.ends_with(b"256\n271\ntrue\ntrue\n"), "{label}");
     }
 }
 

@@ -6411,6 +6411,13 @@ impl Runtime {
                     rva,
                 )?)))
             }
+            ("rva_offset", [Value::Format(source, report), rva]) => {
+                let rva = u64::try_from(rva.as_int()?).map_err(|_| "RVA must not be negative")?;
+                let (start, _) = report.pe_rva_range(source.bytes().len(), rva, 1)?;
+                Ok(Value::Int(
+                    i64::try_from(start).map_err(|_| "PE file offset out of range")?,
+                ))
+            }
             ("va", [Value::Format(source, report), va, count]) => {
                 let va = u64::try_from(va.as_int()?).map_err(|_| "VA must not be negative")?;
                 let count = usize::try_from(count.as_int()?)
@@ -6422,6 +6429,13 @@ impl Runtime {
                     end,
                     va,
                 )?)))
+            }
+            ("va_offset", [Value::Format(source, report), va]) => {
+                let va = u64::try_from(va.as_int()?).map_err(|_| "VA must not be negative")?;
+                let (start, _) = report.elf_va_range(source.bytes().len(), va, 1)?;
+                Ok(Value::Int(
+                    i64::try_from(start).map_err(|_| "ELF file offset out of range")?,
+                ))
             }
             ("entry_view", [Value::Format(source, report), count]) => {
                 let count = usize::try_from(count.as_int()?)
@@ -7708,6 +7722,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "section") => (&[Format, Int], Type::Section),
         ("formats", "overlay") => (&[Format], Source),
         ("formats", "rva" | "va") => (&[Format, Int, Int], Source),
+        ("formats", "rva_offset" | "va_offset") => (&[Format, Int], Int),
         ("formats", "entry_view") => (&[Format, Int], Source),
         ("formats", "name" | "address" | "flags") => (&[Type::Section], Str),
         ("formats", "writable" | "executable") => (&[Type::Section], Bool),

@@ -949,6 +949,24 @@ void *gak_native_formats_va(const void *value, int64_t address, int64_t count) {
     return gak_elf_va(value, (uint64_t)address, (uint64_t)count);
 }
 
+int64_t gak_native_formats_rva_offset(const void *value, int64_t address) {
+    GakFormatRange *range = gak_native_formats_rva(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
+int64_t gak_native_formats_va_offset(const void *value, int64_t address) {
+    GakFormatRange *range = gak_native_formats_va(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
 void *gak_native_formats_entry_view(const void *value, int64_t count) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

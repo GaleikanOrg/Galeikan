@@ -4400,6 +4400,25 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}", self.arg0(), report_slot * 8, self.arg1(), address_slot * 8, self.arg2()).unwrap();
                 return self.formats_range_result();
             }
+            ("rva_offset" | "va_offset", [report, address]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(address, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} address must be i64"));
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}\n    mov r10, rax\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    test rax, rax\n    jz {ready}\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov rax, r10", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                return Ok(Scalar::Int);
+            }
             _ => {}
         }
         if let ("section", [report, index]) = (name, args) {
