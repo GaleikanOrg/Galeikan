@@ -144,6 +144,84 @@ __SHADOW_LEAVE__
     pop rbx
     ret
 
+gak_hunt_digest:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    push rsi
+    push rdi
+__SHADOW_ENTER__
+    mov r12, rax
+    mov r13, rdx
+    mov r14, r10
+    mov r15, QWORD PTR [r12]
+    mov rbx, 27
+    add rbx, QWORD PTR [r14]
+    add rbx, r15
+    test r13, r13
+    jz gak_hunt_digest_size_ready
+    add rbx, r15
+gak_hunt_digest_size_ready:
+    mov rax, rbx
+    call gak_alloc_bytes
+    mov r11, rax
+    lea r10, [rip+gak_search_domain]
+    xor r8d, r8d
+gak_hunt_digest_domain:
+    mov al, BYTE PTR [r10+r8]
+    mov BYTE PTR [r11+r8+8], al
+    inc r8
+    cmp r8, 19
+    jb gak_hunt_digest_domain
+    xor r9d, r9d
+gak_hunt_digest_kind:
+    cmp r9, QWORD PTR [r14]
+    jae gak_hunt_digest_width
+    mov al, BYTE PTR [r14+r9+8]
+    mov BYTE PTR [r11+r8+8], al
+    inc r8
+    inc r9
+    jmp gak_hunt_digest_kind
+gak_hunt_digest_width:
+    mov QWORD PTR [r11+r8+8], r15
+    add r8, 8
+    xor r9d, r9d
+gak_hunt_digest_needle:
+    cmp r9, r15
+    jae gak_hunt_digest_mask_start
+    mov al, BYTE PTR [r12+r9+8]
+    mov BYTE PTR [r11+r8+8], al
+    inc r8
+    inc r9
+    jmp gak_hunt_digest_needle
+gak_hunt_digest_mask_start:
+    test r13, r13
+    jz gak_hunt_digest_hash
+    xor r9d, r9d
+gak_hunt_digest_mask:
+    cmp r9, r15
+    jae gak_hunt_digest_hash
+    mov al, BYTE PTR [r13+r9+8]
+    mov BYTE PTR [r11+r8+8], al
+    inc r8
+    inc r9
+    jmp gak_hunt_digest_mask
+gak_hunt_digest_hash:
+    lea rax, [r11+8]
+    mov rdx, rbx
+    call gak_sha256
+__SHADOW_LEAVE__
+    pop rdi
+    pop rsi
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
 gak_hunt_search:
     push rbx
     push r12

@@ -310,6 +310,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_audit_expected_negative", "expected value must not be negative"),
     ("gak_audit_range", "maximum must be at least minimum"),
     ("gak_audit_rule", "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'"),
+    ("gak_audit_pattern_limit", "search pattern exceeds 4096 bytes"),
     (
         "gak_source_depth",
         "LimitExceeded: Source derivation depth exceeds 64",
@@ -566,6 +567,15 @@ struct Codegen {
     uses_net: bool,
     uses_text: bool,
     uses_formats: bool,
+}
+
+struct NativeHunt {
+    source: usize,
+    needle: usize,
+    mask: usize,
+    kind: usize,
+    offsets: usize,
+    rule: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -1809,6 +1819,21 @@ impl Codegen {
     }
 
     fn print_finding(&mut self, impact: bool) -> Result<(), String> {
+        let numeric = self.label();
+        let done = self.label();
+        writeln!(
+            self.code,
+            "    test QWORD PTR [rax+32], 8\n    jz {numeric}"
+        )
+        .unwrap();
+        self.print_pattern_finding(impact)?;
+        writeln!(self.code, "    jmp {done}\n{numeric}:").unwrap();
+        self.print_numeric_finding(impact)?;
+        writeln!(self.code, "{done}:").unwrap();
+        Ok(())
+    }
+
+    fn print_numeric_finding(&mut self, impact: bool) -> Result<(), String> {
         let finding_slot = self.reserve_slot()?;
         let observation_slot = self.reserve_slot()?;
         let source_slot = self.reserve_slot()?;
@@ -1899,6 +1924,101 @@ impl Codegen {
         .unwrap();
         self.print_value(Scalar::Str, 0)?;
         self.write_const(" }")
+    }
+
+    fn print_pattern_finding(&mut self, impact: bool) -> Result<(), String> {
+        let finding_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10", finding_slot * 8, source_slot * 8).unwrap();
+        self.write_const(if impact {
+            "impact { rule: \""
+        } else {
+            "finding(rule: \""
+        })?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", status: ")?;
+        let failed = self.label();
+        let status_done = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    test QWORD PTR [r10+32], 4\n    jz {failed}",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.write_const("pass")?;
+        writeln!(self.code, "    jmp {status_done}\n{failed}:").unwrap();
+        self.write_const("fail")?;
+        writeln!(self.code, "{status_done}:").unwrap();
+        self.write_const(", pattern: ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+48]",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(" ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const(if impact {
+            " bytes, pattern_sha256: "
+        } else {
+            " bytes ["
+        })?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        if impact {
+            self.write_const(", matches: ")?;
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+40]\n    mov rax, QWORD PTR [r10]", finding_slot * 8).unwrap();
+            self.print_value(Scalar::UInt, 0)?;
+            self.write_const(", offsets: ")?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+                finding_slot * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Offsets, 0)?;
+            self.write_const(", ")?;
+            self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+            self.write_const(" }")
+        } else {
+            self.write_const("], source: \"")?;
+            self.print_source_label(source_slot, 0)?;
+            self.write_const("\", sha256: ")?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+                source_slot * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Str, 0)?;
+            self.write_const(", offsets: ")?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+                finding_slot * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Offsets, 0)?;
+            self.write_const(")")
+        }
     }
 
     fn print_finding_number(&mut self, finding_slot: usize, offset: usize) -> Result<(), String> {
@@ -4242,6 +4362,39 @@ impl Codegen {
             }
             return Ok(Scalar::Bool);
         }
+        if let ("hunt", [source, pattern, rule]) = (name, args) {
+            let hunt = self.emit_hunt(source, pattern, Some(rule), Some(4096), scope)?;
+            let digest_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_hunt_digest\n    mov QWORD PTR [rbp-{}], rax", hunt.needle * 8, hunt.mask * 8, hunt.kind * 8, digest_slot * 8).unwrap();
+            let flags_slot = self.reserve_slot()?;
+            let no_match = self.label();
+            let flags_ready = self.label();
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r10], 0\n    je {no_match}\n    mov QWORD PTR [rbp-{}], 12\n    jmp {flags_ready}\n{no_match}:\n    mov QWORD PTR [rbp-{}], 8\n{flags_ready}:", hunt.offsets * 8, flags_slot * 8, flags_slot * 8).unwrap();
+            self.code.push_str("    mov r10, QWORD PTR [rip+gak_finding_bytes]\n    add r10, 56\n    jc gak_finding_limit\n    cmp r10, 67108864\n    ja gak_finding_limit\n    mov QWORD PTR [rip+gak_finding_bytes], r10\n");
+            writeln!(
+                self.code,
+                "    mov {}, 56\n    call malloc\n    test rax, rax\n    jz gak_alloc_failure",
+                self.arg0()
+            )
+            .unwrap();
+            for (offset, slot) in [
+                (0, hunt.source),
+                (8, hunt.rule.expect("hunt rule slot")),
+                (24, digest_slot),
+                (32, flags_slot),
+                (40, hunt.offsets),
+                (48, hunt.kind),
+            ] {
+                writeln!(
+                    self.code,
+                    "    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rax+{offset}], r10",
+                    slot * 8
+                )
+                .unwrap();
+            }
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10]\n    mov QWORD PTR [rax+16], r10", hunt.needle * 8).unwrap();
+            return Ok(Scalar::Finding);
+        }
         let (observation, min, max, rule) = match (name, args) {
             ("bound", [observation, min, max, rule]) => (observation, min, Some(max), rule),
             ("expect", [observation, expected, rule]) => (observation, expected, None, rule),
@@ -4333,6 +4486,92 @@ impl Codegen {
             .unwrap();
         }
         Ok(Scalar::Finding)
+    }
+
+    fn emit_hunt(
+        &mut self,
+        source: &Expr,
+        pattern: &Expr,
+        rule: Option<&Expr>,
+        max_width: Option<usize>,
+        scope: &HashMap<String, Binding>,
+    ) -> Result<NativeHunt, String> {
+        if self.expr(source, scope)? != Scalar::Source {
+            return Err("hunt expects Source".into());
+        }
+        let source_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            source_slot * 8
+        )
+        .unwrap();
+        let pattern_kind = self.expr(pattern, scope)?;
+        if !matches!(pattern_kind, Scalar::Bytes | Scalar::Str) {
+            return Err("hunt pattern must be bytes or str".into());
+        }
+        let pattern_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            pattern_slot * 8
+        )
+        .unwrap();
+        let rule_slot = if let Some(rule) = rule {
+            if self.expr(rule, scope)? != Scalar::Str {
+                return Err("audit.hunt expects str rule id".into());
+            }
+            let slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    call gak_validate_rule\n    test eax, eax\n    jz gak_audit_rule", slot * 8).unwrap();
+            Some(slot)
+        } else {
+            None
+        };
+        let kind_slot = self.reserve_slot()?;
+        let default_kind = self.literal(if pattern_kind == Scalar::Bytes {
+            "bytes"
+        } else {
+            "text"
+        })?;
+        writeln!(
+            self.code,
+            "    lea r10, [rip+{default_kind}]\n    mov QWORD PTR [rbp-{}], r10",
+            kind_slot * 8
+        )
+        .unwrap();
+        let raw = self.label();
+        let ready = self.label();
+        if pattern_kind == Scalar::Str {
+            let hex_kind = self.literal("hex")?;
+            writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [rax], 4\n    jb {raw}\n    cmp DWORD PTR [rax+8], 0x3a786568\n    jne {raw}\n    call gak_parse_hunt_hex\n    test r11d, r11d\n    jz {ready}_hex\n    cmp r11d, 1\n    je gak_hunt_invalid_hex\n    cmp r11d, 2\n    je gak_hunt_hex_limit\n    cmp r11d, 3\n    je gak_hunt_odd_hex\n    jmp gak_hunt_mask_limit\n{ready}_hex:\n    lea r11, [rip+{hex_kind}]\n    mov QWORD PTR [rbp-{}], r11\n    jmp {ready}\n{raw}:", pattern_slot * 8, kind_slot * 8).unwrap();
+        }
+        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    xor r10d, r10d\n{ready}:\n    cmp QWORD PTR [rax], 0\n    je gak_hunt_empty", pattern_slot * 8).unwrap();
+        if let Some(max_width) = max_width {
+            writeln!(
+                self.code,
+                "    cmp QWORD PTR [rax], {max_width}\n    ja gak_audit_pattern_limit"
+            )
+            .unwrap();
+        }
+        let needle_slot = self.reserve_slot()?;
+        let mask_slot = self.reserve_slot()?;
+        let mode_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], rdx\n    mov QWORD PTR [rbp-{}], r10\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r8, QWORD PTR [r11]\n    mov r10, QWORD PTR [r11+16]\n    lea rax, [r8+r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rbp-{}]\n    call gak_hunt_search\n    cmp rax, -1\n    je gak_hunt_many", needle_slot * 8, mask_slot * 8, mode_slot * 8, source_slot * 8, needle_slot * 8, mask_slot * 8, mode_slot * 8).unwrap();
+        let offsets_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            offsets_slot * 8
+        )
+        .unwrap();
+        Ok(NativeHunt {
+            source: source_slot,
+            needle: needle_slot,
+            mask: mask_slot,
+            kind: kind_slot,
+            offsets: offsets_slot,
+            rule: rule_slot,
+        })
     }
 
     fn binary_call(
@@ -4636,37 +4875,13 @@ impl Codegen {
                 Ok(Scalar::Offsets)
             }
             ("hunt", [source, pattern]) => {
-                if self.expr(source, scope)? != Scalar::Source {
-                    return Err("binary.hunt expects Source".into());
-                }
-                let source_slot = self.reserve_slot()?;
+                let hunt = self.emit_hunt(source, pattern, None, None, scope)?;
                 writeln!(
                     self.code,
-                    "    mov QWORD PTR [rbp-{}], rax",
-                    source_slot * 8
+                    "    mov rax, QWORD PTR [rbp-{}]",
+                    hunt.offsets * 8
                 )
                 .unwrap();
-                let pattern_kind = self.expr(pattern, scope)?;
-                if !matches!(pattern_kind, Scalar::Bytes | Scalar::Str) {
-                    return Err("binary.hunt pattern must be bytes or str".into());
-                }
-                let pattern_slot = self.reserve_slot()?;
-                writeln!(
-                    self.code,
-                    "    mov QWORD PTR [rbp-{}], rax",
-                    pattern_slot * 8
-                )
-                .unwrap();
-                let raw = self.label();
-                let ready = self.label();
-                if pattern_kind == Scalar::Str {
-                    writeln!(self.code, "    cmp QWORD PTR [rax], 4\n    jb {raw}\n    cmp DWORD PTR [rax+8], 0x3a786568\n    jne {raw}\n    call gak_parse_hunt_hex\n    test r11d, r11d\n    jz {ready}\n    cmp r11d, 1\n    je gak_hunt_invalid_hex\n    cmp r11d, 2\n    je gak_hunt_hex_limit\n    cmp r11d, 3\n    je gak_hunt_odd_hex\n    jmp gak_hunt_mask_limit\n{raw}:").unwrap();
-                }
-                writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    xor r10d, r10d\n{ready}:\n    cmp QWORD PTR [rax], 0\n    je gak_hunt_empty", pattern_slot * 8).unwrap();
-                let needle_slot = self.reserve_slot()?;
-                let mask_slot = self.reserve_slot()?;
-                let mode_slot = self.reserve_slot()?;
-                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], rdx\n    mov QWORD PTR [rbp-{}], r10\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r8, QWORD PTR [r11]\n    mov r10, QWORD PTR [r11+16]\n    lea rax, [r8+r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rbp-{}]\n    call gak_hunt_search\n    cmp rax, -1\n    je gak_hunt_many", needle_slot * 8, mask_slot * 8, mode_slot * 8, source_slot * 8, needle_slot * 8, mask_slot * 8, mode_slot * 8).unwrap();
                 Ok(Scalar::Offsets)
             }
             ("diff", [left, right, limit]) => {
@@ -5911,7 +6126,7 @@ impl Codegen {
         out.push_str("gak_newline: .byte 10\ngak_call_depth_error_msg: .ascii \"call depth exceeded\\n\"\ngak_call_depth_error_msg_end:\ngak_call_stack_error_msg: .ascii \"native call stack exceeds 512 KiB\\n\"\ngak_call_stack_error_msg_end:\ngak_str_limit_msg: .ascii \"string memory exceeds 64 MiB\\n\"\ngak_str_limit_msg_end:\ngak_output_failure_msg: .ascii \"native output failed\\n\"\ngak_output_failure_msg_end:\n");
         out.push_str("gak_text_slice_range_msg: .ascii \"text slice out of range\\n\"\ngak_text_slice_range_msg_end:\n");
         out.push_str("gak_text_search_alloc_msg: .ascii \"text search allocation failed\\n\"\ngak_text_search_alloc_msg_end:\n");
-        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
+        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str(".p2align 2\ngak_sha_iv:\n");
         for value in SHA256_IV {
             writeln!(out, "    .long 0x{value:08x}").unwrap();
@@ -5933,6 +6148,10 @@ impl Codegen {
             (
                 "gak_audit_rule",
                 "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'",
+            ),
+            (
+                "gak_audit_pattern_limit",
+                "search pattern exceeds 4096 bytes",
             ),
             ("gak_finding_limit", "native Finding memory exceeds 64 MiB"),
         ] {
@@ -7037,6 +7256,7 @@ gak_cli_utf8_done:
             ),
             ("gak_audit_range", "gak_audit_range_msg"),
             ("gak_audit_rule", "gak_audit_rule_msg"),
+            ("gak_audit_pattern_limit", "gak_audit_pattern_limit_msg"),
             ("gak_finding_limit", "gak_finding_limit_msg"),
             ("gak_source_depth", "gak_source_depth_msg"),
             ("gak_source_limit", "gak_source_limit_msg"),

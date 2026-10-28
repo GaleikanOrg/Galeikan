@@ -5812,6 +5812,7 @@ fn inspect() -> Finding {
     let source = snapshot(from_hex("ff fe"))
     return bound(deep(source, 0, "i16be"), -3, -1, "signed.range")
 }
+
 fn invalid_rule() -> Result<Finding> {
     let source = snapshot(from_hex("fe"))
     return expect(deep(source, 0, "i8"), -2, "bad rule")
@@ -5905,6 +5906,110 @@ print findings
         assert!(
             built.status.success(),
             "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success(), "{name}");
+        assert!(
+            String::from_utf8_lossy(&native.stderr).contains(error),
+            "{name}: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+}
+
+#[test]
+fn native_pattern_audit_matches_vm_for_bytes_text_and_masked_hex() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "pattern-audit.gak",
+        r#"from std.binary import from_hex, snapshot, view
+from std.audit import hunt, passed, failed
+from std.bytes import repeat
+from std.result import is_error
+fn oversized() -> Result<Finding> {
+    let source = snapshot(from_hex("41"))
+    return hunt(source, repeat(from_hex("41"), 4097), "limit")
+}
+let source = view(snapshot(from_hex("41 42 41 42 43")), 1, 4)
+let bytes_hit: Finding = hunt(source, from_hex("42"), "bytes.hit")
+let text_hit: Finding = hunt(source, "A", "text.hit")
+let hex_hit: Finding = hunt(source, "hex:4? 42", "hex.hit")
+let missing: Finding = hunt(source, "hex:ff", "hex.missing")
+print passed(bytes_hit)
+print passed(text_hit)
+print passed(hex_hit)
+print failed(missing)
+print is_error(oversized())
+impact hex_hit
+print bytes_hit
+print text_hit
+print missing
+"#,
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(native.stdout.starts_with(b"true\ntrue\ntrue\ntrue\ntrue\n"));
+    assert_eq!(native.stdout, vm.stdout);
+
+    for (name, pattern, rule, error) in [
+        ("empty", "\"\"", "\"valid\"", "empty search pattern"),
+        (
+            "odd-hex",
+            "\"hex:4?f\"",
+            "\"valid\"",
+            "even number of nibbles",
+        ),
+        (
+            "oversized",
+            "repeat(from_hex(\"41\"), 4097)",
+            "\"valid\"",
+            "search pattern exceeds 4096 bytes",
+        ),
+        ("invalid-rule", "\"A\"", "\"bad rule\"", "rule id must be"),
+    ] {
+        let case = s.write(
+            &format!("pattern-{name}.gak"),
+            &format!("from std.binary import from_hex, snapshot\nfrom std.bytes import repeat\nfrom std.audit import hunt\nlet source = snapshot(from_hex(\"41\"))\nprint hunt(source, {pattern}, {rule})\n"),
+        );
+        let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .args(["run", case.to_str().unwrap(), "--engine", "vm"])
+            .output()
+            .unwrap();
+        assert!(!vm.status.success(), "{name}");
+        assert!(
+            String::from_utf8_lossy(&vm.stderr).contains(error),
+            "{name}: {}",
+            String::from_utf8_lossy(&vm.stderr)
+        );
+        let built = s.compile(&case);
+        assert!(
+            built.status.success(),
+            "{name}: {}",
             String::from_utf8_lossy(&built.stderr)
         );
         let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
