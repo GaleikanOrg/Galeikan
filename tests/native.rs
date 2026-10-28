@@ -5810,6 +5810,82 @@ print message(invalid())
 }
 
 #[test]
+fn native_sleb128_fields_match_vm_for_signed_values_audits_and_malformed_input() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "sleb128.gak",
+        r#"from std.binary import from_hex, snapshot, view, deep, value, value_u64, signed_value, offset, width
+from std.audit import expect, bound, passed, failed
+from std.result import message
+fn truncated() -> Result<Observation> = deep(snapshot(from_hex("80")), 0, "sleb128")
+fn overflowing() -> Result<Observation> = deep(snapshot(from_hex("80 80 80 80 80 80 80 80 80 01")), 0, "sleb128")
+fn noncanonical_zero() -> Result<Observation> = deep(snapshot(from_hex("80 00")), 0, "sleb128")
+fn noncanonical_negative() -> Result<Observation> = deep(snapshot(from_hex("ff 7f")), 0, "sleb128")
+fn missing() -> Result<Observation> = deep(snapshot(from_hex("")), 0, "sleb128")
+let zero = deep(snapshot(from_hex("00")), 0, "sleb128")
+let negative_one = deep(snapshot(from_hex("7f")), 0, "sleb128")
+let positive = deep(snapshot(from_hex("c0 00")), 0, "sleb128")
+let negative = deep(view(snapshot(from_hex("aa bf 7f bb")), 1, 2), 0, "sleb128")
+let maximum = deep(snapshot(from_hex("ff ff ff ff ff ff ff ff ff 00")), 0, "sleb128")
+let minimum = deep(snapshot(from_hex("80 80 80 80 80 80 80 80 80 7f")), 0, "sleb128")
+print value(zero)
+print value(negative_one)
+print value_u64(negative_one)
+print value(positive)
+print width(positive)
+print value(negative)
+print signed_value(negative)
+print offset(negative)
+print negative
+print value(maximum)
+print value(minimum)
+print width(minimum)
+print passed(expect(negative, -65, "signed.varint"))
+print passed(bound(negative, -70, -60, "signed.range"))
+print failed(expect(negative, 65, "signed.mismatch"))
+print expect(negative, -65, "signed.evidence")
+print message(truncated())
+print message(overflowing())
+print message(noncanonical_zero())
+print message(noncanonical_negative())
+print message(missing())
+"#,
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(native
+        .stdout
+        .starts_with(b"0\n-1\n127\n64\n2\n-65\n-65\n0\n"));
+    assert!(native.stdout.ends_with(
+        b"truncated SLEB128\nSLEB128 overflow\nnon-canonical SLEB128\nnon-canonical SLEB128\nout of bounds\n"
+    ));
+}
+
+#[test]
 fn native_uleb128_fields_match_vm_for_width_values_views_and_malformed_input() {
     if !gcc_available() {
         return;

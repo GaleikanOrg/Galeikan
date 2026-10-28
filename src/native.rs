@@ -252,6 +252,9 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_uleb_truncated", "truncated ULEB128"),
     ("gak_uleb_overflow", "ULEB128 overflow"),
     ("gak_uleb_noncanonical", "non-canonical ULEB128"),
+    ("gak_sleb_truncated", "truncated SLEB128"),
+    ("gak_sleb_overflow", "SLEB128 overflow"),
+    ("gak_sleb_noncanonical", "non-canonical SLEB128"),
     ("gak_hexdump_limit", "hexdump length exceeds 4096 bytes"),
     (
         "gak_text_offset_negative",
@@ -4653,8 +4656,10 @@ impl Codegen {
         let actual_slot = self.reserve_slot()?;
         let flags_slot = self.reserve_slot()?;
         let signed = self.label();
+        let signed_leb = self.label();
         let value_ready = self.label();
-        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    cmp BYTE PTR [r11+8], 105\n    je {signed}\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    jmp {value_ready}\n{signed}:\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, 64\n    mov r11, QWORD PTR [r10+16]\n    shl r11, 3\n    sub rcx, r11\n    shl rax, cl\n    sar rax, cl\n{value_ready}:\n    mov QWORD PTR [rbp-{}], rax", observation_slot * 8, flags_slot * 8, if max.is_some() { 2 } else { 0 }, flags_slot * 8, if max.is_some() { 3 } else { 1 }, actual_slot * 8).unwrap();
+        let sleb = self.literal("sleb128")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    cmp BYTE PTR [r11+8], 105\n    je {signed}\n    mov {}, r11\n    lea {}, [rip+{sleb}]\n    call gak_str_eq\n    test eax, eax\n    jnz {signed_leb}\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    jmp {value_ready}\n{signed}:\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, 64\n    mov r11, QWORD PTR [r10+16]\n    shl r11, 3\n    sub rcx, r11\n    shl rax, cl\n    sar rax, cl\n    jmp {value_ready}\n{signed_leb}:\n    mov QWORD PTR [rbp-{}], {}\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, QWORD PTR [r10+16]\n    cmp rcx, 10\n    je {value_ready}\n    imul ecx, 7\n    mov r11d, 64\n    sub r11d, ecx\n    mov ecx, r11d\n    shl rax, cl\n    sar rax, cl\n{value_ready}:\n    mov QWORD PTR [rbp-{}], rax", observation_slot * 8, self.arg0(), self.arg1(), observation_slot * 8, flags_slot * 8, if max.is_some() { 2 } else { 0 }, flags_slot * 8, if max.is_some() { 3 } else { 1 }, flags_slot * 8, if max.is_some() { 3 } else { 1 }, observation_slot * 8, actual_slot * 8).unwrap();
 
         let unsigned = self.label();
         let compare = self.label();
@@ -4877,11 +4882,18 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_binary_offset_negative", decoder_slot * 8, offset_slot * 8).unwrap();
                 let done = self.label();
                 let fixed = self.label();
+                let sleb_start = self.label();
                 let loop_start = self.label();
                 let read_byte = self.label();
                 let complete = self.label();
                 let uleb = self.literal("uleb128")?;
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{uleb}]\n    call gak_str_eq\n    test eax, eax\n    jz {fixed}\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    cmp r10, rdx\n    jae gak_binary_out_of_bounds\n    sub rdx, r10\n    add r10, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+r10+8]\n    xor r8d, r8d\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, rdx\n    jae gak_uleb_truncated\n    movzx eax, BYTE PTR [r11+r9]\n    cmp r9, 9\n    jne {read_byte}\n    cmp eax, 1\n    ja gak_uleb_overflow\n{read_byte}:\n    mov r10d, eax\n    and r10d, 127\n    mov ecx, r9d\n    imul ecx, 7\n    shl r10, cl\n    or r8, r10\n    inc r9\n    test al, 128\n    jnz {loop_start}_continuation\n    cmp r9, 1\n    jbe {complete}\n    test al, al\n    jz gak_uleb_noncanonical\n{complete}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, r9\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_alloc_observation\n    jmp {done}\n{loop_start}_continuation:\n    cmp r9, 10\n    jae gak_uleb_overflow\n    jmp {loop_start}\n{fixed}:", self.arg0(), decoder_slot * 8, self.arg1(), offset_slot * 8, source_slot * 8, source_slot * 8, offset_slot * 8, decoder_slot * 8).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{uleb}]\n    call gak_str_eq\n    test eax, eax\n    jz {sleb_start}\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    cmp r10, rdx\n    jae gak_binary_out_of_bounds\n    sub rdx, r10\n    add r10, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+r10+8]\n    xor r8d, r8d\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, rdx\n    jae gak_uleb_truncated\n    movzx eax, BYTE PTR [r11+r9]\n    cmp r9, 9\n    jne {read_byte}\n    cmp eax, 1\n    ja gak_uleb_overflow\n{read_byte}:\n    mov r10d, eax\n    and r10d, 127\n    mov ecx, r9d\n    imul ecx, 7\n    shl r10, cl\n    or r8, r10\n    inc r9\n    test al, 128\n    jnz {loop_start}_continuation\n    cmp r9, 1\n    jbe {complete}\n    test al, al\n    jz gak_uleb_noncanonical\n{complete}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, r9\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_alloc_observation\n    jmp {done}\n{loop_start}_continuation:\n    cmp r9, 10\n    jae gak_uleb_overflow\n    jmp {loop_start}\n{sleb_start}:", self.arg0(), decoder_slot * 8, self.arg1(), offset_slot * 8, source_slot * 8, source_slot * 8, offset_slot * 8, decoder_slot * 8).unwrap();
+                let sleb = self.literal("sleb128")?;
+                let sleb_loop = self.label();
+                let sleb_byte = self.label();
+                let sleb_check_negative = self.label();
+                let sleb_complete = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{sleb}]\n    call gak_str_eq\n    test eax, eax\n    jz {fixed}\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    cmp r10, rdx\n    jae gak_binary_out_of_bounds\n    sub rdx, r10\n    add r10, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+r10+8]\n    xor r8d, r8d\n    xor r9d, r9d\n{sleb_loop}:\n    cmp r9, rdx\n    jae gak_sleb_truncated\n    movzx eax, BYTE PTR [r11+r9]\n    cmp r9, 9\n    jne {sleb_byte}\n    cmp eax, 0\n    je {sleb_byte}\n    cmp eax, 127\n    jne gak_sleb_overflow\n{sleb_byte}:\n    mov r10d, eax\n    and r10d, 127\n    mov ecx, r9d\n    imul ecx, 7\n    shl r10, cl\n    or r8, r10\n    inc r9\n    test al, 128\n    jnz {sleb_loop}_continuation\n    cmp r9, 1\n    jbe {sleb_complete}\n    test al, al\n    jne {sleb_check_negative}\n    movzx r10d, BYTE PTR [r11+r9-2]\n    test r10b, 64\n    jz gak_sleb_noncanonical\n    jmp {sleb_complete}\n{sleb_check_negative}:\n    cmp al, 127\n    jne {sleb_complete}\n    movzx r10d, BYTE PTR [r11+r9-2]\n    test r10b, 64\n    jnz gak_sleb_noncanonical\n{sleb_complete}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, r9\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_alloc_observation\n    jmp {done}\n{sleb_loop}_continuation:\n    cmp r9, 10\n    jae gak_sleb_overflow\n    jmp {sleb_loop}\n{fixed}:", self.arg0(), decoder_slot * 8, self.arg1(), offset_slot * 8, source_slot * 8, source_slot * 8, offset_slot * 8, decoder_slot * 8).unwrap();
                 for (format, width, big_endian) in [
                     ("u8", 1_usize, false),
                     ("u16le", 2, false),
@@ -4928,6 +4940,7 @@ impl Codegen {
                     let signed16 = self.label();
                     let signed32 = self.label();
                     let signed64 = self.label();
+                    let signed_leb = self.label();
                     let done = self.label();
                     for (decoder, target) in [
                         ("i8", &signed8),
@@ -4937,6 +4950,7 @@ impl Codegen {
                         ("i32be", &signed32),
                         ("i64le", &signed64),
                         ("i64be", &signed64),
+                        ("sleb128", &signed_leb),
                     ] {
                         let literal = self.literal(decoder)?;
                         writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [{}+24]\n    lea {}, [rip+{literal}]\n    call gak_str_eq\n    test eax, eax\n    jnz {target}", self.arg0(), slot * 8, self.arg0(), self.arg0(), self.arg1()).unwrap();
@@ -4963,7 +4977,7 @@ impl Codegen {
                     } else {
                         writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    test rax, rax\n    js gak_observation_value_range\n    jmp {done}", slot * 8).unwrap();
                     }
-                    writeln!(self.code, "{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
+                    writeln!(self.code, "{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    jmp {done}\n{signed_leb}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, QWORD PTR [r10+16]\n    cmp rcx, 10\n    je {done}\n    imul ecx, 7\n    mov r11d, 64\n    sub r11d, ecx\n    mov ecx, r11d\n    shl rax, cl\n    sar rax, cl\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
                     return Ok(Scalar::Int);
                 }
                 match name {
@@ -6356,6 +6370,9 @@ impl Codegen {
             ("gak_uleb_truncated", "truncated ULEB128"),
             ("gak_uleb_overflow", "ULEB128 overflow"),
             ("gak_uleb_noncanonical", "non-canonical ULEB128"),
+            ("gak_sleb_truncated", "truncated SLEB128"),
+            ("gak_sleb_overflow", "SLEB128 overflow"),
+            ("gak_sleb_noncanonical", "non-canonical SLEB128"),
             ("gak_audit_min_negative", "minimum must not be negative"),
             ("gak_audit_max_negative", "maximum must not be negative"),
             (
@@ -7442,6 +7459,9 @@ gak_cli_utf8_done:
             ("gak_uleb_truncated", "gak_uleb_truncated_msg"),
             ("gak_uleb_overflow", "gak_uleb_overflow_msg"),
             ("gak_uleb_noncanonical", "gak_uleb_noncanonical_msg"),
+            ("gak_sleb_truncated", "gak_sleb_truncated_msg"),
+            ("gak_sleb_overflow", "gak_sleb_overflow_msg"),
+            ("gak_sleb_noncanonical", "gak_sleb_noncanonical_msg"),
             ("gak_hexdump_limit", "gak_hexdump_limit_msg"),
             ("gak_text_offset_negative", "gak_text_offset_negative_msg"),
             ("gak_max_chars_range", "gak_max_chars_range_msg"),
