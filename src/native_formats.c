@@ -898,16 +898,21 @@ static int gak_pe_image_base(const GakFormat *format, uint64_t *base) {
     return 1;
 }
 
-static GakFormatRange *gak_pe_va(const GakFormat *format, uint64_t va,
-                                 uint64_t count) {
-    uint64_t base;
-    if (!gak_pe_image_base(format, &base)) return NULL;
-    if (va < base) { gak_format_fail("PE VA is below image base"); return NULL; }
-    GakFormatRange *range = gak_pe_rva(format, va - base, count);
+static GakFormatRange *gak_pe_va_at(const GakFormat *format, uint64_t load_base,
+                                    uint64_t va, uint64_t count) {
+    if (va < load_base) { gak_format_fail("PE VA is below load base"); return NULL; }
+    GakFormatRange *range = gak_pe_rva(format, va - load_base, count);
     if (!range) return NULL;
     range->address_kind = 3;
     range->address = va;
     return range;
+}
+
+static GakFormatRange *gak_pe_va(const GakFormat *format, uint64_t va,
+                                 uint64_t count) {
+    uint64_t base;
+    if (!gak_pe_image_base(format, &base)) return NULL;
+    return gak_pe_va_at(format, base, va, count);
 }
 
 static GakFormatRange *gak_elf_va(const GakFormat *format, uint64_t va,
@@ -981,6 +986,13 @@ void *gak_native_formats_pe_va(const void *value, uint64_t address, int64_t coun
     return gak_pe_va(value, address, (uint64_t)count);
 }
 
+void *gak_native_formats_pe_va_at(const void *value, uint64_t load_base,
+                                   uint64_t address, int64_t count) {
+    gak_formats_error = NULL;
+    if (count < 0) { gak_format_fail("PE VA view length must not be negative"); return NULL; }
+    return gak_pe_va_at(value, load_base, address, (uint64_t)count);
+}
+
 void *gak_native_formats_va(const void *value, int64_t address, int64_t count) {
     gak_formats_error = NULL;
     if (address < 0) { gak_format_fail("VA must not be negative"); return NULL; }
@@ -1005,6 +1017,16 @@ int64_t gak_native_formats_rva_offset(const void *value, int64_t address) {
 
 int64_t gak_native_formats_pe_va_offset(const void *value, uint64_t address) {
     GakFormatRange *range = gak_native_formats_pe_va(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
+int64_t gak_native_formats_pe_va_offset_at(const void *value, uint64_t load_base,
+                                            uint64_t address) {
+    GakFormatRange *range = gak_native_formats_pe_va_at(value, load_base, address, 1);
     if (!range) return 0;
     int64_t offset = (int64_t)range->start;
     format_memory -= sizeof(*range);
@@ -1134,6 +1156,16 @@ uint64_t gak_native_formats_offset_pe_va(const void *value, int64_t offset) {
         gak_format_fail("PE VA overflow"); return 0;
     }
     return base + (uint64_t)rva;
+}
+
+uint64_t gak_native_formats_offset_pe_va_at(const void *value, uint64_t load_base,
+                                             int64_t offset) {
+    int64_t rva = gak_native_formats_offset_rva(value, offset);
+    if (gak_formats_error) return 0;
+    if (load_base > UINT64_MAX - (uint64_t)rva) {
+        gak_format_fail("PE VA overflow"); return 0;
+    }
+    return load_base + (uint64_t)rva;
 }
 
 void *gak_native_formats_entry_view(const void *value, int64_t count) {

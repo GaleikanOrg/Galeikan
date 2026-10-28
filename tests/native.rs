@@ -5207,7 +5207,7 @@ fn native_pe_high_image_base_addresses_match_interpreters() {
     fs::write(s.0.join("overflow.exe"), overflow).unwrap();
     let script = s.write(
         "pe-high-address.gak",
-        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, image_base, pe_va, pe_va_offset, offset_pe_va\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.exe\", 1024))\nlet overflow_report: Format = probe(analyze(\"overflow.exe\", 1024))\nfn below_base() -> Result<Source> = pe_va(report, 0x7fffffffffffffffu64, 1)\nfn overflow_va() -> Result<u64> = offset_pe_va(overflow_report, 0x203)\nfn overlay() -> Result<u64> = offset_pe_va(report, 0x210)\nprint image_base(report)\nprint pe_va_offset(report, 0x8000000000001003u64)\nprint offset_pe_va(report, 0x203)\nprint size(pe_va(report, 0x8000000000001000u64, 4))\nprint is_error(below_base())\nprint is_error(overlay())\nprint is_error(overflow_va())\nprint pe_va(report, 0x8000000000001000u64, 4)\n",
+        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, image_base, pe_va, pe_va_offset, offset_pe_va, pe_va_at, pe_va_offset_at, offset_pe_va_at\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.exe\", 1024))\nlet overflow_report: Format = probe(analyze(\"overflow.exe\", 1024))\nfn below_base() -> Result<Source> = pe_va(report, 0x7fffffffffffffffu64, 1)\nfn overflow_va() -> Result<u64> = offset_pe_va(overflow_report, 0x203)\nfn below_loaded() -> Result<Source> = pe_va_at(report, 0x9000000000000000u64, 0x8fffffffffffffffu64, 1)\nfn loaded_overflow() -> Result<u64> = offset_pe_va_at(report, 18446744073709551615u64, 0x203)\nfn overlay() -> Result<u64> = offset_pe_va(report, 0x210)\nprint image_base(report)\nprint pe_va_offset(report, 0x8000000000001003u64)\nprint offset_pe_va(report, 0x203)\nprint size(pe_va(report, 0x8000000000001000u64, 4))\nprint is_error(below_base())\nprint is_error(overlay())\nprint is_error(overflow_va())\nprint pe_va(report, 0x8000000000001000u64, 4)\nprint pe_va_at(report, 0x9000000000000000u64, 0x9000000000001000u64, 4)\nprint pe_va_offset_at(report, 0x9000000000000000u64, 0x9000000000001003u64) == 0x203\nprint offset_pe_va_at(report, 0x9000000000000000u64, 0x203) == 0x9000000000001003u64\nprint is_error(below_loaded())\nprint is_error(loaded_overflow())\n",
     );
     let run = |engine| {
         Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -5228,6 +5228,8 @@ fn native_pe_high_image_base_addresses_match_interpreters() {
         .stdout
         .starts_with(b"9223372036854775808\n515\n9223372036854779907\n4\ntrue\ntrue\ntrue\n"));
     assert!(String::from_utf8_lossy(&vm.stdout).contains("PE VA 0x8000000000001000"));
+    assert!(String::from_utf8_lossy(&vm.stdout).contains("PE VA 0x9000000000001000"));
+    assert!(vm.stdout.ends_with(b"true\ntrue\ntrue\ntrue\n"));
     let ast = run("ast");
     assert!(
         ast.status.success(),

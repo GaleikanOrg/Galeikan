@@ -1948,14 +1948,33 @@ impl FormatReport {
         va: u64,
         count: usize,
     ) -> Result<(usize, usize), String> {
+        self.pe_va_range_at(captured_len, self.pe_image_base()?, va, count)
+    }
+
+    pub fn pe_va_range_at(
+        &self,
+        captured_len: usize,
+        load_base: u64,
+        va: u64,
+        count: usize,
+    ) -> Result<(usize, usize), String> {
         let rva = va
-            .checked_sub(self.pe_image_base()?)
-            .ok_or("PE VA is below image base")?;
+            .checked_sub(load_base)
+            .ok_or("PE VA is below load base")?;
         self.pe_rva_range(captured_len, rva, count)
     }
 
     pub fn pe_offset_va(&self, captured_len: usize, offset: usize) -> Result<u64, String> {
-        self.pe_image_base()?
+        self.pe_offset_va_at(captured_len, self.pe_image_base()?, offset)
+    }
+
+    pub fn pe_offset_va_at(
+        &self,
+        captured_len: usize,
+        load_base: u64,
+        offset: usize,
+    ) -> Result<u64, String> {
+        load_base
             .checked_add(self.pe_offset_rva(captured_len, offset)?)
             .ok_or_else(|| "PE VA overflow".into())
     }
