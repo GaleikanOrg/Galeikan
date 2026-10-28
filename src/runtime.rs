@@ -6519,6 +6519,23 @@ impl Runtime {
                     va,
                 )?)))
             }
+            ("elf_va_at", [Value::Format(source, report), load_bias, va, count]) => {
+                let va = va.as_uint()?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "VA view length must not be negative")?;
+                let (start, end) = report.elf_va_range_at(
+                    source.bytes().len(),
+                    load_bias.as_uint()?,
+                    va,
+                    count,
+                )?;
+                Ok(Value::Source(Arc::new(Source::va_view(
+                    source.clone(),
+                    start,
+                    end,
+                    va,
+                )?)))
+            }
             ("va_offset", [Value::Format(source, report), va]) => {
                 let va = u64::try_from(va.as_int()?).map_err(|_| "VA must not be negative")?;
                 let (start, _) = report.elf_va_range(source.bytes().len(), va, 1)?;
@@ -6528,6 +6545,17 @@ impl Runtime {
             }
             ("va_offset_u64", [Value::Format(source, report), va]) => {
                 let (start, _) = report.elf_va_range(source.bytes().len(), va.as_uint()?, 1)?;
+                Ok(Value::Int(
+                    i64::try_from(start).map_err(|_| "ELF file offset out of range")?,
+                ))
+            }
+            ("elf_va_offset_at", [Value::Format(source, report), load_bias, va]) => {
+                let (start, _) = report.elf_va_range_at(
+                    source.bytes().len(),
+                    load_bias.as_uint()?,
+                    va.as_uint()?,
+                    1,
+                )?;
                 Ok(Value::Int(
                     i64::try_from(start).map_err(|_| "ELF file offset out of range")?,
                 ))
@@ -6546,6 +6574,15 @@ impl Runtime {
                 Ok(Value::UInt(
                     report.elf_offset_va(source.bytes().len(), offset)?,
                 ))
+            }
+            ("offset_elf_va_at", [Value::Format(source, report), load_bias, offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "ELF file offset must not be negative")?;
+                Ok(Value::UInt(report.elf_offset_va_at(
+                    source.bytes().len(),
+                    load_bias.as_uint()?,
+                    offset,
+                )?))
             }
             ("entry_view", [Value::Format(source, report), count]) => {
                 let count = usize::try_from(count.as_int()?)
@@ -7835,6 +7872,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "rva" | "va") => (&[Format, Int, Int], Source),
         ("formats", "pe_va") => (&[Format, UInt, Int], Source),
         ("formats", "pe_va_at") => (&[Format, UInt, UInt, Int], Source),
+        ("formats", "elf_va_at") => (&[Format, UInt, UInt, Int], Source),
         ("formats", "va_u64") => (&[Format, UInt, Int], Source),
         ("formats", "rva_offset" | "va_offset" | "offset_rva" | "offset_va") => {
             (&[Format, Int], Int)
@@ -7845,6 +7883,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "offset_pe_va") => (&[Format, Int], UInt),
         ("formats", "pe_va_offset_at") => (&[Format, UInt, UInt], Int),
         ("formats", "offset_pe_va_at") => (&[Format, UInt, Int], UInt),
+        ("formats", "elf_va_offset_at") => (&[Format, UInt, UInt], Int),
+        ("formats", "offset_elf_va_at") => (&[Format, UInt, Int], UInt),
         ("formats", "entry_view") => (&[Format, Int], Source),
         ("formats", "name" | "address" | "flags") => (&[Type::Section], Str),
         ("formats", "writable" | "executable") => (&[Type::Section], Bool),

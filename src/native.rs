@@ -4418,9 +4418,9 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}", self.arg0(), report_slot * 8, self.arg1(), address_slot * 8, self.arg2()).unwrap();
                 return self.formats_range_result();
             }
-            ("pe_va_at", [report, load_base, address, count]) => {
+            ("pe_va_at" | "elf_va_at", [report, load_base, address, count]) => {
                 if self.expr(report, scope)? != Scalar::Format {
-                    return Err("formats.pe_va_at expects Format".into());
+                    return Err(format!("formats.{name} expects Format"));
                 }
                 let report_slot = self.reserve_slot()?;
                 writeln!(
@@ -4430,12 +4430,12 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(load_base, scope)? != Scalar::UInt {
-                    return Err("formats.pe_va_at load base must be u64".into());
+                    return Err(format!("formats.{name} load base or bias must be u64"));
                 }
                 let base_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", base_slot * 8).unwrap();
                 if self.expr(address, scope)? != Scalar::UInt {
-                    return Err("formats.pe_va_at address must be u64".into());
+                    return Err(format!("formats.{name} address must be u64"));
                 }
                 let address_slot = self.reserve_slot()?;
                 writeln!(
@@ -4445,10 +4445,10 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(count, scope)? != Scalar::Int {
-                    return Err("formats.pe_va_at length must be i64".into());
+                    return Err(format!("formats.{name} length must be i64"));
                 }
                 self.uses_formats = true;
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_pe_va_at", self.arg0(), report_slot * 8, self.arg1(), base_slot * 8, self.arg2(), address_slot * 8, self.arg3()).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}", self.arg0(), report_slot * 8, self.arg1(), base_slot * 8, self.arg2(), address_slot * 8, self.arg3()).unwrap();
                 return self.formats_range_result();
             }
             (
@@ -4484,7 +4484,10 @@ impl Codegen {
                     Scalar::Int
                 });
             }
-            ("pe_va_offset_at" | "offset_pe_va_at", [report, load_base, address]) => {
+            (
+                "pe_va_offset_at" | "offset_pe_va_at" | "elf_va_offset_at" | "offset_elf_va_at",
+                [report, load_base, address],
+            ) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));
                 }
@@ -4500,7 +4503,7 @@ impl Codegen {
                 }
                 let base_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", base_slot * 8).unwrap();
-                let expected = if name == "pe_va_offset_at" {
+                let expected = if matches!(name, "pe_va_offset_at" | "elf_va_offset_at") {
                     Scalar::UInt
                 } else {
                     Scalar::Int
@@ -4511,7 +4514,7 @@ impl Codegen {
                 self.uses_formats = true;
                 let ready = self.label();
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}\n    mov r10, rax\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    test rax, rax\n    jz {ready}\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov rax, r10", self.arg0(), report_slot * 8, self.arg1(), base_slot * 8, self.arg2()).unwrap();
-                return Ok(if name == "offset_pe_va_at" {
+                return Ok(if matches!(name, "offset_pe_va_at" | "offset_elf_va_at") {
                     Scalar::UInt
                 } else {
                     Scalar::Int

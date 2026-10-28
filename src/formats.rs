@@ -1958,6 +1958,9 @@ impl FormatReport {
         va: u64,
         count: usize,
     ) -> Result<(usize, usize), String> {
+        let last = u64::try_from(count.saturating_sub(1))
+            .map_err(|_| "PE VA length outside address space")?;
+        va.checked_add(last).ok_or("PE VA range overflow")?;
         let rva = va
             .checked_sub(load_base)
             .ok_or("PE VA is below load base")?;
@@ -2131,6 +2134,33 @@ impl FormatReport {
             return Err("ELF file offset has ambiguous VA mapping".into());
         }
         Ok(address)
+    }
+
+    pub fn elf_va_range_at(
+        &self,
+        captured_len: usize,
+        load_bias: u64,
+        va: u64,
+        count: usize,
+    ) -> Result<(usize, usize), String> {
+        let last = u64::try_from(count.saturating_sub(1))
+            .map_err(|_| "ELF VA length outside address space")?;
+        va.checked_add(last).ok_or("ELF VA range overflow")?;
+        let linked_va = va
+            .checked_sub(load_bias)
+            .ok_or("ELF VA is below load bias")?;
+        self.elf_va_range(captured_len, linked_va, count)
+    }
+
+    pub fn elf_offset_va_at(
+        &self,
+        captured_len: usize,
+        load_bias: u64,
+        offset: usize,
+    ) -> Result<u64, String> {
+        load_bias
+            .checked_add(self.elf_offset_va(captured_len, offset)?)
+            .ok_or_else(|| "ELF VA overflow".into())
     }
 }
 

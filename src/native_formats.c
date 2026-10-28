@@ -900,6 +900,9 @@ static int gak_pe_image_base(const GakFormat *format, uint64_t *base) {
 
 static GakFormatRange *gak_pe_va_at(const GakFormat *format, uint64_t load_base,
                                     uint64_t va, uint64_t count) {
+    if (count && va > UINT64_MAX - (count - 1)) {
+        gak_format_fail("PE VA range overflow"); return NULL;
+    }
     if (va < load_base) { gak_format_fail("PE VA is below load base"); return NULL; }
     GakFormatRange *range = gak_pe_rva(format, va - load_base, count);
     if (!range) return NULL;
@@ -966,6 +969,18 @@ static GakFormatRange *gak_elf_va(const GakFormat *format, uint64_t va,
     return gak_format_range(format, file_start, file_end, 2, va);
 }
 
+static GakFormatRange *gak_elf_va_at(const GakFormat *format, uint64_t load_bias,
+                                     uint64_t va, uint64_t count) {
+    if (count && va > UINT64_MAX - (count - 1)) {
+        gak_format_fail("ELF VA range overflow"); return NULL;
+    }
+    if (va < load_bias) { gak_format_fail("ELF VA is below load bias"); return NULL; }
+    GakFormatRange *range = gak_elf_va(format, va - load_bias, count);
+    if (!range) return NULL;
+    range->address = va;
+    return range;
+}
+
 void *gak_native_formats_rva(const void *value, int64_t address, int64_t count) {
     gak_formats_error = NULL;
     if (address < 0) { gak_format_fail("RVA must not be negative"); return NULL; }
@@ -1004,6 +1019,13 @@ void *gak_native_formats_va_u64(const void *value, uint64_t address, int64_t cou
     gak_formats_error = NULL;
     if (count < 0) { gak_format_fail("VA view length must not be negative"); return NULL; }
     return gak_elf_va(value, address, (uint64_t)count);
+}
+
+void *gak_native_formats_elf_va_at(const void *value, uint64_t load_bias,
+                                    uint64_t address, int64_t count) {
+    gak_formats_error = NULL;
+    if (count < 0) { gak_format_fail("VA view length must not be negative"); return NULL; }
+    return gak_elf_va_at(value, load_bias, address, (uint64_t)count);
 }
 
 int64_t gak_native_formats_rva_offset(const void *value, int64_t address) {
@@ -1045,6 +1067,16 @@ int64_t gak_native_formats_va_offset(const void *value, int64_t address) {
 
 int64_t gak_native_formats_va_offset_u64(const void *value, uint64_t address) {
     GakFormatRange *range = gak_native_formats_va_u64(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
+int64_t gak_native_formats_elf_va_offset_at(const void *value, uint64_t load_bias,
+                                             uint64_t address) {
+    GakFormatRange *range = gak_native_formats_elf_va_at(value, load_bias, address, 1);
     if (!range) return 0;
     int64_t offset = (int64_t)range->start;
     format_memory -= sizeof(*range);
@@ -1145,6 +1177,16 @@ int64_t gak_native_formats_offset_va(const void *value, int64_t offset) {
 
 uint64_t gak_native_formats_offset_va_u64(const void *value, int64_t offset) {
     return gak_native_formats_offset_address(value, offset, 0, 1);
+}
+
+uint64_t gak_native_formats_offset_elf_va_at(const void *value, uint64_t load_bias,
+                                              int64_t offset) {
+    uint64_t linked_va = gak_native_formats_offset_va_u64(value, offset);
+    if (gak_formats_error) return 0;
+    if (load_bias > UINT64_MAX - linked_va) {
+        gak_format_fail("ELF VA overflow"); return 0;
+    }
+    return load_bias + linked_va;
 }
 
 uint64_t gak_native_formats_offset_pe_va(const void *value, int64_t offset) {

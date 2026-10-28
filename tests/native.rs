@@ -5207,7 +5207,7 @@ fn native_pe_high_image_base_addresses_match_interpreters() {
     fs::write(s.0.join("overflow.exe"), overflow).unwrap();
     let script = s.write(
         "pe-high-address.gak",
-        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, image_base, pe_va, pe_va_offset, offset_pe_va, pe_va_at, pe_va_offset_at, offset_pe_va_at\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.exe\", 1024))\nlet overflow_report: Format = probe(analyze(\"overflow.exe\", 1024))\nfn below_base() -> Result<Source> = pe_va(report, 0x7fffffffffffffffu64, 1)\nfn overflow_va() -> Result<u64> = offset_pe_va(overflow_report, 0x203)\nfn below_loaded() -> Result<Source> = pe_va_at(report, 0x9000000000000000u64, 0x8fffffffffffffffu64, 1)\nfn loaded_overflow() -> Result<u64> = offset_pe_va_at(report, 18446744073709551615u64, 0x203)\nfn overlay() -> Result<u64> = offset_pe_va(report, 0x210)\nprint image_base(report)\nprint pe_va_offset(report, 0x8000000000001003u64)\nprint offset_pe_va(report, 0x203)\nprint size(pe_va(report, 0x8000000000001000u64, 4))\nprint is_error(below_base())\nprint is_error(overlay())\nprint is_error(overflow_va())\nprint pe_va(report, 0x8000000000001000u64, 4)\nprint pe_va_at(report, 0x9000000000000000u64, 0x9000000000001000u64, 4)\nprint pe_va_offset_at(report, 0x9000000000000000u64, 0x9000000000001003u64) == 0x203\nprint offset_pe_va_at(report, 0x9000000000000000u64, 0x203) == 0x9000000000001003u64\nprint is_error(below_loaded())\nprint is_error(loaded_overflow())\n",
+        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, image_base, pe_va, pe_va_offset, offset_pe_va, pe_va_at, pe_va_offset_at, offset_pe_va_at\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.exe\", 1024))\nlet overflow_report: Format = probe(analyze(\"overflow.exe\", 1024))\nfn below_base() -> Result<Source> = pe_va(report, 0x7fffffffffffffffu64, 1)\nfn overflow_va() -> Result<u64> = offset_pe_va(overflow_report, 0x203)\nfn below_loaded() -> Result<Source> = pe_va_at(report, 0x9000000000000000u64, 0x8fffffffffffffffu64, 1)\nfn loaded_overflow() -> Result<u64> = offset_pe_va_at(report, 18446744073709551615u64, 0x203)\nfn range_overflow() -> Result<Source> = pe_va_at(report, 0xffffffffffffefffu64, 0xffffffffffffffffu64, 2)\nfn overlay() -> Result<u64> = offset_pe_va(report, 0x210)\nprint image_base(report)\nprint pe_va_offset(report, 0x8000000000001003u64)\nprint offset_pe_va(report, 0x203)\nprint size(pe_va(report, 0x8000000000001000u64, 4))\nprint is_error(below_base())\nprint is_error(overlay())\nprint is_error(overflow_va())\nprint pe_va(report, 0x8000000000001000u64, 4)\nprint pe_va_at(report, 0x9000000000000000u64, 0x9000000000001000u64, 4)\nprint pe_va_offset_at(report, 0x9000000000000000u64, 0x9000000000001003u64) == 0x203\nprint offset_pe_va_at(report, 0x9000000000000000u64, 0x203) == 0x9000000000001003u64\nprint is_error(below_loaded())\nprint is_error(loaded_overflow())\nprint is_error(range_overflow())\n",
     );
     let run = |engine| {
         Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -5229,7 +5229,7 @@ fn native_pe_high_image_base_addresses_match_interpreters() {
         .starts_with(b"9223372036854775808\n515\n9223372036854779907\n4\ntrue\ntrue\ntrue\n"));
     assert!(String::from_utf8_lossy(&vm.stdout).contains("PE VA 0x8000000000001000"));
     assert!(String::from_utf8_lossy(&vm.stdout).contains("PE VA 0x9000000000001000"));
-    assert!(vm.stdout.ends_with(b"true\ntrue\ntrue\ntrue\n"));
+    assert!(vm.stdout.ends_with(b"true\ntrue\ntrue\ntrue\ntrue\n"));
     let ast = run("ast");
     assert!(
         ast.status.success(),
@@ -5266,7 +5266,7 @@ fn native_elf_high_unsigned_addresses_match_interpreters() {
     let mut elf = vec![0u8; 0x120];
     elf[..4].copy_from_slice(b"\x7fELF");
     elf[4..7].copy_from_slice(&[2, 1, 1]);
-    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+    elf[16..18].copy_from_slice(&3u16.to_le_bytes());
     elf[18..20].copy_from_slice(&62u16.to_le_bytes());
     elf[20..24].copy_from_slice(&1u32.to_le_bytes());
     elf[24..32].copy_from_slice(&0x8000_0000_0000_1000u64.to_le_bytes());
@@ -5284,7 +5284,7 @@ fn native_elf_high_unsigned_addresses_match_interpreters() {
     fs::write(s.0.join("high.elf"), elf).unwrap();
     let script = s.write(
         "high-address.gak",
-        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, va_u64, va_offset_u64, offset_va, offset_va_u64\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.elf\", 1024))\nfn signed_inverse() -> Result<i64> = offset_va(report, 0x100)\nfn unbacked() -> Result<Source> = va_u64(report, 0x8000000000001010u64, 1)\nprint size(va_u64(report, 0x8000000000001000u64, 4))\nprint va_offset_u64(report, 0x8000000000001003u64)\nprint offset_va_u64(report, 0x103)\nprint is_error(signed_inverse())\nprint is_error(unbacked())\n",
+        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, va_u64, va_offset_u64, offset_va, offset_va_u64, elf_va_at, elf_va_offset_at, offset_elf_va_at\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.elf\", 1024))\nfn signed_inverse() -> Result<i64> = offset_va(report, 0x100)\nfn unbacked() -> Result<Source> = va_u64(report, 0x8000000000001010u64, 1)\nfn below_bias() -> Result<Source> = elf_va_at(report, 0x1000000000000000u64, 0x0fffffffffffffffu64, 1)\nfn overflow_bias() -> Result<u64> = offset_elf_va_at(report, 0x8000000000000000u64, 0x103)\nfn range_overflow() -> Result<Source> = elf_va_at(report, 0x7fffffffffffefffu64, 0xffffffffffffffffu64, 2)\nprint size(va_u64(report, 0x8000000000001000u64, 4))\nprint va_offset_u64(report, 0x8000000000001003u64)\nprint offset_va_u64(report, 0x103)\nprint is_error(signed_inverse())\nprint is_error(unbacked())\nprint size(elf_va_at(report, 0x1000000000000000u64, 0x9000000000001000u64, 4))\nprint elf_va_offset_at(report, 0x1000000000000000u64, 0x9000000000001003u64) == 0x103\nprint offset_elf_va_at(report, 0x1000000000000000u64, 0x103) == 0x9000000000001003u64\nprint elf_va_at(report, 0x1000000000000000u64, 0x9000000000001000u64, 4)\nprint is_error(below_bias())\nprint is_error(overflow_bias())\nprint is_error(range_overflow())\n",
     );
     let run = |engine| {
         Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -5301,7 +5301,11 @@ fn native_elf_high_unsigned_addresses_match_interpreters() {
         "{}",
         String::from_utf8_lossy(&vm.stderr)
     );
-    assert_eq!(vm.stdout, b"4\n259\n9223372036854779907\ntrue\ntrue\n");
+    assert!(vm
+        .stdout
+        .starts_with(b"4\n259\n9223372036854779907\ntrue\ntrue\n4\ntrue\ntrue\n"));
+    assert!(String::from_utf8_lossy(&vm.stdout).contains("ELF VA 0x9000000000001000"));
+    assert!(vm.stdout.ends_with(b"true\ntrue\ntrue\n"));
     let ast = run("ast");
     assert!(
         ast.status.success(),
