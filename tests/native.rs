@@ -2635,6 +2635,48 @@ fn native_impl_methods_on_structs_match_vm() {
 }
 
 #[test]
+fn native_standard_namespace_calls_match_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "standard.gak",
+        "let source = std.binary.snapshot(std.binary.from_hex(\"4d 5a\"))\nprint std.binary.size(source)\nprint std.bytes.to_hex(std.binary.extract(source, 0, 2))\n",
+    );
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = if cfg!(windows) {
+        script.with_extension("gak.exe")
+    } else {
+        script.with_extension("gak.native")
+    };
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(String::from_utf8_lossy(&native.stdout), "2\n4d5a\n");
+}
+
+#[test]
 fn native_break_and_continue_match_vm_in_nested_loops_and_functions() {
     if !gcc_available() {
         return;

@@ -371,6 +371,62 @@ fn impl_methods_on_structs_work_across_modules_and_engines() {
 }
 
 #[test]
+fn standard_namespace_calls_need_no_import_but_keep_effect_checks() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "standard.gaks",
+        "let source = std.binary.snapshot(std.binary.from_hex(\"4d 5a\"))\nprint std.binary.size(source)\nprint std.bytes.to_hex(std.binary.extract(source, 0, 2))\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "2\n4d5a\n");
+    }
+    let ungranted = s.write("ungranted.gak", "print std.binary.analyze(\"x\", 8)\n");
+    let checked = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("check")
+        .arg(ungranted)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(stderr(&checked).contains("file.read was not declared with requires"));
+    let declared = s.write(
+        "declared.gak",
+        "requires { file.read }\nprint std.binary.analyze(\"x\", 8)\n",
+    );
+    let checked = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("check")
+        .arg(declared)
+        .output()
+        .unwrap();
+    assert!(checked.status.success(), "{}", stderr(&checked));
+    let disassembly = s.write(
+        "asm.gaks",
+        "let code = std.binary.snapshot(std.binary.from_hex(\"90\"))\nprint std.asm.mnemonic(std.asm.decode(code, 0, 64))\n",
+    );
+    for engine in ["ast", "vm"] {
+        let output = s.run_engine(&disassembly, engine, false, &[]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "nop\n");
+    }
+}
+
+#[test]
 fn loop_control_matches_ast_vm_and_bundle_and_rejects_outside_loops() {
     let s = Sandbox::new();
     let script = s.write(

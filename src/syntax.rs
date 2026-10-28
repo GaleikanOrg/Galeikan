@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const MAX_EXPR_DEPTH: usize = 128;
 
@@ -550,7 +550,8 @@ pub enum FunctionBody {
     Block(Vec<BlockStmt>, Option<Expr>),
 }
 
-pub fn parse(tokens: Vec<Token>) -> Result<Vec<Stmt>, String> {
+pub fn parse(mut tokens: Vec<Token>) -> Result<Vec<Stmt>, String> {
+    let standard_modules = lower_standard_calls(&mut tokens);
     let mut parser = Parser {
         tokens,
         pos: 0,
@@ -560,8 +561,66 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Stmt>, String> {
         from_imports: Vec::new(),
     };
     let mut statements = parser.program()?;
+    let insert_at = usize::from(matches!(
+        statements.first().map(|statement| &statement.kind),
+        Some(StmtKind::Requires(_))
+    ));
+    for module in standard_modules.into_iter().rev() {
+        statements.insert(
+            insert_at,
+            Stmt {
+                kind: StmtKind::Import(
+                    format!("std.{module}"),
+                    format!("__galeikan_std_{module}"),
+                    Vec::new(),
+                ),
+                line: 1,
+                col: 1,
+            },
+        );
+    }
     resolve_from_imports(&mut statements, &parser.from_imports)?;
     Ok(statements)
+}
+
+fn lower_standard_calls(tokens: &mut [Token]) -> BTreeSet<String> {
+    let mut modules = BTreeSet::new();
+    for index in 0..tokens.len().saturating_sub(1) {
+        if tokens[index + 1].kind != TokenKind::LParen {
+            continue;
+        }
+        let TokenKind::Ident(name) = &tokens[index].kind else {
+            continue;
+        };
+        let Some((module, function)) = name.strip_prefix("std.").and_then(|s| s.split_once('.'))
+        else {
+            continue;
+        };
+        if function.is_empty()
+            || !matches!(
+                module,
+                "binary"
+                    | "bytes"
+                    | "text"
+                    | "formats"
+                    | "cli"
+                    | "net"
+                    | "process"
+                    | "result"
+                    | "audit"
+                    | "iter"
+                    | "list"
+                    | "lab"
+                    | "asm"
+            )
+        {
+            continue;
+        }
+        let module = module.to_owned();
+        tokens[index].kind = TokenKind::Ident(format!("__galeikan_std_{module}.{function}"));
+        modules.insert(module);
+    }
+    modules
 }
 
 struct Parser {
@@ -1631,6 +1690,7 @@ fn valid_binding_name(name: &str) -> bool {
                 | "struct"
                 | "class"
                 | "impl"
+                | "std"
                 | "fn"
                 | "return"
                 | "break"
