@@ -274,6 +274,9 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_cstring_offset_bounds", "string offset out of bounds"),
     ("gak_cstring_unterminated", "unterminated string within max_bytes"),
     ("gak_cstring_utf8", "invalid UTF-8 string"),
+    ("gak_utf8_length_range", "string length out of range"),
+    ("gak_utf8_length_limit", "string length must be at most 4096"),
+    ("gak_utf8_bounds", "string range out of bounds"),
     ("gak_wstring_max_range", "max_units out of range"),
     ("gak_wstring_max_limit", "max_units must be 1 to 4096"),
     ("gak_wstring_encoding", "string encoding must be utf16le or utf16be"),
@@ -5115,6 +5118,37 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+16]\n    add r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]\n    jmp {done}\n{bounds}:\n    jmp gak_cstring_offset_bounds\n{unterminated}:\n    jmp gak_cstring_unterminated\n{done}:", result_slot * 8, self.arg0(), source_slot * 8, offset_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
+            ("read_utf8", [source, offset, length]) => {
+                self.uses_text = true;
+                if self.expr(source, scope)? != Scalar::Source {
+                    return Err("binary.read_utf8 expects Source".into());
+                }
+                let source_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    source_slot * 8
+                )
+                .unwrap();
+                if self.expr(offset, scope)? != Scalar::Int {
+                    return Err("binary.read_utf8 offset must be i64".into());
+                }
+                let offset_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    offset_slot * 8
+                )
+                .unwrap();
+                if self.expr(length, scope)? != Scalar::Int {
+                    return Err("binary.read_utf8 length must be i64".into());
+                }
+                let length_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_cstring_offset_negative\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_utf8_length_range\n    cmp r10, 4096\n    ja gak_utf8_length_limit\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_read_utf8\n    cmp eax, 1\n    je gak_utf8_bounds\n    cmp eax, 2\n    je gak_cstring_utf8\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_alloc_str", length_slot * 8, offset_slot * 8, length_slot * 8, self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), length_slot * 8, length_slot * 8).unwrap();
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+16]\n    add r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), source_slot * 8, offset_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
+                Ok(Scalar::Str)
+            }
             ("read_wstring", [source, offset, max_units, encoding]) => {
                 self.uses_text = true;
                 if self.expr(source, scope)? != Scalar::Source {
@@ -6540,6 +6574,12 @@ impl Codegen {
                 "unterminated string within max_bytes",
             ),
             ("gak_cstring_utf8", "invalid UTF-8 string"),
+            ("gak_utf8_length_range", "string length out of range"),
+            (
+                "gak_utf8_length_limit",
+                "string length must be at most 4096",
+            ),
+            ("gak_utf8_bounds", "string range out of bounds"),
             ("gak_wstring_max_range", "max_units out of range"),
             ("gak_wstring_max_limit", "max_units must be 1 to 4096"),
             (
@@ -7636,6 +7676,9 @@ gak_cli_utf8_done:
             ("gak_cstring_offset_bounds", "gak_cstring_offset_bounds_msg"),
             ("gak_cstring_unterminated", "gak_cstring_unterminated_msg"),
             ("gak_cstring_utf8", "gak_cstring_utf8_msg"),
+            ("gak_utf8_length_range", "gak_utf8_length_range_msg"),
+            ("gak_utf8_length_limit", "gak_utf8_length_limit_msg"),
+            ("gak_utf8_bounds", "gak_utf8_bounds_msg"),
             ("gak_wstring_max_range", "gak_wstring_max_range_msg"),
             ("gak_wstring_max_limit", "gak_wstring_max_limit_msg"),
             ("gak_wstring_encoding", "gak_wstring_encoding_msg"),

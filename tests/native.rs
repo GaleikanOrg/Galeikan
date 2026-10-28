@@ -6621,6 +6621,47 @@ fn native_binary_read_cstring_matches_vm_and_captures_errors() {
 }
 
 #[test]
+fn native_binary_read_utf8_matches_vm_and_captures_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-read-utf8.gak",
+        "from std.binary import from_hex, snapshot, view, read_utf8\nfrom std.result import message\nfn read(source: Source, offset: i64, length: i64) -> Result<str> = read_utf8(source, offset, length)\nlet source = snapshot(from_hex(\"00 68 c3 a9 00 c0 af\"))\nlet part = view(source, 1, 3)\nprint read_utf8(source, 1, 3)\nprint read_utf8(part, 1, 2)\nprint read_utf8(source, 7, 0) == \"\"\nprint message(read(source, -1, 1))\nprint message(read(source, 0, -1))\nprint message(read(source, 0, 4097))\nprint message(read(source, 8, 0))\nprint message(read(source, 6, 2))\nprint message(read(source, 2, 1))\nprint message(read(source, 5, 2))\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let output = String::from_utf8_lossy(&vm.stdout);
+    assert!(output.starts_with("hé\né\ntrue\n"), "{output}");
+    assert!(output.contains("invalid UTF-8 string"), "{output}");
+    assert!(output.contains("string range out of bounds"), "{output}");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_read_wstring_matches_vm_and_captures_errors() {
     if !gcc_available() {
         return;

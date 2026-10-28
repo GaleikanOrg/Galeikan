@@ -9,6 +9,44 @@ static uint64_t gak_text_size(const uint8_t *box) {
     return size;
 }
 
+static int gak_utf8_valid(const uint8_t *data, uint64_t count) {
+    for (uint64_t i = 0; i < count;) {
+        uint8_t a = data[i];
+        if (a < 0x80) { ++i; continue; }
+        uint64_t remaining = count - i;
+        if (a >= 0xc2 && a <= 0xdf) {
+            if (remaining < 2 || (data[i+1] & 0xc0) != 0x80) return 0;
+            i += 2;
+        } else if (a >= 0xe0 && a <= 0xef) {
+            if (remaining < 3 || (data[i+2] & 0xc0) != 0x80) return 0;
+            uint8_t b = data[i+1];
+            if ((b & 0xc0) != 0x80 || (a == 0xe0 && b < 0xa0) ||
+                (a == 0xed && b >= 0xa0)) return 0;
+            i += 3;
+        } else if (a >= 0xf0 && a <= 0xf4) {
+            if (remaining < 4 || (data[i+2] & 0xc0) != 0x80 ||
+                (data[i+3] & 0xc0) != 0x80) return 0;
+            uint8_t b = data[i+1];
+            if ((b & 0xc0) != 0x80 || (a == 0xf0 && b < 0x90) ||
+                (a == 0xf4 && b >= 0x90)) return 0;
+            i += 4;
+        } else return 0;
+    }
+    return 1;
+}
+
+/* Returns 0 on success, 1 for a range error, 2 for invalid UTF-8. */
+int gak_native_read_utf8(const uint8_t *source, uint64_t offset, uint64_t length) {
+    const uint8_t *backing;
+    uint64_t start, end;
+    memcpy(&backing, source, sizeof(backing));
+    memcpy(&start, source + 16, sizeof(start));
+    memcpy(&end, source + 24, sizeof(end));
+    uint64_t size = end - start;
+    if (offset > size || length > size - offset) return 1;
+    return gak_utf8_valid(backing + 8 + start + offset, length) ? 0 : 2;
+}
+
 /* Returns 0 on success, 1 for an invalid offset, 2 for a missing NUL,
  * and 3 for invalid UTF-8. Source is a boxed backing pointer followed by
  * a parent pointer and the visible [start, end) range. */
@@ -27,28 +65,7 @@ int gak_native_read_cstring(const uint8_t *source, uint64_t offset,
     const uint8_t *nul = memchr(data, 0, (size_t)available);
     if (!nul) return 2;
     uint64_t count = (uint64_t)(nul - data);
-    for (uint64_t i = 0; i < count;) {
-        uint8_t a = data[i];
-        if (a < 0x80) { ++i; continue; }
-        uint64_t remaining = count - i;
-        if (a >= 0xc2 && a <= 0xdf) {
-            if (remaining < 2 || (data[i+1] & 0xc0) != 0x80) return 3;
-            i += 2;
-        } else if (a >= 0xe0 && a <= 0xef) {
-            if (remaining < 3 || (data[i+2] & 0xc0) != 0x80) return 3;
-            uint8_t b = data[i+1];
-            if ((b & 0xc0) != 0x80 || (a == 0xe0 && b < 0xa0) ||
-                (a == 0xed && b >= 0xa0)) return 3;
-            i += 3;
-        } else if (a >= 0xf0 && a <= 0xf4) {
-            if (remaining < 4 || (data[i+2] & 0xc0) != 0x80 ||
-                (data[i+3] & 0xc0) != 0x80) return 3;
-            uint8_t b = data[i+1];
-            if ((b & 0xc0) != 0x80 || (a == 0xf0 && b < 0x90) ||
-                (a == 0xf4 && b >= 0x90)) return 3;
-            i += 4;
-        } else return 3;
-    }
+    if (!gak_utf8_valid(data, count)) return 3;
     *length = count;
     return 0;
 }

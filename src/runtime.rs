@@ -5032,6 +5032,26 @@ impl Runtime {
                     std::str::from_utf8(&window[..end]).map_err(|_| "invalid UTF-8 string")?;
                 Ok(Value::Str(value.to_owned()))
             }
+            ("read_utf8", [source, offset, length]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "string offset must not be negative")?;
+                let length =
+                    usize::try_from(length.as_int()?).map_err(|_| "string length out of range")?;
+                if length > 4096 {
+                    return Err("string length must be at most 4096".into());
+                }
+                let bytes = source.bytes();
+                let end = offset
+                    .checked_add(length)
+                    .ok_or("string range out of bounds")?;
+                let span = bytes.get(offset..end).ok_or("string range out of bounds")?;
+                Ok(Value::Str(
+                    std::str::from_utf8(span)
+                        .map_err(|_| "invalid UTF-8 string")?
+                        .to_owned(),
+                ))
+            }
             ("read_wstring", [source, offset, max_units, encoding]) => {
                 let source = source.as_source()?;
                 let offset = usize::try_from(offset.as_int()?)
@@ -7408,6 +7428,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "strings") => (&[Source, Int, Str], Offsets),
         ("binary", "read_text") => (&[Source, Int, Int, Str], Str),
         ("binary", "read_cstring") => (&[Source, Int, Int], Str),
+        ("binary", "read_utf8") => (&[Source, Int, Int], Str),
         ("binary", "read_wstring") => (&[Source, Int, Int, Str], Str),
         ("binary", "size") => (&[Type::Any], Int),
         ("binary", "sha256") => (&[Type::Any], Str),
