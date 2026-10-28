@@ -313,6 +313,64 @@ fn classes_and_methods_work_across_modules_ast_vm_and_bundle() {
 }
 
 #[test]
+fn impl_methods_on_structs_work_across_modules_and_engines() {
+    let s = Sandbox::new();
+    s.write(
+        "model.gaks",
+        "struct Pair { left: i64, right: i64 }\nimpl Pair {\n    fn sum() -> i64 = self.left + self.right\n    fn doubled() -> i64 = self.sum() * 2\n}\n",
+    );
+    let script = s.write(
+        "main.gak",
+        "import model\nfrom model import Pair as P\nlet pair: P = P(3, 4)\nprint pair.sum()\nprint pair.doubled()\nprint model.Pair(5, 6).sum()\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "7\n14\n11\n");
+    }
+    for (name, source, diagnostic) in [
+        (
+            "field.gak",
+            "struct Pair { value: i64 }\nimpl Pair {\n    extra: i64\n}\n",
+            "impl blocks only contain methods",
+        ),
+        (
+            "unknown.gak",
+            "impl Missing {\n    fn value() -> i64 = 1\n}\n",
+            "unknown type Missing",
+        ),
+    ] {
+        let invalid = s.write(name, source);
+        let checked = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("check")
+            .arg(invalid)
+            .output()
+            .unwrap();
+        assert!(!checked.status.success());
+        assert!(
+            stderr(&checked).contains(diagnostic),
+            "{}",
+            stderr(&checked)
+        );
+    }
+}
+
+#[test]
 fn loop_control_matches_ast_vm_and_bundle_and_rejects_outside_loops() {
     let s = Sandbox::new();
     let script = s.write(

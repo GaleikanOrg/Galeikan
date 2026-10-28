@@ -651,6 +651,12 @@ impl Parser {
             let line = self.current().line;
             let col = self.current().col;
             let word = self.ident()?;
+            if word == "impl" {
+                let (_, _, methods) = self.class_decl(false)?;
+                self.line_end()?;
+                out.extend(methods);
+                continue;
+            }
             let mut extra = Vec::new();
             let kind = match word.as_str() {
                 "requires" => {
@@ -767,7 +773,7 @@ impl Parser {
                     StmtKind::Struct(name, fields)
                 }
                 "class" => {
-                    let (name, fields, methods) = self.class_decl()?;
+                    let (name, fields, methods) = self.class_decl(true)?;
                     extra = methods;
                     StmtKind::Struct(name, fields)
                 }
@@ -847,7 +853,10 @@ impl Parser {
         };
         Ok((name, params, result_type, body))
     }
-    fn class_decl(&mut self) -> Result<(String, Vec<Param>, Vec<Stmt>), String> {
+    fn class_decl(
+        &mut self,
+        allow_fields: bool,
+    ) -> Result<(String, Vec<Param>, Vec<Stmt>), String> {
         let name = self.binding_ident()?;
         self.expect(TokenKind::LBrace)?;
         self.expect(TokenKind::Newline)?;
@@ -893,6 +902,9 @@ impl Parser {
                     col,
                 });
             } else {
+                if !allow_fields {
+                    return Err(self.error("impl blocks only contain methods"));
+                }
                 if fields.len() >= 64 {
                     return Err(self.error("class exceeds 64 fields"));
                 }
@@ -908,6 +920,9 @@ impl Parser {
                     annotation: Some(annotation),
                 });
             }
+        }
+        if !allow_fields && methods.is_empty() {
+            return Err(self.error("impl block needs a method"));
         }
         Ok((name, fields, methods))
     }
@@ -1615,6 +1630,7 @@ fn valid_binding_name(name: &str) -> bool {
                 | "var"
                 | "struct"
                 | "class"
+                | "impl"
                 | "fn"
                 | "return"
                 | "break"

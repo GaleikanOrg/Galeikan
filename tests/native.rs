@@ -2589,6 +2589,52 @@ fn native_class_methods_match_vm_across_modules_and_nested_fields() {
 }
 
 #[test]
+fn native_impl_methods_on_structs_match_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write(
+        "model.gaks",
+        "struct Pair { left: i64, right: i64 }\nimpl Pair {\n    fn sum() -> i64 = self.left + self.right\n    fn doubled() -> i64 = self.sum() * 2\n}\n",
+    );
+    let script = s.write(
+        "main.gak",
+        "import model\nfrom model import Pair as P\nlet pair: P = P(3, 4)\nprint pair.sum()\nprint pair.doubled()\nprint model.Pair(5, 6).sum()\n",
+    );
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = if cfg!(windows) {
+        script.with_extension("gak.exe")
+    } else {
+        script.with_extension("gak.native")
+    };
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(String::from_utf8_lossy(&native.stdout), "7\n14\n11\n");
+}
+
+#[test]
 fn native_break_and_continue_match_vm_in_nested_loops_and_functions() {
     if !gcc_available() {
         return;
