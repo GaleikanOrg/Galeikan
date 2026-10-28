@@ -1890,6 +1890,56 @@ fn native_results_match_vm_for_construction_recovery_and_propagation() {
 }
 
 #[test]
+fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x98 + 0xf0 + 40];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x98 + 0xf0 + 36..0x98 + 0xf0 + 40].copy_from_slice(&0xe000_0020_u32.to_le_bytes());
+    let hex = pe
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let script = s.write(
+        "binary-research-lists.gak",
+        &format!(
+            "from std.binary import from_hex, snapshot, hunt\nfrom std.formats import probe, section, kind, writable\nfrom std.list import append, concat, count\nfn first_kind(reports: List<Format>) -> str = kind(reports[0])\nfn writable_count(sections: List<Section>) -> i64 {{\n    var total = 0\n    for item in sections {{\n        if writable(item) {{\n            total = total + 1\n        }}\n    }}\n    return total\n}}\nlet source = snapshot(from_hex(\"{hex}\"))\nlet report = probe(source)\nlet reports: List<Format> = append([report], report)\nlet sections: List<Section> = concat([section(report, 0)], [section(report, 0)])\nlet hits: List<Offsets> = [hunt(source, \"MZ\"), hunt(source, \"PE\")]\nlet region_groups: List<Regions> = []\nlet regions: List<Region> = []\nprint first_kind(reports)\nprint count(reports)\nprint writable_count(sections)\nprint count(hits)\nprint hits\nfor offsets in hits {{\n    print offsets\n}}\nprint region_groups\nprint regions\n"
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(native.stdout.starts_with(b"pe\n2\n2\n2\n"));
+}
+
+#[test]
 fn native_print_formats_lists_records_and_record_results_like_vm() {
     if !gcc_available() {
         return;
