@@ -1602,6 +1602,7 @@ fn local_http_post_server(count: usize) -> (u16, std::thread::JoinHandle<()>) {
                     Err(error) => panic!("HTTP POST test accept failed: {error}"),
                 }
             };
+            client.set_nonblocking(false).unwrap();
             client
                 .set_read_timeout(Some(std::time::Duration::from_secs(15)))
                 .unwrap();
@@ -2611,7 +2612,7 @@ fn strings_validate_encoding_ranges_and_read_limit() {
         (
             "bad-encoding",
             "binary.strings(source, 1, \"utf8\")",
-            "text encoding must be ascii or utf16le",
+            "text encoding must be ascii, utf16le, or utf16be",
         ),
         (
             "bad-minimum",
