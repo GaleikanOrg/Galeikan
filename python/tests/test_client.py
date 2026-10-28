@@ -591,7 +591,7 @@ class GaleikanClientTests(unittest.TestCase):
             script.write_text(
                 "requires { file.read }\n"
                 "from std.binary import analyze, snapshot, view, patch, splice, deep, from_hex\n"
-                "from std.formats import probe, rva, va\n"
+                "from std.formats import probe, rva, va, pe_va\n"
                 "fn captured(data: bytes) -> Source = snapshot(data)\n"
                 "fn observed(data: bytes) -> Observation = deep(view(snapshot(data), 1, 2), 0, \"u16le\")\n"
                 "fn patched(data: bytes) -> Source = patch(snapshot(data), 1, from_hex(\"aa\"))\n"
@@ -599,6 +599,7 @@ class GaleikanClientTests(unittest.TestCase):
                 "fn read_file() -> Source = analyze(\"input.bin\", 1024)\n"
                 "fn read_field() -> Observation = deep(analyze(\"input.bin\", 1024), 1, \"u16le\")\n"
                 "fn mapped_pe(data: bytes) -> Source = rva(probe(snapshot(data)), 0x1000, 8)\n"
+                "fn mapped_pe_va(data: bytes) -> Source = pe_va(probe(snapshot(data)), 0x401000u64, 8)\n"
                 "fn mapped_elf(data: bytes) -> Source = va(probe(snapshot(data)), 0x1000, 8)\n",
                 encoding="utf-8",
             )
@@ -613,6 +614,7 @@ class GaleikanClientTests(unittest.TestCase):
             pe[0x54:0x56] = (0x60).to_bytes(2, "little")
             pe[0x58:0x5a] = (0x10b).to_bytes(2, "little")
             pe[0x68:0x6c] = (0x1000).to_bytes(4, "little")
+            pe[0x74:0x78] = (0x400000).to_bytes(4, "little")
             pe[0x94:0x98] = (0x100).to_bytes(4, "little")
             pe[0xc0:0xc4] = (0x20).to_bytes(4, "little")
             pe[0xc4:0xc8] = (0x1000).to_bytes(4, "little")
@@ -647,8 +649,13 @@ class GaleikanClientTests(unittest.TestCase):
             }
             mapped = {
                 name: client.call(script, name, bytes(data), engine="vm")
-                for name, data in (("mapped_pe", pe), ("mapped_elf", elf))
+                for name, data in (("mapped_pe", pe), ("mapped_pe_va", pe), ("mapped_elf", elf))
             }
+            self.assertEqual(
+                mapped["mapped_pe_va"]["lineage"][1]["address"],
+                {"space": "pe.va", "value": "0x401000"},
+            )
+            self.assertIn("PE VA 0x401000", mapped["mapped_pe_va"]["origin"])
             try:
                 compiled = client.compile(script)
             except subprocess.CalledProcessError as error:
@@ -661,13 +668,14 @@ class GaleikanClientTests(unittest.TestCase):
                 with self.subTest(name=name):
                     self.assertEqual(client.call(compiled, name, allow_read=[directory]), result)
             for name, result in mapped.items():
-                data = pe if name == "mapped_pe" else elf
+                data = pe if name.startswith("mapped_pe") else elf
                 with self.subTest(name=name):
                     self.assertEqual(client.call(compiled, name, bytes(data)), result)
             with client.session(compiled) as module:
                 self.assertEqual(module.observed(sample), expected["observed"])
                 self.assertEqual(module.spliced(sample), expected["spliced"])
                 self.assertEqual(module.mapped_pe(bytes(pe)), mapped["mapped_pe"])
+                self.assertEqual(module.mapped_pe_va(bytes(pe)), mapped["mapped_pe_va"])
 
     def test_compiled_session_reuses_native_process_and_python_module(self):
         binary = Path(os.environ["GALEIKAN_TEST_BINARY"]) if "GALEIKAN_TEST_BINARY" in os.environ else (
