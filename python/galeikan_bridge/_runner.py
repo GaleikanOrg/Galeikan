@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import sys
+import types
 
 
 MAX_MESSAGE = 1024 * 1024
@@ -13,6 +14,28 @@ MAX_MODULES = 64
 MAX_MODULE_BYTES = 64 * 1024 * 1024
 modules = {}
 module_bytes = 0
+
+
+def module_identity(path):
+    directory = os.path.dirname(path)
+    parts = [os.path.splitext(os.path.basename(path))[0]]
+    root = directory
+    while os.path.isfile(os.path.join(root, "__init__.py")):
+        parts.insert(0, os.path.basename(root))
+        root = os.path.dirname(root)
+        if len(parts) > 16:
+            raise ImportError("Python package nesting exceeds 16 levels")
+    if len(parts) == 1:
+        if directory not in sys.path:
+            sys.path.insert(0, directory)
+        return "galeikan_user_module", False
+    namespace = "_galeikan_" + hashlib.sha256(root.encode("utf-8")).hexdigest()[:16]
+    if namespace not in sys.modules:
+        package = types.ModuleType(namespace)
+        package.__path__ = [root]
+        package.__package__ = namespace
+        sys.modules[namespace] = package
+    return namespace + "." + ".".join(parts), True
 
 
 class U64(int):
@@ -102,15 +125,20 @@ def load_module(path, expected_sha256):
         return cached[1]
     if len(modules) >= MAX_MODULES or module_bytes + len(source) > MAX_MODULE_BYTES:
         raise ValueError("Python module cache exceeds 64 modules or 64 MiB")
-    spec = importlib.util.spec_from_file_location("galeikan_user_module", path)
+    module_name, qualified = module_identity(path)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError("cannot load Python module")
     module = importlib.util.module_from_spec(spec)
-    directory = os.path.dirname(path)
-    if directory not in sys.path:
-        sys.path.insert(0, directory)
-    with contextlib.redirect_stdout(sys.stderr):
-        exec(compile(source, path, "exec"), module.__dict__)
+    if qualified:
+        sys.modules[module_name] = module
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            exec(compile(source, path, "exec"), module.__dict__)
+    except BaseException:
+        if qualified:
+            sys.modules.pop(module_name, None)
+        raise
     modules[path] = (digest, module)
     module_bytes += len(source)
     return module
