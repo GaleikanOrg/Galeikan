@@ -305,6 +305,11 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
         "gak_observation_value_range",
         "Observation value does not fit i64",
     ),
+    ("gak_audit_min_negative", "minimum must not be negative"),
+    ("gak_audit_max_negative", "maximum must not be negative"),
+    ("gak_audit_expected_negative", "expected value must not be negative"),
+    ("gak_audit_range", "maximum must be at least minimum"),
+    ("gak_audit_rule", "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'"),
     (
         "gak_source_depth",
         "LimitExceeded: Source derivation depth exceeds 64",
@@ -359,6 +364,7 @@ enum Scalar {
     Format,
     Section,
     Observation,
+    Finding,
     Offsets,
     Diff,
     Regions,
@@ -388,6 +394,7 @@ enum ResultValue {
     Format,
     Section,
     Observation,
+    Finding,
     Offsets,
     Diff,
     Regions,
@@ -407,6 +414,7 @@ impl ResultValue {
             Scalar::Format => Some(Self::Format),
             Scalar::Section => Some(Self::Section),
             Scalar::Observation => Some(Self::Observation),
+            Scalar::Finding => Some(Self::Finding),
             Scalar::Offsets => Some(Self::Offsets),
             Scalar::Diff => Some(Self::Diff),
             Scalar::Regions => Some(Self::Regions),
@@ -427,6 +435,7 @@ impl ResultValue {
             Self::Format => Scalar::Format,
             Self::Section => Scalar::Section,
             Self::Observation => Scalar::Observation,
+            Self::Finding => Scalar::Finding,
             Self::Offsets => Scalar::Offsets,
             Self::Diff => Scalar::Diff,
             Self::Regions => Scalar::Regions,
@@ -525,6 +534,7 @@ enum NativeImport {
     Bytes,
     Text,
     Binary,
+    Audit,
     Formats,
 }
 
@@ -747,6 +757,10 @@ fn collect_module(
             }
             if target == "std.binary" {
                 imports.insert(alias.clone(), NativeImport::Binary);
+                continue;
+            }
+            if target == "std.audit" {
+                imports.insert(alias.clone(), NativeImport::Audit);
                 continue;
             }
             if target == "std.formats" {
@@ -1241,6 +1255,7 @@ fn scalar_type(annotation: &str) -> Result<Scalar, String> {
         "Format" => Ok(Scalar::Format),
         "Section" => Ok(Scalar::Section),
         "Observation" => Ok(Scalar::Observation),
+        "Finding" => Ok(Scalar::Finding),
         "Offsets" => Ok(Scalar::Offsets),
         "Diff" => Ok(Scalar::Diff),
         "Regions" => Ok(Scalar::Regions),
@@ -1508,6 +1523,7 @@ impl Codegen {
             Some(NativeImport::Binary) => {
                 Err("std.binary functions must be called directly".into())
             }
+            Some(NativeImport::Audit) => Err("std.audit functions must be called directly".into()),
             Some(NativeImport::Formats) => {
                 Err("std.formats functions must be called directly".into())
             }
@@ -1779,9 +1795,118 @@ impl Codegen {
         match kind {
             Scalar::Observation => self.print_impact_observation()?,
             Scalar::Diff => self.print_impact_diff()?,
-            _ => return Err("impact expects Observation or Diff in native programs".into()),
+            Scalar::Finding => self.print_finding(true)?,
+            _ => {
+                return Err(
+                    "impact expects Observation, Diff, or Finding in native programs".into(),
+                )
+            }
         }
         self.write_const("\n")
+    }
+
+    fn print_finding(&mut self, impact: bool) -> Result<(), String> {
+        let finding_slot = self.reserve_slot()?;
+        let observation_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10\n    mov r11, QWORD PTR [r10]\n    mov QWORD PTR [rbp-{}], r11", finding_slot * 8, observation_slot * 8, source_slot * 8).unwrap();
+        self.write_const(if impact {
+            "impact { rule: \""
+        } else {
+            "finding(rule: \""
+        })?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", status: ")?;
+        let failed = self.label();
+        let status_done = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    test QWORD PTR [r10+32], 4\n    jz {failed}",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.write_const("pass")?;
+        writeln!(self.code, "    jmp {status_done}\n{failed}:").unwrap();
+        self.write_const("fail")?;
+        writeln!(self.code, "{status_done}:").unwrap();
+        self.write_const(if impact {
+            ", expected: \""
+        } else {
+            ", expected: "
+        })?;
+        let equal = self.label();
+        let constraint_done = self.label();
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    test QWORD PTR [r10+32], 2\n    jz {equal}",
+            finding_slot * 8
+        )
+        .unwrap();
+        self.write_const("between ")?;
+        self.print_finding_number(finding_slot, 16)?;
+        self.write_const(" and ")?;
+        self.print_finding_number(finding_slot, 24)?;
+        writeln!(self.code, "    jmp {constraint_done}\n{equal}:").unwrap();
+        self.write_const("equal ")?;
+        self.print_finding_number(finding_slot, 16)?;
+        writeln!(self.code, "{constraint_done}:").unwrap();
+        self.write_const(if impact { "\", actual: " } else { ", actual: " })?;
+        self.print_finding_number(finding_slot, 40)?;
+        self.write_const(", ")?;
+        if impact {
+            self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+        } else {
+            self.write_const("source: \"")?;
+            self.print_source_label(source_slot, 0)?;
+            self.write_const("\", sha256: ")?;
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]",
+                source_slot * 8
+            )
+            .unwrap();
+            self.print_value(Scalar::Str, 0)?;
+        }
+        self.write_const(", range: [")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]",
+            observation_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const("..")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+8]\n    add rax, QWORD PTR [r10+16]", observation_slot * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        if !impact {
+            return self.write_const("))");
+        }
+        self.write_const("), decoder: ")?;
+        writeln!(
+            self.code,
+            "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]",
+            observation_slot * 8
+        )
+        .unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(" }")
+    }
+
+    fn print_finding_number(&mut self, finding_slot: usize, offset: usize) -> Result<(), String> {
+        let unsigned = self.label();
+        let done = self.label();
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+{offset}]\n    test QWORD PTR [r10+32], 1\n    jz {unsigned}", finding_slot * 8).unwrap();
+        self.print_value(Scalar::Int, 0)?;
+        writeln!(self.code, "    jmp {done}\n{unsigned}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+{offset}]", finding_slot * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        writeln!(self.code, "{done}:").unwrap();
+        Ok(())
     }
 
     fn print_impact_source_fields(
@@ -1931,6 +2056,7 @@ impl Codegen {
             Scalar::Format => self.print_format(depth + 1)?,
             Scalar::Section => self.print_section(depth + 1)?,
             Scalar::Observation => self.print_observation(depth + 1)?,
+            Scalar::Finding => self.print_finding(false)?,
             Scalar::Offsets => self.print_offsets(depth + 1)?,
             Scalar::Regions => {
                 let slot = self.reserve_slot()?;
@@ -3010,6 +3136,7 @@ impl Codegen {
                 Some(NativeImport::Binary) => {
                     return self.binary_call(function, args, caller_scope)
                 }
+                Some(NativeImport::Audit) => return self.audit_call(function, args, caller_scope),
                 Some(NativeImport::Formats) => {
                     return self.formats_call(function, args, caller_scope)
                 }
@@ -4090,6 +4217,119 @@ impl Codegen {
         let range_slot = self.reserve_slot()?;
         writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r9, rax\n    mov rdx, QWORD PTR [r9]\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    mov r10, QWORD PTR [r9+8]\n    add r10, QWORD PTR [rdx+16]\n    mov r11, QWORD PTR [r9+16]\n    add r11, QWORD PTR [rdx+16]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n    mov r9, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r9+24]\n    mov QWORD PTR [rax+96], r10\n    mov r10, QWORD PTR [r9+32]\n    mov QWORD PTR [rax+104], r10", range_slot * 8, range_slot * 8).unwrap();
         Ok(Scalar::Source)
+    }
+
+    fn audit_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        if matches!(name, "passed" | "failed") {
+            let [finding] = args else {
+                return Err(format!("audit.{name} expects Finding"));
+            };
+            if self.expr(finding, scope)? != Scalar::Finding {
+                return Err(format!("audit.{name} expects Finding"));
+            }
+            self.code
+                .push_str("    mov rax, QWORD PTR [rax+32]\n    shr rax, 2\n    and rax, 1\n");
+            if name == "failed" {
+                self.code.push_str("    xor rax, 1\n");
+            }
+            return Ok(Scalar::Bool);
+        }
+        let (observation, min, max, rule) = match (name, args) {
+            ("bound", [observation, min, max, rule]) => (observation, min, Some(max), rule),
+            ("expect", [observation, expected, rule]) => (observation, expected, None, rule),
+            _ => return Err(format!("native audit function {name} is not yet supported")),
+        };
+        if self.expr(observation, scope)? != Scalar::Observation {
+            return Err(format!("audit.{name} expects Observation"));
+        }
+        let observation_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            observation_slot * 8
+        )
+        .unwrap();
+        if self.expr(min, scope)? != Scalar::Int {
+            return Err(format!("audit.{name} expects i64 limit"));
+        }
+        let min_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", min_slot * 8).unwrap();
+        let max_slot = self.reserve_slot()?;
+        if let Some(max) = max {
+            if self.expr(max, scope)? != Scalar::Int {
+                return Err("audit.bound expects i64 maximum".into());
+            }
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", max_slot * 8).unwrap();
+        } else {
+            writeln!(
+                self.code,
+                "    mov rax, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rbp-{}], rax",
+                min_slot * 8,
+                max_slot * 8
+            )
+            .unwrap();
+        }
+        if self.expr(rule, scope)? != Scalar::Str {
+            return Err(format!("audit.{name} expects str rule id"));
+        }
+        let rule_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax\n    call gak_validate_rule\n    test eax, eax\n    jz gak_audit_rule",
+            rule_slot * 8
+        )
+        .unwrap();
+
+        let actual_slot = self.reserve_slot()?;
+        let flags_slot = self.reserve_slot()?;
+        let signed = self.label();
+        let value_ready = self.label();
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    cmp BYTE PTR [r11+8], 105\n    je {signed}\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    jmp {value_ready}\n{signed}:\n    mov QWORD PTR [rbp-{}], {}\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, 64\n    mov r11, QWORD PTR [r10+16]\n    shl r11, 3\n    sub rcx, r11\n    shl rax, cl\n    sar rax, cl\n{value_ready}:\n    mov QWORD PTR [rbp-{}], rax", observation_slot * 8, flags_slot * 8, if max.is_some() { 2 } else { 0 }, flags_slot * 8, if max.is_some() { 3 } else { 1 }, actual_slot * 8).unwrap();
+
+        let unsigned = self.label();
+        let compare = self.label();
+        let failed = self.label();
+        let complete = self.label();
+        writeln!(
+            self.code,
+            "    test QWORD PTR [rbp-{}], 1\n    jz {unsigned}",
+            flags_slot * 8
+        )
+        .unwrap();
+        if max.is_some() {
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    cmp r10, QWORD PTR [rbp-{}]\n    jl gak_audit_range\n    mov rax, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [rbp-{}]\n    jl {failed}\n    cmp rax, r10\n    jg {failed}\n    jmp {complete}\n{unsigned}:\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_audit_min_negative\n    mov r11, QWORD PTR [rbp-{}]\n    test r11, r11\n    js gak_audit_max_negative\n    cmp r11, r10\n    jl gak_audit_range\n    mov rax, QWORD PTR [rbp-{}]\n    cmp rax, r10\n    jb {failed}\n    cmp rax, r11\n    ja {failed}\n    jmp {complete}", max_slot * 8, min_slot * 8, actual_slot * 8, min_slot * 8, min_slot * 8, max_slot * 8, actual_slot * 8).unwrap();
+        } else {
+            writeln!(self.code, "    jmp {compare}\n{unsigned}:\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_audit_expected_negative\n{compare}:\n    mov rax, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [rbp-{}]\n    jne {failed}\n    jmp {complete}", min_slot * 8, actual_slot * 8, min_slot * 8).unwrap();
+        }
+        writeln!(self.code, "{failed}:\n    jmp {complete}_failed\n{complete}:\n    or QWORD PTR [rbp-{}], 4\n{complete}_failed:", flags_slot * 8).unwrap();
+        self.code.push_str("    mov r10, QWORD PTR [rip+gak_finding_bytes]\n    add r10, 48\n    jc gak_finding_limit\n    cmp r10, 67108864\n    ja gak_finding_limit\n    mov QWORD PTR [rip+gak_finding_bytes], r10\n");
+        writeln!(
+            self.code,
+            "    mov {}, 48\n    call malloc\n    test rax, rax\n    jz gak_alloc_failure",
+            self.arg0()
+        )
+        .unwrap();
+        for (offset, slot) in [
+            (0, observation_slot),
+            (8, rule_slot),
+            (16, min_slot),
+            (24, max_slot),
+            (32, flags_slot),
+            (40, actual_slot),
+        ] {
+            writeln!(
+                self.code,
+                "    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rax+{offset}], r10",
+                slot * 8
+            )
+            .unwrap();
+        }
+        Ok(Scalar::Finding)
     }
 
     fn binary_call(
@@ -5679,6 +5919,27 @@ impl Codegen {
         }
         out.push_str("gak_binary_offset_negative_msg: .ascii \"offset must not be negative\\n\"\ngak_binary_offset_negative_msg_end:\ngak_binary_length_negative_msg: .ascii \"length must not be negative\\n\"\ngak_binary_length_negative_msg_end:\ngak_binary_range_overflow_msg: .ascii \"range overflow\\n\"\ngak_binary_range_overflow_msg_end:\ngak_binary_out_of_bounds_msg: .ascii \"out of bounds\\n\"\ngak_binary_out_of_bounds_msg_end:\ngak_binary_unknown_decoder_msg: .ascii \"unknown decoder\\n\"\ngak_binary_unknown_decoder_msg_end:\ngak_hexdump_limit_msg: .ascii \"hexdump length exceeds 4096 bytes\\n\"\ngak_hexdump_limit_msg_end:\ngak_observation_value_range_msg: .ascii \"Observation value does not fit i64\\n\"\ngak_observation_value_range_msg_end:\ngak_observation_limit_msg: .ascii \"native Observation memory exceeds 64 MiB\\n\"\ngak_observation_limit_msg_end:\n");
         out.push_str("gak_analyze_max_msg: .ascii \"max_bytes must be between 0 and 536870912\\n\"\ngak_analyze_max_msg_end:\n");
+        for (label, message) in [
+            ("gak_audit_min_negative", "minimum must not be negative"),
+            ("gak_audit_max_negative", "maximum must not be negative"),
+            (
+                "gak_audit_expected_negative",
+                "expected value must not be negative",
+            ),
+            ("gak_audit_range", "maximum must be at least minimum"),
+            (
+                "gak_audit_rule",
+                "rule id must be 1 to 128 ASCII letters, digits, '.', '_', ':', or '-'",
+            ),
+            ("gak_finding_limit", "native Finding memory exceeds 64 MiB"),
+        ] {
+            writeln!(
+                out,
+                "{label}_msg: .ascii {:?}\n{label}_msg_end:",
+                format!("{message}\n")
+            )
+            .unwrap();
+        }
         out.push_str("gak_text_offset_negative_msg: .ascii \"text offset must not be negative\\n\"\ngak_text_offset_negative_msg_end:\ngak_max_chars_range_msg: .ascii \"max_chars out of range\\n\"\ngak_max_chars_range_msg_end:\ngak_max_chars_limit_msg: .ascii \"max_chars must be 1 to 4096\\n\"\ngak_max_chars_limit_msg_end:\ngak_text_encoding_msg: .ascii \"text encoding must be ascii, utf16le, or utf16be\\n\"\ngak_text_encoding_msg_end:\ngak_text_offset_bounds_msg: .ascii \"text offset out of bounds\\n\"\ngak_text_offset_bounds_msg_end:\ngak_text_not_printable_msg: .ascii \"no printable text at offset\\n\"\ngak_text_not_printable_msg_end:\n");
         out.push_str("gak_strings_minimum_range_msg: .ascii \"minimum string length out of range\\n\"\ngak_strings_minimum_range_msg_end:\ngak_strings_minimum_limit_msg: .ascii \"minimum string length must be 1 to 4096\\n\"\ngak_strings_minimum_limit_msg_end:\ngak_strings_many_msg: .ascii \"too many strings\\n\"\ngak_strings_many_msg_end:\n");
         out.push_str("gak_hunt_invalid_hex_msg: .ascii \"invalid hex pattern\\n\"\ngak_hunt_invalid_hex_msg_end:\ngak_hunt_hex_limit_msg: .ascii \"hex pattern exceeds 1048576 bytes\\n\"\ngak_hunt_hex_limit_msg_end:\ngak_hunt_odd_hex_msg: .ascii \"hex pattern needs an even number of nibbles\\n\"\ngak_hunt_odd_hex_msg_end:\ngak_hunt_mask_limit_msg: .ascii \"masked hex pattern exceeds 64 bytes\\n\"\ngak_hunt_mask_limit_msg_end:\ngak_hunt_empty_msg: .ascii \"empty search pattern\\n\"\ngak_hunt_empty_msg_end:\ngak_hunt_many_msg: .ascii \"too many matches\\n\"\ngak_hunt_many_msg_end:\n");
@@ -5698,7 +5959,7 @@ impl Codegen {
         out.push_str("gak_result_limit_msg: .ascii \"result memory exceeds 64 MiB\\n\"\ngak_result_limit_msg_end:\ngak_result_invalid_msg: .ascii \"result.fail needs a nonempty message of at most 4096 bytes\\n\"\ngak_result_invalid_msg_end:\ngak_result_message_success_msg: .ascii \"result.message requires a failed Result\\n\"\ngak_result_message_success_msg_end:\ngak_result_untyped_success_msg: .ascii \"untyped Result cannot contain success\\n\"\ngak_result_untyped_success_msg_end:\n");
         out.push_str("gak_cli_index_msg: .ascii \"argument index out of range\\n\"\ngak_cli_index_msg_end:\ngak_cli_invalid_msg: .ascii \"CLI argument is not an i64\\n\"\ngak_cli_invalid_msg_end:\ngak_cli_utf8_msg: .ascii \"cannot encode CLI argument as UTF-8\\n\"\ngak_cli_utf8_msg_end:\n");
         out.push_str(&self.data);
-        out.push_str("gak_memory_box: .quad 6\n    .ascii \"memory\"\n.bss\n.align 8\ngak_steps: .quad 0\ngak_call_depth: .quad 0\ngak_main_rbp: .quad 0\ngak_native_call_mode: .byte 0\ngak_native_call_dispatch_active: .byte 0\n.align 8\ngak_record_bytes: .quad 0\n.globl gak_list_bytes\ngak_list_bytes: .quad 0\n.globl gak_bytes_allocated\ngak_bytes_allocated: .quad 0\ngak_source_bytes: .quad 0\n.globl gak_source_backing_bytes\ngak_source_backing_bytes: .quad 0\ngak_observation_bytes: .quad 0\ngak_diff_bytes: .quad 0\n.globl gak_str_bytes\ngak_str_bytes: .quad 0\ngak_result_bytes: .quad 0\n.globl gak_argc\n.globl gak_argv\ngak_argc: .quad 0\ngak_argv: .quad 0\ngak_cli_cache: .quad 0\n");
+        out.push_str("gak_memory_box: .quad 6\n    .ascii \"memory\"\n.bss\n.align 8\ngak_steps: .quad 0\ngak_call_depth: .quad 0\ngak_main_rbp: .quad 0\ngak_native_call_mode: .byte 0\ngak_native_call_dispatch_active: .byte 0\n.align 8\ngak_record_bytes: .quad 0\n.globl gak_list_bytes\ngak_list_bytes: .quad 0\n.globl gak_bytes_allocated\ngak_bytes_allocated: .quad 0\ngak_source_bytes: .quad 0\n.globl gak_source_backing_bytes\ngak_source_backing_bytes: .quad 0\ngak_observation_bytes: .quad 0\ngak_finding_bytes: .quad 0\ngak_diff_bytes: .quad 0\n.globl gak_str_bytes\ngak_str_bytes: .quad 0\ngak_result_bytes: .quad 0\n.globl gak_argc\n.globl gak_argv\ngak_argc: .quad 0\ngak_argv: .quad 0\ngak_cli_cache: .quad 0\n");
         out.push_str(".text\n.globl main\nmain:\n    push rbp\n    mov rbp, rsp\n    mov QWORD PTR [rip+gak_main_rbp], rbp\n");
         writeln!(out, "    sub rsp, {reserve}").unwrap();
         if self.windows {
@@ -5758,6 +6019,49 @@ impl Codegen {
             out.push_str("    add rsp, 32\n");
         }
         out.push_str("    pop rbx\n    ret\n");
+        out.push_str(
+            r#"gak_validate_rule:
+    mov r9, rax
+    mov r10, QWORD PTR [rax]
+    test r10, r10
+    jz gak_validate_rule_invalid
+    cmp r10, 128
+    ja gak_validate_rule_invalid
+    xor r11d, r11d
+gak_validate_rule_next:
+    movzx r8d, BYTE PTR [r9+r11+8]
+    cmp r8b, 48
+    jb gak_validate_rule_punctuation
+    cmp r8b, 57
+    jbe gak_validate_rule_accepted
+    cmp r8b, 65
+    jb gak_validate_rule_punctuation
+    cmp r8b, 90
+    jbe gak_validate_rule_accepted
+    cmp r8b, 97
+    jb gak_validate_rule_punctuation
+    cmp r8b, 122
+    jbe gak_validate_rule_accepted
+gak_validate_rule_punctuation:
+    cmp r8b, 46
+    je gak_validate_rule_accepted
+    cmp r8b, 95
+    je gak_validate_rule_accepted
+    cmp r8b, 58
+    je gak_validate_rule_accepted
+    cmp r8b, 45
+    jne gak_validate_rule_invalid
+gak_validate_rule_accepted:
+    inc r11
+    cmp r11, r10
+    jb gak_validate_rule_next
+    mov eax, 1
+    ret
+gak_validate_rule_invalid:
+    xor eax, eax
+    ret
+"#,
+        );
         out.push_str("gak_box_c_string:\n    push rbx\n    push r12\n    push r13\n");
         if self.windows {
             out.push_str("    sub rsp, 32\n");
@@ -6722,6 +7026,15 @@ gak_cli_utf8_done:
                 "gak_observation_value_range_msg",
             ),
             ("gak_observation_limit", "gak_observation_limit_msg"),
+            ("gak_audit_min_negative", "gak_audit_min_negative_msg"),
+            ("gak_audit_max_negative", "gak_audit_max_negative_msg"),
+            (
+                "gak_audit_expected_negative",
+                "gak_audit_expected_negative_msg",
+            ),
+            ("gak_audit_range", "gak_audit_range_msg"),
+            ("gak_audit_rule", "gak_audit_rule_msg"),
+            ("gak_finding_limit", "gak_finding_limit_msg"),
             ("gak_source_depth", "gak_source_depth_msg"),
             ("gak_source_limit", "gak_source_limit_msg"),
             ("gak_source_backing_limit", "gak_source_backing_limit_msg"),

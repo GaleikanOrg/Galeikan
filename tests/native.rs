@@ -5797,6 +5797,98 @@ fn native_binary_deep_matches_vm_for_decoders_and_observations() {
 }
 
 #[test]
+fn native_numeric_audit_matches_vm_for_signed_fields_and_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "numeric-audit.gak",
+        "from std.binary import from_hex, snapshot, deep\nfrom std.audit import bound, expect, passed, failed\nfrom std.result import is_error\nfn inspect() -> Finding {\n    let source = snapshot(from_hex(\"ff fe\"))\n    return bound(deep(source, 0, \"i16be\"), -3, -1, \"signed.range\")\n}\nfn invalid_rule() -> Result<Finding> {\n    let source = snapshot(from_hex(\"fe\"))\n    return expect(deep(source, 0, \"i8\"), -2, \"bad rule\")\n}\nlet source = snapshot(from_hex(\"fe ff ff ff ff ff ff ff\"))\nlet finding: Finding = inspect()\nlet mismatch: Finding = expect(deep(source, 0, \"i8\"), -1, \"signed.mismatch\")\nprint passed(finding)\nprint failed(mismatch)\nprint passed(expect(deep(source, 0, \"i64le\"), -2, \"signed.word\"))\nprint passed(bound(deep(source, 0, \"u8\"), 200, 255, \"unsigned.range\"))\nprint failed(bound(deep(source, 0, \"u64le\"), 0, 9223372036854775807, \"unsigned.high\"))\nprint is_error(invalid_rule())\nimpact finding\nprint mismatch\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let vm_text = String::from_utf8(vm.stdout).unwrap();
+    let native_text = String::from_utf8(native.stdout).unwrap();
+    assert!(
+        vm_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n"),
+        "{vm_text}"
+    );
+    assert!(
+        native_text.starts_with("true\ntrue\ntrue\ntrue\ntrue\ntrue\n"),
+        "{native_text}"
+    );
+    assert!(
+        native_text.contains("expected: \"between -3 and -1\", actual: -2"),
+        "{native_text}"
+    );
+    assert!(
+        native_text.contains("expected: equal -1, actual: -2"),
+        "{native_text}"
+    );
+    assert_eq!(native_text, vm_text);
+
+    for (name, body, error) in [
+        (
+            "unsigned-negative",
+            "bound(deep(source, 0, \"u8\"), -1, 2, \"negative\")",
+            "minimum must not be negative",
+        ),
+        (
+            "signed-reversed",
+            "bound(deep(source, 0, \"i8\"), -1, -2, \"reversed\")",
+            "maximum must be at least minimum",
+        ),
+        (
+            "invalid-rule",
+            "expect(deep(source, 0, \"i8\"), -2, \"bad rule\")",
+            "rule id must be",
+        ),
+        (
+            "unsigned-expected-negative",
+            "expect(deep(source, 0, \"u8\"), -2, \"negative\")",
+            "expected value must not be negative",
+        ),
+    ] {
+        let case = s.write(&format!("{name}.gak"), &format!("from std.binary import from_hex, snapshot, deep\nfrom std.audit import bound, expect\nlet source = snapshot(from_hex(\"fe\"))\nprint {body}\n"));
+        let built = s.compile(&case);
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success(), "{name}");
+        assert!(
+            String::from_utf8_lossy(&native.stderr).contains(error),
+            "{name}: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+}
+
+#[test]
 fn native_binary_deep_errors_match_vm() {
     if !gcc_available() {
         return;
