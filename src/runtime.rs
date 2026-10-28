@@ -4728,6 +4728,34 @@ impl Runtime {
                 if offset < 0 {
                     return Err("offset must not be negative".into());
                 }
+                if kind.as_str()? == "uleb128" {
+                    let offset = usize::try_from(offset).map_err(|_| "offset too large")?;
+                    let data = source.bytes();
+                    if offset >= data.len() {
+                        return Err("out of bounds".into());
+                    }
+                    let mut value = 0_u64;
+                    for index in 0..10_usize {
+                        let byte = *data.get(offset + index).ok_or("truncated ULEB128")?;
+                        if index == 9 && byte > 1 {
+                            return Err("ULEB128 overflow".into());
+                        }
+                        value |= u64::from(byte & 0x7f) << (index * 7);
+                        if byte & 0x80 == 0 {
+                            if index > 0 && byte == 0 {
+                                return Err("non-canonical ULEB128".into());
+                            }
+                            return Ok(Value::Observation(Arc::new(Observation {
+                                source,
+                                offset,
+                                width: index + 1,
+                                decoder: "uleb128",
+                                value,
+                            })));
+                        }
+                    }
+                    return Err("ULEB128 overflow".into());
+                }
                 let (width, decoder): (usize, &'static str) = match kind.as_str()? {
                     "u8" => (1, "u8"),
                     "u16le" => (2, "u16le"),

@@ -5810,6 +5810,70 @@ print message(invalid())
 }
 
 #[test]
+fn native_uleb128_fields_match_vm_for_width_values_views_and_malformed_input() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "uleb128.gak",
+        r#"from std.binary import from_hex, snapshot, view, deep, value, value_u64, offset, width
+from std.audit import expect, passed
+from std.result import message
+fn truncated() -> Result<Observation> = deep(snapshot(from_hex("80")), 0, "uleb128")
+fn overflowing() -> Result<Observation> = deep(snapshot(from_hex("ff ff ff ff ff ff ff ff ff 02")), 0, "uleb128")
+fn noncanonical() -> Result<Observation> = deep(snapshot(from_hex("80 00")), 0, "uleb128")
+fn missing() -> Result<Observation> = deep(snapshot(from_hex("")), 0, "uleb128")
+let zero = deep(snapshot(from_hex("00")), 0, "uleb128")
+let boundary = deep(snapshot(from_hex("7f")), 0, "uleb128")
+let nested = deep(view(snapshot(from_hex("aa 80 01 bb")), 1, 2), 0, "uleb128")
+let maximum = deep(snapshot(from_hex("ff ff ff ff ff ff ff ff ff 01")), 0, "uleb128")
+print value(zero)
+print width(zero)
+print value(boundary)
+print value(nested)
+print width(nested)
+print offset(nested)
+print nested
+print value_u64(maximum)
+print width(maximum)
+print passed(expect(nested, 128, "varint.boundary"))
+print message(truncated())
+print message(overflowing())
+print message(noncanonical())
+print message(missing())
+"#,
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(native.stdout.starts_with(b"0\n1\n127\n128\n2\n0\n"));
+    assert!(native
+        .stdout
+        .ends_with(b"truncated ULEB128\nULEB128 overflow\nnon-canonical ULEB128\nout of bounds\n"));
+}
+
+#[test]
 fn native_binary_deep_matches_vm_for_decoders_and_observations() {
     if !gcc_available() {
         return;

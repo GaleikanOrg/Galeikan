@@ -249,6 +249,9 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
         "max_bytes must be between 0 and 536870912",
     ),
     ("gak_binary_unknown_decoder", "unknown decoder"),
+    ("gak_uleb_truncated", "truncated ULEB128"),
+    ("gak_uleb_overflow", "ULEB128 overflow"),
+    ("gak_uleb_noncanonical", "non-canonical ULEB128"),
     ("gak_hexdump_limit", "hexdump length exceeds 4096 bytes"),
     (
         "gak_text_offset_negative",
@@ -4873,6 +4876,12 @@ impl Codegen {
                 let decoder_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_binary_offset_negative", decoder_slot * 8, offset_slot * 8).unwrap();
                 let done = self.label();
+                let fixed = self.label();
+                let loop_start = self.label();
+                let read_byte = self.label();
+                let complete = self.label();
+                let uleb = self.literal("uleb128")?;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{uleb}]\n    call gak_str_eq\n    test eax, eax\n    jz {fixed}\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    cmp r10, rdx\n    jae gak_binary_out_of_bounds\n    sub rdx, r10\n    add r10, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+r10+8]\n    xor r8d, r8d\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, rdx\n    jae gak_uleb_truncated\n    movzx eax, BYTE PTR [r11+r9]\n    cmp r9, 9\n    jne {read_byte}\n    cmp eax, 1\n    ja gak_uleb_overflow\n{read_byte}:\n    mov r10d, eax\n    and r10d, 127\n    mov ecx, r9d\n    imul ecx, 7\n    shl r10, cl\n    or r8, r10\n    inc r9\n    test al, 128\n    jnz {loop_start}_continuation\n    cmp r9, 1\n    jbe {complete}\n    test al, al\n    jz gak_uleb_noncanonical\n{complete}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, r9\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_alloc_observation\n    jmp {done}\n{loop_start}_continuation:\n    cmp r9, 10\n    jae gak_uleb_overflow\n    jmp {loop_start}\n{fixed}:", self.arg0(), decoder_slot * 8, self.arg1(), offset_slot * 8, source_slot * 8, source_slot * 8, offset_slot * 8, decoder_slot * 8).unwrap();
                 for (format, width, big_endian) in [
                     ("u8", 1_usize, false),
                     ("u16le", 2, false),
@@ -6344,6 +6353,9 @@ impl Codegen {
         out.push_str("gak_binary_offset_negative_msg: .ascii \"offset must not be negative\\n\"\ngak_binary_offset_negative_msg_end:\ngak_binary_length_negative_msg: .ascii \"length must not be negative\\n\"\ngak_binary_length_negative_msg_end:\ngak_binary_range_overflow_msg: .ascii \"range overflow\\n\"\ngak_binary_range_overflow_msg_end:\ngak_binary_out_of_bounds_msg: .ascii \"out of bounds\\n\"\ngak_binary_out_of_bounds_msg_end:\ngak_binary_unknown_decoder_msg: .ascii \"unknown decoder\\n\"\ngak_binary_unknown_decoder_msg_end:\ngak_hexdump_limit_msg: .ascii \"hexdump length exceeds 4096 bytes\\n\"\ngak_hexdump_limit_msg_end:\ngak_observation_value_range_msg: .ascii \"Observation value does not fit i64\\n\"\ngak_observation_value_range_msg_end:\ngak_observation_limit_msg: .ascii \"native Observation memory exceeds 64 MiB\\n\"\ngak_observation_limit_msg_end:\n");
         out.push_str("gak_analyze_max_msg: .ascii \"max_bytes must be between 0 and 536870912\\n\"\ngak_analyze_max_msg_end:\n");
         for (label, message) in [
+            ("gak_uleb_truncated", "truncated ULEB128"),
+            ("gak_uleb_overflow", "ULEB128 overflow"),
+            ("gak_uleb_noncanonical", "non-canonical ULEB128"),
             ("gak_audit_min_negative", "minimum must not be negative"),
             ("gak_audit_max_negative", "maximum must not be negative"),
             (
@@ -7427,6 +7439,9 @@ gak_cli_utf8_done:
                 "gak_binary_unknown_decoder",
                 "gak_binary_unknown_decoder_msg",
             ),
+            ("gak_uleb_truncated", "gak_uleb_truncated_msg"),
+            ("gak_uleb_overflow", "gak_uleb_overflow_msg"),
+            ("gak_uleb_noncanonical", "gak_uleb_noncanonical_msg"),
             ("gak_hexdump_limit", "gak_hexdump_limit_msg"),
             ("gak_text_offset_negative", "gak_text_offset_negative_msg"),
             ("gak_max_chars_range", "gak_max_chars_range_msg"),
