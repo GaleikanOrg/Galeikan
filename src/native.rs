@@ -249,6 +249,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_bits_bounds", "bit range out of bounds"),
     ("gak_bits_order", "bit order must be lsb0 or msb0"),
     ("gak_bits_value", "bit value does not fit count"),
+    ("gak_bits_signed_value", "signed bit value does not fit count"),
     (
         "gak_analyze_max",
         "max_bytes must be between 0 and 536870912",
@@ -4904,9 +4905,9 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax+16]\n    mov rdx, QWORD PTR [rax+24]\n    sub rdx, r10\n    mov r11, QWORD PTR [rax]\n    lea rax, [r11+r10+8]\n    call gak_entropy_milli\n    mov r8, rax\n    mov rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    lea r11, [rip+{decoder}]\n    call gak_alloc_observation", source_slot * 8, source_slot * 8).unwrap();
                 Ok(Scalar::Observation)
             }
-            ("bits", [source, offset, count, order]) => {
+            ("bits" | "signed_bits", [source, offset, count, order]) => {
                 if self.expr(source, scope)? != Scalar::Source {
-                    return Err("binary.bits expects Source".into());
+                    return Err(format!("binary.{name} expects Source"));
                 }
                 let source_slot = self.reserve_slot()?;
                 writeln!(
@@ -4916,7 +4917,7 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(offset, scope)? != Scalar::Int {
-                    return Err("binary.bits offset must be i64".into());
+                    return Err(format!("binary.{name} offset must be i64"));
                 }
                 let offset_slot = self.reserve_slot()?;
                 writeln!(
@@ -4926,12 +4927,12 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(count, scope)? != Scalar::Int {
-                    return Err("binary.bits count must be i64".into());
+                    return Err(format!("binary.{name} count must be i64"));
                 }
                 let count_slot = self.reserve_slot()?;
                 writeln!(self.code, "    cmp rax, 1\n    jl gak_bits_count\n    cmp rax, 64\n    jg gak_bits_count\n    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
                 if self.expr(order, scope)? != Scalar::Str {
-                    return Err("binary.bits order must be str".into());
+                    return Err(format!("binary.{name} order must be str"));
                 }
                 let order_slot = self.reserve_slot()?;
                 let mode_slot = self.reserve_slot()?;
@@ -4946,9 +4947,14 @@ impl Codegen {
                 let next = self.label();
                 let done = self.label();
                 writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov r8, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+rdx+8]\n    xor eax, eax\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {done}\n    mov r10, r8\n    add r10, r9\n    mov rcx, r10\n    shr r10, 3\n    and ecx, 7\n    movzx edx, BYTE PTR [r11+r10]\n    cmp QWORD PTR [rbp-{}], 0\n    jne {msb_step}\n    shr edx, cl\n    and edx, 1\n    mov ecx, r9d\n    shl rdx, cl\n    or rax, rdx\n    jmp {next}\n{msb_step}:\n    mov r10d, 7\n    sub r10d, ecx\n    mov ecx, r10d\n    shr edx, cl\n    and edx, 1\n    shl rax, 1\n    or rax, rdx\n{next}:\n    inc r9\n    jmp {loop_start}\n{done}:", source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, count_slot * 8, mode_slot * 8).unwrap();
-                Ok(Scalar::UInt)
+                if name == "signed_bits" {
+                    writeln!(self.code, "    mov rcx, 64\n    sub rcx, QWORD PTR [rbp-{}]\n    shl rax, cl\n    sar rax, cl", count_slot * 8).unwrap();
+                    Ok(Scalar::Int)
+                } else {
+                    Ok(Scalar::UInt)
+                }
             }
-            ("patch_bits", [source, offset, count, value, order]) => {
+            ("patch_bits" | "patch_signed_bits", [source, offset, count, value, order]) => {
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.patch_bits expects Source".into());
                 }
@@ -4974,8 +4980,20 @@ impl Codegen {
                 }
                 let count_slot = self.reserve_slot()?;
                 writeln!(self.code, "    cmp rax, 1\n    jl gak_bits_count\n    cmp rax, 64\n    jg gak_bits_count\n    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
-                if self.expr(value, scope)? != Scalar::UInt {
-                    return Err("binary.patch_bits value must be u64".into());
+                let expected = if name == "patch_signed_bits" {
+                    Scalar::Int
+                } else {
+                    Scalar::UInt
+                };
+                if self.expr(value, scope)? != expected {
+                    return Err(format!(
+                        "binary.{name} value must be {}",
+                        if name == "patch_signed_bits" {
+                            "i64"
+                        } else {
+                            "u64"
+                        }
+                    ));
                 }
                 let value_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
@@ -4994,7 +5012,12 @@ impl Codegen {
                 let msb_label = self.literal("msb0")?;
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{lsb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz {msb}\n    mov QWORD PTR [rbp-{}], 0\n    jmp {ready}\n{msb}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{msb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_bits_order\n    mov QWORD PTR [rbp-{}], 1\n{ready}:", self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8, self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8).unwrap();
                 let value_ready = self.label();
-                writeln!(self.code, "    mov rcx, QWORD PTR [rbp-{}]\n    cmp rcx, 64\n    je {value_ready}\n    mov r10, QWORD PTR [rbp-{}]\n    shr r10, cl\n    test r10, r10\n    jnz gak_bits_value\n{value_ready}:\n    mov r11, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r11+32], 64\n    jae gak_source_depth\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov r10, QWORD PTR [rbp-{}]\n    shr r10, 3\n    mov QWORD PTR [rbp-{}], r10\n    add r8, 7\n    shr r8, 3\n    sub r8, r10\n    mov QWORD PTR [rbp-{}], r8\n    mov rax, r8\n    call gak_alloc_bytes\n    mov QWORD PTR [rbp-{}], rax", count_slot * 8, value_slot * 8, source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, start_slot * 8, length_slot * 8, replacement_slot * 8).unwrap();
+                if name == "patch_signed_bits" {
+                    writeln!(self.code, "    mov rcx, 64\n    sub rcx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    shl r10, cl\n    sar r10, cl\n    cmp r10, QWORD PTR [rbp-{}]\n    jne gak_bits_signed_value", count_slot * 8, value_slot * 8, value_slot * 8).unwrap();
+                } else {
+                    writeln!(self.code, "    mov rcx, QWORD PTR [rbp-{}]\n    cmp rcx, 64\n    je {value_ready}\n    mov r10, QWORD PTR [rbp-{}]\n    shr r10, cl\n    test r10, r10\n    jnz gak_bits_value\n{value_ready}:", count_slot * 8, value_slot * 8).unwrap();
+                }
+                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r11+32], 64\n    jae gak_source_depth\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov r10, QWORD PTR [rbp-{}]\n    shr r10, 3\n    mov QWORD PTR [rbp-{}], r10\n    add r8, 7\n    shr r8, 3\n    sub r8, r10\n    mov QWORD PTR [rbp-{}], r8\n    mov rax, r8\n    call gak_alloc_bytes\n    mov QWORD PTR [rbp-{}], rax", source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, start_slot * 8, length_slot * 8, replacement_slot * 8).unwrap();
                 let copy = self.label();
                 let copy_done = self.label();
                 writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11]\n    mov r8, QWORD PTR [r11+16]\n    add r8, QWORD PTR [rbp-{}]\n    lea r10, [r10+r8+8]\n    xor r9d, r9d\n{copy}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {copy_done}\n    mov dl, BYTE PTR [r10+r9]\n    mov BYTE PTR [rax+r9+8], dl\n    inc r9\n    jmp {copy}\n{copy_done}:", source_slot * 8, start_slot * 8, length_slot * 8).unwrap();
@@ -6679,6 +6702,10 @@ impl Codegen {
             ("gak_bits_bounds", "bit range out of bounds"),
             ("gak_bits_order", "bit order must be lsb0 or msb0"),
             ("gak_bits_value", "bit value does not fit count"),
+            (
+                "gak_bits_signed_value",
+                "signed bit value does not fit count",
+            ),
         ] {
             writeln!(
                 out,
@@ -7806,6 +7833,7 @@ gak_cli_utf8_done:
             ("gak_bits_bounds", "gak_bits_bounds_msg"),
             ("gak_bits_order", "gak_bits_order_msg"),
             ("gak_bits_value", "gak_bits_value_msg"),
+            ("gak_bits_signed_value", "gak_bits_signed_value_msg"),
             ("gak_analyze_max", "gak_analyze_max_msg"),
             (
                 "gak_binary_unknown_decoder",

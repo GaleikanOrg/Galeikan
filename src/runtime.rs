@@ -4898,7 +4898,7 @@ impl Runtime {
                     value,
                 })))
             }
-            ("bits", [source, offset, count, order]) => {
+            ("bits" | "signed_bits", [source, offset, count, order]) => {
                 let source = source.as_source()?;
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "bit offset must not be negative")?;
@@ -4930,9 +4930,14 @@ impl Runtime {
                         value = (value << 1) | u64::from(bit);
                     }
                 }
-                Ok(Value::UInt(value))
+                if name == "signed_bits" {
+                    let shift = 64 - count;
+                    Ok(Value::Int(((value << shift) as i64) >> shift))
+                } else {
+                    Ok(Value::UInt(value))
+                }
             }
-            ("patch_bits", [source, offset, count, value, order]) => {
+            ("patch_bits" | "patch_signed_bits", [source, offset, count, value, order]) => {
                 let source = source.as_source()?;
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "bit offset must not be negative")?;
@@ -4941,10 +4946,20 @@ impl Runtime {
                 if !(1..=64).contains(&count) {
                     return Err("bit count must be between 1 and 64".into());
                 }
-                let value = value.as_uint()?;
-                if count < 64 && value >> count != 0 {
-                    return Err("bit value does not fit count".into());
-                }
+                let value = if name == "patch_signed_bits" {
+                    let signed = value.as_int()?;
+                    let shift = 64 - count;
+                    if (signed << shift) >> shift != signed {
+                        return Err("signed bit value does not fit count".into());
+                    }
+                    signed as u64
+                } else {
+                    let unsigned = value.as_uint()?;
+                    if count < 64 && unsigned >> count != 0 {
+                        return Err("bit value does not fit count".into());
+                    }
+                    unsigned
+                };
                 let order = order.as_str()?;
                 if !matches!(order, "lsb0" | "msb0") {
                     return Err("bit order must be lsb0 or msb0".into());
@@ -7597,7 +7612,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "snapshot") => (&[Bytes], Source),
         ("binary", "deep") => (&[Source, Int, Str], Observation),
         ("binary", "bits") => (&[Source, Int, Int, Str], UInt),
+        ("binary", "signed_bits") => (&[Source, Int, Int, Str], Int),
         ("binary", "patch_bits") => (&[Source, Int, Int, UInt, Str], Source),
+        ("binary", "patch_signed_bits") => (&[Source, Int, Int, Int, Str], Source),
         ("binary", "entropy") => (&[Source], Observation),
         ("binary", "view") => (&[Source, Int, Int], Source),
         ("binary", "extract") => (&[Type::Any, Int, Int], Bytes),

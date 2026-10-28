@@ -6159,7 +6159,7 @@ fn binary_bits_match_across_engines_bundle_and_native() {
     let s = Sandbox::new();
     let script = s.write(
         "bitfields.gak",
-        r#"from std.binary import from_hex, snapshot, view, extract, bits, patch_bits
+        r#"from std.binary import from_hex, snapshot, view, extract, bits, signed_bits, patch_bits, patch_signed_bits
 from std.bytes import to_hex
 from std.result import message
 fn bad_offset(source: Source) -> Result<u64> = bits(source, -1, 1, "lsb0")
@@ -6167,10 +6167,15 @@ fn bad_count(source: Source) -> Result<u64> = bits(source, 0, 0, "lsb0")
 fn bad_bounds(source: Source) -> Result<u64> = bits(source, 15, 2, "lsb0")
 fn bad_order(source: Source) -> Result<u64> = bits(source, 0, 1, "middle")
 fn bad_value(source: Source) -> Result<Source> = patch_bits(source, 0, 5, 32u64, "lsb0")
+fn bad_signed_high(source: Source) -> Result<Source> = patch_signed_bits(source, 0, 5, 16, "lsb0")
+fn bad_signed_low(source: Source) -> Result<Source> = patch_signed_bits(source, 0, 5, -17, "lsb0")
 let source = snapshot(from_hex("b2 4d"))
 let cleared = patch_bits(source, 6, 5, 0u64, "lsb0")
 let filled = patch_bits(source, 6, 5, 31u64, "msb0")
 let spanning = patch_bits(snapshot(from_hex("00 00 00 00 00 00 00 00 00")), 1, 64, 18446744073709551615u64, "lsb0")
+let negative: i64 = signed_bits(snapshot(from_hex("e8")), 0, 5, "msb0")
+let signed_patch = patch_signed_bits(snapshot(from_hex("00")), 0, 5, -3, "msb0")
+let signed_patch64 = patch_signed_bits(snapshot(from_hex("00 00 00 00 00 00 00 00")), 0, 64, -1, "lsb0")
 print bits(source, 1, 4, "lsb0")
 print bits(source, 1, 4, "msb0")
 print bits(source, 6, 5, "lsb0")
@@ -6186,14 +6191,25 @@ print to_hex(extract(patch_bits(view(source, 1, 1), 0, 8, 255u64, "lsb0"), 0, 1)
 print bits(spanning, 1, 64, "lsb0")
 print to_hex(extract(spanning, 0, 1))
 print to_hex(extract(spanning, 8, 1))
+print negative
+print signed_bits(snapshot(from_hex("e8")), 3, 5, "lsb0")
+print signed_bits(snapshot(from_hex("ff 01")), 0, 9, "lsb0")
+print signed_bits(snapshot(from_hex("00 00 00 00 00 00 00 80")), 0, 64, "lsb0")
+print signed_bits(source, 1, 1, "lsb0")
+print signed_bits(source, 0, 1, "lsb0")
+print to_hex(extract(signed_patch, 0, 1))
+print signed_bits(signed_patch, 0, 5, "msb0")
+print to_hex(extract(signed_patch64, 0, 8))
 print message(bad_offset(source))
 print message(bad_count(source))
 print message(bad_bounds(source))
 print message(bad_order(source))
 print message(bad_value(source))
+print message(bad_signed_high(source))
+print message(bad_signed_low(source))
 "#,
     );
-    let expected = b"9\n6\n22\n18\n77\n18446744073709551615\n3248\nb3ed\n0\n31\nb24d\nff\n18446744073709551615\nfe\n01\nbit offset must not be negative\nbit count must be between 1 and 64\nbit range out of bounds\nbit order must be lsb0 or msb0\nbit value does not fit count\n";
+    let expected = b"9\n6\n22\n18\n77\n18446744073709551615\n3248\nb3ed\n0\n31\nb24d\nff\n18446744073709551615\nfe\n01\n-3\n-3\n-1\n-9223372036854775808\n-1\n0\ne8\n-3\nffffffffffffffff\nbit offset must not be negative\nbit count must be between 1 and 64\nbit range out of bounds\nbit order must be lsb0 or msb0\nbit value does not fit count\nsigned bit value does not fit count\nsigned bit value does not fit count\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("run")
