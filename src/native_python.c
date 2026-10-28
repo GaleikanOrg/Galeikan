@@ -64,7 +64,8 @@ typedef struct {
 uint8_t *gak_python_error;
 static int gak_py_started;
 static size_t gak_py_allocated;
-static GakPythonResult gak_py_void_result;
+/* Native code reads the result immediately before issuing another Python call. */
+static GakPythonResult gak_py_result;
 
 static uint8_t *gak_py_box(const char *data, size_t size) {
     if (size > GAK_PY_LIMIT || gak_py_allocated > GAK_PY_MEMORY_LIMIT - 8 ||
@@ -608,7 +609,7 @@ static uint64_t *gak_py_decode_list(const uint8_t *bytes, size_t size, uint64_t 
         gak_py_fail("native Python result memory exceeds 64 MiB");
         return NULL;
     }
-    uint64_t *list = malloc(allocation);
+    uint64_t *list = calloc((size_t)count + 1, sizeof(uint64_t));
     if (!list) {
         gak_py_fail("native allocation failed");
         return NULL;
@@ -616,6 +617,16 @@ static uint64_t *gak_py_decode_list(const uint8_t *bytes, size_t size, uint64_t 
     gak_py_allocated += allocation;
     list[0] = (uint64_t)count;
     if (gak_py_list_items(bytes, size, expected, list) < 0) {
+        if (expected == 9 || expected == 10) {
+            for (int index = 0; index < count; index++) {
+                uint8_t *box = (uint8_t *)(uintptr_t)list[index + 1];
+                if (box) {
+                    gak_py_allocated -= (size_t)gak_py_length(box) + 8;
+                    free(box);
+                }
+            }
+        }
+        gak_py_allocated -= allocation;
         free(list);
         gak_py_fail("native Python result memory exceeds 64 MiB");
         return NULL;
@@ -659,13 +670,18 @@ static GakPythonResult *gak_py_decode(char *response, size_t size, uint64_t expe
             gak_py_fail("invalid Python worker value");
             return NULL;
         }
-        return &gak_py_void_result;
+        return &gak_py_result;
     }
     if (hex_size & 1 || hex_size > GAK_PY_LIMIT - 5) {
         gak_py_fail("invalid Python worker value");
         return NULL;
     }
     size_t length = hex_size / 2;
+    if (((expected == 1 || expected == 2) && length != 8) ||
+        (expected == 3 && length != 1)) {
+        gak_py_fail("invalid Python worker scalar");
+        return NULL;
+    }
     uint8_t *bytes = malloc(length ? length : 1);
     if (!bytes) { gak_py_fail("native allocation failed"); return NULL; }
     if (gak_py_unhex(bytes, response + 4, hex_size) != 0) {
@@ -678,51 +694,34 @@ static GakPythonResult *gak_py_decode(char *response, size_t size, uint64_t expe
         gak_py_fail("Python result does not match the declared Galeikan type");
         return NULL;
     }
-    if (gak_py_allocated > GAK_PY_MEMORY_LIMIT - sizeof(GakPythonResult)) {
-        free(bytes);
-        gak_py_fail("native Python result memory exceeds 64 MiB");
-        return NULL;
-    }
-    GakPythonResult *result = malloc(sizeof(*result));
-    if (!result) {
-        free(bytes);
-        gak_py_fail("native allocation failed");
-        return NULL;
-    }
-    gak_py_allocated += sizeof(*result);
-    result->kind = expected;
     if (expected >= 6) {
         uint64_t *list = gak_py_decode_list(bytes, length, expected);
         if (!list) {
-            free(bytes); free(result);
+            free(bytes);
             return NULL;
         }
-        result->value = (uint64_t)(uintptr_t)list;
+        gak_py_result.value = (uint64_t)(uintptr_t)list;
     } else if (expected == 4 || expected == 5) {
         uint8_t *box = gak_py_box((char *)bytes, length);
         if (!box) {
-            free(bytes); free(result);
+            free(bytes);
             gak_py_fail("native allocation failed");
             return NULL;
         }
-        result->value = (uint64_t)(uintptr_t)box;
+        gak_py_result.value = (uint64_t)(uintptr_t)box;
     } else {
-        if ((expected == 1 || expected == 2) && length != 8) {
-            free(bytes); free(result);
-            gak_py_fail("invalid Python worker integer");
-            return NULL;
-        }
-        if (expected == 3 && (length != 1 || bytes[0] > 1)) {
-            free(bytes); free(result);
+        if (expected == 3 && bytes[0] > 1) {
+            free(bytes);
             gak_py_fail("invalid Python worker boolean");
             return NULL;
         }
         uint64_t value = 0;
         for (size_t index = 0; index < length; index++) value |= (uint64_t)bytes[index] << (index * 8);
-        result->value = value;
+        gak_py_result.value = value;
     }
+    gak_py_result.kind = expected;
     free(bytes);
-    return result;
+    return &gak_py_result;
 }
 
 void *gak_native_python_call(void *pointer) {
