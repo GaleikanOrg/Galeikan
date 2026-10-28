@@ -4932,6 +4932,58 @@ impl Runtime {
                 }
                 Ok(Value::UInt(value))
             }
+            ("patch_bits", [source, offset, count, value, order]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "bit offset must not be negative")?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "bit count must be between 1 and 64")?;
+                if !(1..=64).contains(&count) {
+                    return Err("bit count must be between 1 and 64".into());
+                }
+                let value = value.as_uint()?;
+                if count < 64 && value >> count != 0 {
+                    return Err("bit value does not fit count".into());
+                }
+                let order = order.as_str()?;
+                if !matches!(order, "lsb0" | "msb0") {
+                    return Err("bit order must be lsb0 or msb0".into());
+                }
+                let end = offset.checked_add(count).ok_or("bit range out of bounds")?;
+                let data = source.bytes();
+                if end > data.len().checked_mul(8).ok_or("bit range out of bounds")? {
+                    return Err("bit range out of bounds".into());
+                }
+                let start_byte = offset / 8;
+                let end_byte = end.div_ceil(8);
+                let mut replacement = data[start_byte..end_byte].to_vec();
+                for index in 0..count {
+                    let bit_offset = offset + index;
+                    let byte = &mut replacement[bit_offset / 8 - start_byte];
+                    let position = if order == "lsb0" {
+                        bit_offset % 8
+                    } else {
+                        7 - bit_offset % 8
+                    };
+                    let bit = if order == "lsb0" {
+                        (value >> index) & 1
+                    } else {
+                        (value >> (count - index - 1)) & 1
+                    };
+                    let mask = 1_u8 << position;
+                    if bit != 0 {
+                        *byte |= mask;
+                    } else {
+                        *byte &= !mask;
+                    }
+                }
+                Ok(Value::Source(Arc::new(Source::patch(
+                    source,
+                    start_byte,
+                    end_byte,
+                    &replacement,
+                )?)))
+            }
             ("view", [source, offset, length]) => {
                 let source = source.as_source()?;
                 let (start, end) = checked_span(offset, length, source.bytes().len())?;
@@ -7545,6 +7597,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "snapshot") => (&[Bytes], Source),
         ("binary", "deep") => (&[Source, Int, Str], Observation),
         ("binary", "bits") => (&[Source, Int, Int, Str], UInt),
+        ("binary", "patch_bits") => (&[Source, Int, Int, UInt, Str], Source),
         ("binary", "entropy") => (&[Source], Observation),
         ("binary", "view") => (&[Source, Int, Int], Source),
         ("binary", "extract") => (&[Type::Any, Int, Int], Bytes),
