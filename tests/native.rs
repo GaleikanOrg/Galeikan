@@ -6152,6 +6152,86 @@ print message(missing())
 }
 
 #[test]
+fn binary_bits_match_across_engines_bundle_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "bitfields.gak",
+        r#"from std.binary import from_hex, snapshot, view, bits
+from std.result import message
+fn bad_offset(source: Source) -> Result<u64> = bits(source, -1, 1, "lsb0")
+fn bad_count(source: Source) -> Result<u64> = bits(source, 0, 0, "lsb0")
+fn bad_bounds(source: Source) -> Result<u64> = bits(source, 15, 2, "lsb0")
+fn bad_order(source: Source) -> Result<u64> = bits(source, 0, 1, "middle")
+let source = snapshot(from_hex("b2 4d"))
+print bits(source, 1, 4, "lsb0")
+print bits(source, 1, 4, "msb0")
+print bits(source, 6, 5, "lsb0")
+print bits(source, 6, 5, "msb0")
+print bits(view(source, 1, 1), 0, 8, "msb0")
+print bits(snapshot(from_hex("ff ff ff ff ff ff ff ff")), 0, 64, "lsb0")
+print message(bad_offset(source))
+print message(bad_count(source))
+print message(bad_bounds(source))
+print message(bad_order(source))
+"#,
+    );
+    let expected = b"9\n6\n22\n18\n77\n18446744073709551615\nbit offset must not be negative\nbit count must be between 1 and 64\nbit range out of bounds\nbit order must be lsb0 or msb0\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected);
+    }
+    let bundle = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    let artifact = PathBuf::from(String::from_utf8(bundle.stdout).unwrap().trim());
+    let executed = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(artifact)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    assert_eq!(executed.stdout, expected);
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, expected);
+}
+
+#[test]
 fn native_uleb128_fields_match_vm_for_width_values_views_and_malformed_input() {
     if !gcc_available() {
         return;

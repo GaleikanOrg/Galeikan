@@ -4898,6 +4898,40 @@ impl Runtime {
                     value,
                 })))
             }
+            ("bits", [source, offset, count, order]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "bit offset must not be negative")?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "bit count must be between 1 and 64")?;
+                if !(1..=64).contains(&count) {
+                    return Err("bit count must be between 1 and 64".into());
+                }
+                let order = order.as_str()?;
+                if !matches!(order, "lsb0" | "msb0") {
+                    return Err("bit order must be lsb0 or msb0".into());
+                }
+                let end = offset.checked_add(count).ok_or("bit range out of bounds")?;
+                let data = source.bytes();
+                if end > data.len().checked_mul(8).ok_or("bit range out of bounds")? {
+                    return Err("bit range out of bounds".into());
+                }
+                let mut value = 0_u64;
+                for index in 0..count {
+                    let bit_offset = offset + index;
+                    let bit = if order == "lsb0" {
+                        (data[bit_offset / 8] >> (bit_offset % 8)) & 1
+                    } else {
+                        (data[bit_offset / 8] >> (7 - bit_offset % 8)) & 1
+                    };
+                    if order == "lsb0" {
+                        value |= u64::from(bit) << index;
+                    } else {
+                        value = (value << 1) | u64::from(bit);
+                    }
+                }
+                Ok(Value::UInt(value))
+            }
             ("view", [source, offset, length]) => {
                 let source = source.as_source()?;
                 let (start, end) = checked_span(offset, length, source.bytes().len())?;
@@ -7510,6 +7544,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "from_hex") => (&[Str], Bytes),
         ("binary", "snapshot") => (&[Bytes], Source),
         ("binary", "deep") => (&[Source, Int, Str], Observation),
+        ("binary", "bits") => (&[Source, Int, Int, Str], UInt),
         ("binary", "entropy") => (&[Source], Observation),
         ("binary", "view") => (&[Source, Int, Int], Source),
         ("binary", "extract") => (&[Type::Any, Int, Int], Bytes),

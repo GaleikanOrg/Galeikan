@@ -244,6 +244,10 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_binary_length_negative", "length must not be negative"),
     ("gak_binary_range_overflow", "range overflow"),
     ("gak_binary_out_of_bounds", "out of bounds"),
+    ("gak_bits_offset", "bit offset must not be negative"),
+    ("gak_bits_count", "bit count must be between 1 and 64"),
+    ("gak_bits_bounds", "bit range out of bounds"),
+    ("gak_bits_order", "bit order must be lsb0 or msb0"),
     (
         "gak_analyze_max",
         "max_bytes must be between 0 and 536870912",
@@ -4899,6 +4903,50 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax+16]\n    mov rdx, QWORD PTR [rax+24]\n    sub rdx, r10\n    mov r11, QWORD PTR [rax]\n    lea rax, [r11+r10+8]\n    call gak_entropy_milli\n    mov r8, rax\n    mov rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    lea r11, [rip+{decoder}]\n    call gak_alloc_observation", source_slot * 8, source_slot * 8).unwrap();
                 Ok(Scalar::Observation)
             }
+            ("bits", [source, offset, count, order]) => {
+                if self.expr(source, scope)? != Scalar::Source {
+                    return Err("binary.bits expects Source".into());
+                }
+                let source_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    source_slot * 8
+                )
+                .unwrap();
+                if self.expr(offset, scope)? != Scalar::Int {
+                    return Err("binary.bits offset must be i64".into());
+                }
+                let offset_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    test rax, rax\n    js gak_bits_offset\n    mov QWORD PTR [rbp-{}], rax",
+                    offset_slot * 8
+                )
+                .unwrap();
+                if self.expr(count, scope)? != Scalar::Int {
+                    return Err("binary.bits count must be i64".into());
+                }
+                let count_slot = self.reserve_slot()?;
+                writeln!(self.code, "    cmp rax, 1\n    jl gak_bits_count\n    cmp rax, 64\n    jg gak_bits_count\n    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
+                if self.expr(order, scope)? != Scalar::Str {
+                    return Err("binary.bits order must be str".into());
+                }
+                let order_slot = self.reserve_slot()?;
+                let mode_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", order_slot * 8).unwrap();
+                let msb = self.label();
+                let ready = self.label();
+                let lsb_label = self.literal("lsb0")?;
+                let msb_label = self.literal("msb0")?;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{lsb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz {msb}\n    mov QWORD PTR [rbp-{}], 0\n    jmp {ready}\n{msb}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{msb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_bits_order\n    mov QWORD PTR [rbp-{}], 1\n{ready}:", self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8, self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8).unwrap();
+                let loop_start = self.label();
+                let msb_step = self.label();
+                let next = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov r8, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+rdx+8]\n    xor eax, eax\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {done}\n    mov r10, r8\n    add r10, r9\n    mov rcx, r10\n    shr r10, 3\n    and ecx, 7\n    movzx edx, BYTE PTR [r11+r10]\n    cmp QWORD PTR [rbp-{}], 0\n    jne {msb_step}\n    shr edx, cl\n    and edx, 1\n    mov ecx, r9d\n    shl rdx, cl\n    or rax, rdx\n    jmp {next}\n{msb_step}:\n    mov r10d, 7\n    sub r10d, ecx\n    mov ecx, r10d\n    shr edx, cl\n    and edx, 1\n    shl rax, 1\n    or rax, rdx\n{next}:\n    inc r9\n    jmp {loop_start}\n{done}:", source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, count_slot * 8, mode_slot * 8).unwrap();
+                Ok(Scalar::UInt)
+            }
             ("deep", [source, offset, decoder]) => {
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.deep expects Source".into());
@@ -6564,6 +6612,18 @@ impl Codegen {
             writeln!(out, "    .long 0x{value:08x}").unwrap();
         }
         out.push_str("gak_binary_offset_negative_msg: .ascii \"offset must not be negative\\n\"\ngak_binary_offset_negative_msg_end:\ngak_binary_length_negative_msg: .ascii \"length must not be negative\\n\"\ngak_binary_length_negative_msg_end:\ngak_binary_range_overflow_msg: .ascii \"range overflow\\n\"\ngak_binary_range_overflow_msg_end:\ngak_binary_out_of_bounds_msg: .ascii \"out of bounds\\n\"\ngak_binary_out_of_bounds_msg_end:\ngak_binary_unknown_decoder_msg: .ascii \"unknown decoder\\n\"\ngak_binary_unknown_decoder_msg_end:\ngak_hexdump_limit_msg: .ascii \"hexdump length exceeds 4096 bytes\\n\"\ngak_hexdump_limit_msg_end:\ngak_observation_value_range_msg: .ascii \"Observation value does not fit i64\\n\"\ngak_observation_value_range_msg_end:\ngak_observation_limit_msg: .ascii \"native Observation memory exceeds 64 MiB\\n\"\ngak_observation_limit_msg_end:\n");
+        for (label, message) in [
+            ("gak_bits_offset", "bit offset must not be negative"),
+            ("gak_bits_count", "bit count must be between 1 and 64"),
+            ("gak_bits_bounds", "bit range out of bounds"),
+            ("gak_bits_order", "bit order must be lsb0 or msb0"),
+        ] {
+            writeln!(
+                out,
+                "{label}_msg: .ascii \"{message}\\n\"\n{label}_msg_end:"
+            )
+            .unwrap();
+        }
         out.push_str("gak_analyze_max_msg: .ascii \"max_bytes must be between 0 and 536870912\\n\"\ngak_analyze_max_msg_end:\n");
         for (label, message) in [
             ("gak_uleb_truncated", "truncated ULEB128"),
@@ -7679,6 +7739,10 @@ gak_cli_utf8_done:
             ),
             ("gak_binary_range_overflow", "gak_binary_range_overflow_msg"),
             ("gak_binary_out_of_bounds", "gak_binary_out_of_bounds_msg"),
+            ("gak_bits_offset", "gak_bits_offset_msg"),
+            ("gak_bits_count", "gak_bits_count_msg"),
+            ("gak_bits_bounds", "gak_bits_bounds_msg"),
+            ("gak_bits_order", "gak_bits_order_msg"),
             ("gak_analyze_max", "gak_analyze_max_msg"),
             (
                 "gak_binary_unknown_decoder",
