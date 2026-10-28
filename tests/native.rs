@@ -5180,6 +5180,78 @@ fn native_format_address_mapping_boundaries_match_vm() {
 }
 
 #[test]
+fn native_elf_high_unsigned_addresses_match_interpreters() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut elf = vec![0u8; 0x120];
+    elf[..4].copy_from_slice(b"\x7fELF");
+    elf[4..7].copy_from_slice(&[2, 1, 1]);
+    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&62u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&0x8000_0000_0000_1000u64.to_le_bytes());
+    elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+    elf[64..68].copy_from_slice(&1u32.to_le_bytes());
+    elf[68..72].copy_from_slice(&5u32.to_le_bytes());
+    elf[72..80].copy_from_slice(&0x100u64.to_le_bytes());
+    elf[80..88].copy_from_slice(&0x8000_0000_0000_1000u64.to_le_bytes());
+    elf[96..104].copy_from_slice(&16u64.to_le_bytes());
+    elf[104..112].copy_from_slice(&32u64.to_le_bytes());
+    elf[0x100..0x110].copy_from_slice(b"0123456789abcdef");
+    fs::write(s.0.join("high.elf"), elf).unwrap();
+    let script = s.write(
+        "high-address.gak",
+        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, va_u64, va_offset_u64, offset_va, offset_va_u64\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.elf\", 1024))\nfn signed_inverse() -> Result<i64> = offset_va(report, 0x100)\nfn unbacked() -> Result<Source> = va_u64(report, 0x8000000000001010u64, 1)\nprint size(va_u64(report, 0x8000000000001000u64, 4))\nprint va_offset_u64(report, 0x8000000000001003u64)\nprint offset_va_u64(report, 0x103)\nprint is_error(signed_inverse())\nprint is_error(unbacked())\n",
+    );
+    let run = |engine| {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-read"])
+            .arg(&s.0)
+            .output()
+            .unwrap()
+    };
+    let vm = run("vm");
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(vm.stdout, b"4\n259\n9223372036854779907\ntrue\ntrue\n");
+    let ast = run("ast");
+    assert!(
+        ast.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ast.stderr)
+    );
+    assert_eq!(ast.stdout, vm.stdout);
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(&executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_format_address_views_match_vm_for_pe_and_elf() {
     if !gcc_available() {
         return;

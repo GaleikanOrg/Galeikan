@@ -949,6 +949,12 @@ void *gak_native_formats_va(const void *value, int64_t address, int64_t count) {
     return gak_elf_va(value, (uint64_t)address, (uint64_t)count);
 }
 
+void *gak_native_formats_va_u64(const void *value, uint64_t address, int64_t count) {
+    gak_formats_error = NULL;
+    if (count < 0) { gak_format_fail("VA view length must not be negative"); return NULL; }
+    return gak_elf_va(value, address, (uint64_t)count);
+}
+
 int64_t gak_native_formats_rva_offset(const void *value, int64_t address) {
     GakFormatRange *range = gak_native_formats_rva(value, address, 1);
     if (!range) return 0;
@@ -967,8 +973,17 @@ int64_t gak_native_formats_va_offset(const void *value, int64_t address) {
     return offset;
 }
 
-static int64_t gak_native_formats_offset_address(const void *value, int64_t offset,
-                                                  int pe) {
+int64_t gak_native_formats_va_offset_u64(const void *value, uint64_t address) {
+    GakFormatRange *range = gak_native_formats_va_u64(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
+static uint64_t gak_native_formats_offset_address(const void *value, int64_t offset,
+                                                   int pe, int unsigned_result) {
     const GakFormat *format = value;
     gak_formats_error = NULL;
     if (format->kind != (pe ? 1 : 2)) {
@@ -1032,7 +1047,7 @@ static int64_t gak_native_formats_offset_address(const void *value, int64_t offs
                            : "ELF file offset is not mapped to a VA");
         return 0;
     }
-    if (address > INT64_MAX) {
+    if (!unsigned_result && address > INT64_MAX) {
         gak_format_fail(pe ? "PE RVA out of range" : "ELF VA out of range");
         return 0;
     }
@@ -1047,15 +1062,19 @@ static int64_t gak_native_formats_offset_address(const void *value, int64_t offs
                            : "ELF file offset has ambiguous VA mapping");
         return 0;
     }
-    return (int64_t)address;
+    return address;
 }
 
 int64_t gak_native_formats_offset_rva(const void *value, int64_t offset) {
-    return gak_native_formats_offset_address(value, offset, 1);
+    return (int64_t)gak_native_formats_offset_address(value, offset, 1, 0);
 }
 
 int64_t gak_native_formats_offset_va(const void *value, int64_t offset) {
-    return gak_native_formats_offset_address(value, offset, 0);
+    return (int64_t)gak_native_formats_offset_address(value, offset, 0, 0);
+}
+
+uint64_t gak_native_formats_offset_va_u64(const void *value, int64_t offset) {
+    return gak_native_formats_offset_address(value, offset, 0, 1);
 }
 
 void *gak_native_formats_entry_view(const void *value, int64_t count) {
