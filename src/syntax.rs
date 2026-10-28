@@ -506,6 +506,7 @@ pub enum StmtKind {
     Let(String, Option<String>, Expr),
     Var(String, Option<String>, Expr),
     Assign(String, Expr),
+    Expr(Expr),
     Function(String, Vec<Param>, Option<String>, FunctionBody),
     Print(Expr),
     Impact(Expr),
@@ -526,6 +527,7 @@ pub enum BlockStmtKind {
     Let(String, Option<String>, Expr),
     Var(String, Option<String>, Expr),
     Assign(String, Expr),
+    Expr(Expr),
     Print(Expr),
     Impact(Expr),
     Return(Expr),
@@ -797,7 +799,7 @@ impl Parser {
                     self.bump();
                     StmtKind::Assign(word, self.expr(0)?)
                 }
-                _ => return Err(format!("{line}:{col}: unknown statement '{word}'")),
+                _ => StmtKind::Expr(self.call_statement()?),
             };
             self.line_end()?;
             out.push(Stmt { kind, line, col });
@@ -1064,10 +1066,19 @@ impl Parser {
                 self.bump();
                 Ok(BlockStmtKind::Assign(word.to_string(), self.expr(0)?))
             }
-            _ => Err(self.error(
-                "block supports let, var, assignment, print, impact, return, break, continue, for, while, and if",
-            )),
+            _ => Ok(BlockStmtKind::Expr(self.call_statement()?)),
         }
+    }
+    fn call_statement(&mut self) -> Result<Expr, String> {
+        self.pos -= 1;
+        let expression = self.expr(0)?;
+        if !matches!(
+            expression.kind,
+            ExprKind::Call(_, _) | ExprKind::MethodCall(_, _, _)
+        ) {
+            return Err(self.error("standalone statement must be a function call"));
+        }
+        Ok(expression)
     }
     fn expr(&mut self, min_prec: u8) -> Result<Expr, String> {
         if self.expr_depth >= MAX_EXPR_DEPTH {
@@ -1394,9 +1405,10 @@ fn resolve_from_imports(
                 rewrite_type_reference(annotation, &calls);
                 rewrite_import_references(expr, &calls);
             }
-            StmtKind::Assign(_, expr) | StmtKind::Print(expr) | StmtKind::Impact(expr) => {
-                rewrite_import_references(expr, &calls)
-            }
+            StmtKind::Assign(_, expr)
+            | StmtKind::Expr(expr)
+            | StmtKind::Print(expr)
+            | StmtKind::Impact(expr) => rewrite_import_references(expr, &calls),
             StmtKind::Struct(_, fields) => {
                 for field in fields {
                     rewrite_type_reference(&mut field.annotation, &calls);
@@ -1470,6 +1482,7 @@ fn rewrite_block_references(steps: &mut [BlockStmt], calls: &HashMap<&str, &str>
                 rewrite_import_references(expr, calls);
             }
             BlockStmtKind::Assign(_, expr)
+            | BlockStmtKind::Expr(expr)
             | BlockStmtKind::Print(expr)
             | BlockStmtKind::Impact(expr)
             | BlockStmtKind::Return(expr) => rewrite_import_references(expr, calls),

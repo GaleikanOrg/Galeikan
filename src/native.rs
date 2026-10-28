@@ -994,6 +994,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
                 && matches!(
                     statement.kind,
                     StmtKind::Assign(_, _)
+                        | StmtKind::Expr(_)
                         | StmtKind::Print(_)
                         | StmtKind::Impact(_)
                         | StmtKind::While(_, _)
@@ -1044,6 +1045,10 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
                 StmtKind::Assign(name, expr) if is_root => {
                     generator.tick();
                     generator.assign(name, expr, &scope)
+                }
+                StmtKind::Expr(expr) if is_root => {
+                    generator.tick();
+                    generator.discard_call(expr, &scope)
                 }
                 StmtKind::Print(expr) if is_root => {
                     generator.tick();
@@ -1826,6 +1831,18 @@ impl Codegen {
         let kind = self.expr(expr, scope)?;
         self.print_value(kind, 0)?;
         self.write_const("\n")
+    }
+
+    fn discard_call(
+        &mut self,
+        expr: &Expr,
+        scope: &HashMap<String, Binding>,
+    ) -> Result<(), String> {
+        let kind = self.expr(expr, scope)?;
+        if matches!(kind, Scalar::Result(_)) {
+            return Err("standalone call returns Result; handle the result explicitly".into());
+        }
+        Ok(())
     }
 
     fn impact(&mut self, expr: &Expr, scope: &HashMap<String, Binding>) -> Result<(), String> {
@@ -3188,6 +3205,7 @@ impl Codegen {
                 self.binding(name, annotation.as_deref(), expr, true, scope)
             }
             BlockStmtKind::Assign(name, expr) => self.assign(name, expr, scope),
+            BlockStmtKind::Expr(expr) => self.discard_call(expr, scope),
             BlockStmtKind::Print(expr) => self.print(expr, scope),
             BlockStmtKind::Impact(expr) => self.impact(expr, scope),
             BlockStmtKind::Return(expr) => {

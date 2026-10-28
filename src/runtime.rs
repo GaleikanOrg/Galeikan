@@ -998,6 +998,7 @@ enum ActionKind {
     Let,
     Var,
     Assign,
+    Expr,
     Print,
     Impact,
     Return,
@@ -1224,6 +1225,7 @@ fn load_bundle_action(
             return Err("bundle binding name missing".into());
         }
         ActionKind::Print
+        | ActionKind::Expr
         | ActionKind::Impact
         | ActionKind::Return
         | ActionKind::Break
@@ -1405,6 +1407,7 @@ fn compile_steps(
                     Vec::new(),
                     Vec::new(),
                 ),
+                BlockStmtKind::Expr(expr) => (ActionKind::Expr, None, expr, Vec::new(), Vec::new()),
                 BlockStmtKind::Print(expr) => {
                     (ActionKind::Print, None, expr, Vec::new(), Vec::new())
                 }
@@ -2440,6 +2443,7 @@ impl Runtime {
                     unreachable!()
                 }
                 ActionKind::Return => return Ok(ActionFlow::Return(value)),
+                ActionKind::Expr => {}
                 ActionKind::Print => self.emit_line(&value.display()),
                 ActionKind::Impact => {
                     let line = format_impact(value.clone()).map_err(&at)?;
@@ -2767,7 +2771,7 @@ impl Runtime {
             return Err("project nesting exceeds bundle limit".into());
         }
         Ok(Bundle {
-            version: 23,
+            version: 24,
             root_depth: root_depth as u16,
             entry: self.relative_path(&root.path)?,
             effects,
@@ -2776,7 +2780,7 @@ impl Runtime {
     }
 
     fn load_bundle(&mut self, bundle: Bundle) -> Result<Rc<Module>, String> {
-        if !(15..=23).contains(&bundle.version)
+        if !(15..=24).contains(&bundle.version)
             || bundle.modules.is_empty()
             || bundle.modules.len() > 4096
         {
@@ -3258,7 +3262,8 @@ impl Runtime {
                         line: stmt.line,
                     });
                 }
-                StmtKind::Print(_)
+                StmtKind::Expr(_)
+                | StmtKind::Print(_)
                 | StmtKind::Impact(_)
                 | StmtKind::For(_, _, _)
                 | StmtKind::While(_, _)
@@ -3274,6 +3279,9 @@ impl Runtime {
                     }
                     saw_action = true;
                     let (kind, name, expr, body, else_body) = match &stmt.kind {
+                        StmtKind::Expr(expr) => {
+                            (ActionKind::Expr, None, expr, Vec::new(), Vec::new())
+                        }
                         StmtKind::Print(expr) => {
                             (ActionKind::Print, None, expr, Vec::new(), Vec::new())
                         }
@@ -3570,6 +3578,14 @@ impl Runtime {
                 .infer_expr(module, locals, globals, expr)
                 .map_err(|e| format!("{}:{e}", module.path.display()))?;
             match action.kind {
+                ActionKind::Expr if matches!(kind, Type::Result(_)) => {
+                    return Err(format!(
+                        "{}:{}:{}: standalone call returns Result; handle the result explicitly",
+                        module.path.display(),
+                        action.line,
+                        action.col
+                    ));
+                }
                 ActionKind::Return => {
                     if !returns.allowed {
                         return Err(format!(

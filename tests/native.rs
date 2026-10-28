@@ -1326,6 +1326,91 @@ fn native_python_package_relative_imports_match_vm() {
 }
 
 #[test]
+fn standalone_calls_execute_across_ast_vm_bundle_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write(
+        "helper.gak",
+        "fn emit(value: i64) -> i64 {\n    print value\n    return value + 1\n}\n",
+    );
+    let script = s.write(
+        "standalone-calls.gak",
+        "from helper import emit as send\nsend(1)\nfor value in [2, 3] {\n    send(value)\n}\n",
+    );
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"1\n2\n3\n");
+    }
+    let bundle = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    let artifact = PathBuf::from(String::from_utf8(bundle.stdout).unwrap().trim());
+    let executed = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(artifact)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    assert_eq!(executed.stdout, b"1\n2\n3\n");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, b"1\n2\n3\n");
+
+    let ignored = s.write(
+        "ignored-result.gak",
+        "from std.result import fail\nfn checked() -> Result<i64> = fail(\"failure\")\nchecked()\n",
+    );
+    for command in ["check", "compile"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg(command)
+            .arg(&ignored)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("standalone call returns Result; handle the result explicitly"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn native_python_module_values_match_vm_and_remain_permission_gated() {
     if !gcc_available() || !python_available() {
         return;
