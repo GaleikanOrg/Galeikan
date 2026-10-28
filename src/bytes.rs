@@ -106,7 +106,7 @@ pub fn to_hex(data: &[u8]) -> Result<String, String> {
 pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,
-        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
     ) {
         return pack_signed(value, encoding);
     }
@@ -117,7 +117,7 @@ pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
 pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,
-        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be"
+        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
     ) {
         let signed = i64::try_from(unsigned)
             .map_err(|_| format!("pack value out of range for {encoding}"))?;
@@ -143,7 +143,22 @@ pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
             .to_vec(),
         "u64le" => unsigned.to_le_bytes().to_vec(),
         "u64be" => unsigned.to_be_bytes().to_vec(),
-        _ => return Err("pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be".into()),
+        "uleb128" => {
+            let mut value = unsigned;
+            let mut bytes = Vec::with_capacity(10);
+            loop {
+                let mut byte = (value & 0x7f) as u8;
+                value >>= 7;
+                if value != 0 {
+                    byte |= 0x80;
+                }
+                bytes.push(byte);
+                if value == 0 {
+                    break bytes;
+                }
+            }
+        }
+        _ => return Err("pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128".into()),
     };
     Ok(out)
 }
@@ -172,6 +187,22 @@ fn pack_signed(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
             .to_vec(),
         "i64le" => value.to_le_bytes().to_vec(),
         "i64be" => value.to_be_bytes().to_vec(),
+        "sleb128" => {
+            let mut value = value;
+            let mut bytes = Vec::with_capacity(10);
+            loop {
+                let mut byte = (value as u8) & 0x7f;
+                value >>= 7;
+                let done = (value == 0 && byte & 0x40 == 0) || (value == -1 && byte & 0x40 != 0);
+                if !done {
+                    byte |= 0x80;
+                }
+                bytes.push(byte);
+                if done {
+                    break bytes;
+                }
+            }
+        }
         _ => unreachable!("signed encodings are selected before calling pack_signed"),
     };
     Ok(out)

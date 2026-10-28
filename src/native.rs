@@ -332,7 +332,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_pack_negative", "pack expects a nonnegative value"),
     (
         "gak_pack_encoding",
-        "pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be",
+        "pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128",
     ),
     ("gak_pack_range_u8", "pack value out of range for u8"),
     ("gak_pack_range_u16le", "pack value out of range for u16le"),
@@ -346,6 +346,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_pack_range_i32be", "pack value out of range for i32be"),
     ("gak_pack_range_i64le", "pack value out of range for i64le"),
     ("gak_pack_range_i64be", "pack value out of range for i64be"),
+    ("gak_pack_range_sleb128", "pack value out of range for sleb128"),
     (
         "gak_result_invalid",
         "result.fail needs a nonempty message of at most 4096 bytes",
@@ -5462,6 +5463,30 @@ impl Codegen {
                     }
                     writeln!(self.code, "    mov eax, {width}\n    call gak_alloc_bytes\n    mov r10, QWORD PTR [rbp-{}]\n    {instruction}\n    jmp {done}\n{next}:", value_slot * 8).unwrap();
                 }
+                let uleb_next = self.label();
+                let uleb_count = self.label();
+                let uleb_emit = self.label();
+                let uleb_last = self.label();
+                let uleb_label = self.literal("uleb128")?;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{uleb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz {uleb_next}", self.arg0(), encoding_slot * 8, self.arg1()).unwrap();
+                if kind == Scalar::Int {
+                    writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_pack_negative", value_slot * 8).unwrap();
+                }
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11d, 1\n{uleb_count}:\n    shr r10, 7\n    jz {uleb_count}_done\n    inc r11\n    jmp {uleb_count}\n{uleb_count}_done:\n    mov rax, r11\n    call gak_alloc_bytes\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n{uleb_emit}:\n    mov rdx, r10\n    and edx, 127\n    shr r10, 7\n    test r10, r10\n    jz {uleb_last}\n    or dl, 128\n{uleb_last}:\n    mov BYTE PTR [rax+r11+8], dl\n    inc r11\n    test r10, r10\n    jnz {uleb_emit}\n    jmp {done}\n{uleb_next}:", value_slot * 8, value_slot * 8).unwrap();
+                let sleb_next = self.label();
+                let sleb_count = self.label();
+                let sleb_count_negative = self.label();
+                let sleb_ready = self.label();
+                let sleb_emit = self.label();
+                let sleb_emit_negative = self.label();
+                let sleb_continue = self.label();
+                let sleb_last = self.label();
+                let sleb_label = self.literal("sleb128")?;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{sleb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz {sleb_next}", self.arg0(), encoding_slot * 8, self.arg1()).unwrap();
+                if kind == Scalar::UInt {
+                    writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_pack_range_sleb128", value_slot * 8).unwrap();
+                }
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n{sleb_count}:\n    mov rdx, r10\n    and edx, 127\n    sar r10, 7\n    inc r11\n    test dl, 64\n    jnz {sleb_count_negative}\n    test r10, r10\n    jz {sleb_ready}\n    jmp {sleb_count}\n{sleb_count_negative}:\n    cmp r10, -1\n    jne {sleb_count}\n{sleb_ready}:\n    mov rax, r11\n    call gak_alloc_bytes\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n{sleb_emit}:\n    mov rdx, r10\n    and edx, 127\n    sar r10, 7\n    test dl, 64\n    jnz {sleb_emit_negative}\n    test r10, r10\n    jz {sleb_last}\n    jmp {sleb_continue}\n{sleb_emit_negative}:\n    cmp r10, -1\n    je {sleb_last}\n{sleb_continue}:\n    or dl, 128\n{sleb_last}:\n    mov BYTE PTR [rax+r11+8], dl\n    inc r11\n    test dl, 128\n    jnz {sleb_emit}\n    jmp {done}\n{sleb_next}:", value_slot * 8, value_slot * 8).unwrap();
                 if kind == Scalar::Int {
                     writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_pack_negative", value_slot * 8).unwrap();
                 }
@@ -6410,10 +6435,10 @@ impl Codegen {
         out.push_str("gak_text_limit_prefix: .ascii \"LimitExceeded: text exceeds \"\ngak_text_limit_prefix_end:\ngak_text_limit_suffix: .ascii \" characters\"\ngak_text_limit_suffix_end:\n");
         out.push_str("gak_source_depth_msg: .ascii \"LimitExceeded: Source derivation depth exceeds 64\\n\"\ngak_source_depth_msg_end:\ngak_source_limit_msg: .ascii \"native Source memory exceeds 64 MiB\\n\"\ngak_source_limit_msg_end:\ngak_source_backing_limit_msg: .ascii \"native Source backing memory exceeds 512 MiB\\n\"\ngak_source_backing_limit_msg_end:\n");
         out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\n");
-        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, or i64le/be\\n\"\ngak_pack_encoding_msg_end:\n");
+        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128\\n\"\ngak_pack_encoding_msg_end:\n");
         for format in [
             "u8", "u16le", "u16be", "u32le", "u32be", "i8", "i16le", "i16be", "i32le", "i32be",
-            "i64le", "i64be",
+            "i64le", "i64be", "sleb128",
         ] {
             writeln!(out, "gak_pack_range_{format}_msg: .ascii \"pack value out of range for {format}\\n\"\ngak_pack_range_{format}_msg_end:").unwrap();
         }
@@ -7527,6 +7552,7 @@ gak_cli_utf8_done:
             ("gak_pack_range_i32be", "gak_pack_range_i32be_msg"),
             ("gak_pack_range_i64le", "gak_pack_range_i64le_msg"),
             ("gak_pack_range_i64be", "gak_pack_range_i64be_msg"),
+            ("gak_pack_range_sleb128", "gak_pack_range_sleb128_msg"),
             ("gak_result_invalid", "gak_result_invalid_msg"),
             (
                 "gak_result_message_success",

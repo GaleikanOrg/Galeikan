@@ -5458,6 +5458,66 @@ fn native_bytes_transform_errors_match_vm() {
 }
 
 #[test]
+fn native_leb128_pack_roundtrips_and_matches_vm_at_integer_boundaries() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "leb128-pack.gak",
+        r#"from std.bytes import pack, to_hex
+from std.binary import snapshot, deep, value, value_u64, width
+from std.result import message
+fn negative_unsigned() -> Result<bytes> = pack(-1, "uleb128")
+fn too_large_signed() -> Result<bytes> = pack(9223372036854775808u64, "sleb128")
+let unsigned = deep(snapshot(pack(18446744073709551615u64, "uleb128")), 0, "uleb128")
+let signed = deep(snapshot(pack((-9223372036854775807 - 1), "sleb128")), 0, "sleb128")
+print to_hex(pack(0, "uleb128"))
+print to_hex(pack(127, "uleb128"))
+print to_hex(pack(128, "uleb128"))
+print to_hex(pack(624485, "uleb128"))
+print to_hex(pack(18446744073709551615u64, "uleb128"))
+print to_hex(pack(-1, "sleb128"))
+print to_hex(pack(-65, "sleb128"))
+print to_hex(pack(64, "sleb128"))
+print to_hex(pack(127u64, "sleb128"))
+print to_hex(pack(9223372036854775807, "sleb128"))
+print to_hex(pack((-9223372036854775807 - 1), "sleb128"))
+print value_u64(unsigned)
+print width(unsigned)
+print value(signed)
+print width(signed)
+print message(negative_unsigned())
+print message(too_large_signed())
+"#,
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(native.stdout, b"00\n7f\n8001\ne58e26\nffffffffffffffffff01\n7f\nbf7f\nc000\nff00\nffffffffffffffffff00\n8080808080808080807f\n18446744073709551615\n10\n-9223372036854775808\n10\npack expects a nonnegative value\npack value out of range for sleb128\n");
+}
+
+#[test]
 fn native_bytes_pack_matches_vm_across_widths_and_endianness() {
     if !gcc_available() {
         return;
