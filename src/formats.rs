@@ -1899,6 +1899,40 @@ impl FormatReport {
         Ok((file_start, file_end))
     }
 
+    pub fn pe_offset_rva(&self, captured_len: usize, offset: usize) -> Result<u64, String> {
+        if !self.name.starts_with("PE") {
+            return Err("formats.offset_rva requires a PE image".into());
+        }
+        if offset >= captured_len {
+            return Err("PE file offset outside captured Source".into());
+        }
+        let mut address = self
+            .pe_headers_size
+            .filter(|size| offset < *size)
+            .map(|_| offset as u64);
+        for section in &self.section_info {
+            if offset < section.file_offset {
+                continue;
+            }
+            let within = offset - section.file_offset;
+            if within >= section.file_size {
+                continue;
+            }
+            let candidate = section
+                .virtual_address
+                .checked_add(within as u64)
+                .ok_or("PE section RVA overflow")?;
+            if address.replace(candidate).is_some() {
+                return Err("PE file offset maps to multiple regions".into());
+            }
+        }
+        let address = address.ok_or("PE file offset is not mapped to an RVA")?;
+        if self.pe_rva_range(captured_len, address, 1)?.0 != offset {
+            return Err("PE file offset has ambiguous RVA mapping".into());
+        }
+        Ok(address)
+    }
+
     pub fn x86_entry_window(&self, captured_len: usize) -> Result<(usize, usize, u32), String> {
         let (start, end, bitness) = self.x86_entry_region(captured_len)?;
         let count = (end - start).min(15);
@@ -2020,6 +2054,37 @@ impl FormatReport {
             return Err("VA data outside captured Source".into());
         }
         Ok((file_start, file_end))
+    }
+
+    pub fn elf_offset_va(&self, captured_len: usize, offset: usize) -> Result<u64, String> {
+        if !self.name.starts_with("ELF") {
+            return Err("formats.offset_va requires an ELF image".into());
+        }
+        if offset >= captured_len {
+            return Err("ELF file offset outside captured Source".into());
+        }
+        let mut address = None;
+        for segment in &self.elf_load_segments {
+            if offset < segment.file_offset {
+                continue;
+            }
+            let within = offset - segment.file_offset;
+            if within as u64 >= segment.file_size || within as u64 >= segment.memory_size {
+                continue;
+            }
+            let candidate = segment
+                .virtual_address
+                .checked_add(within as u64)
+                .ok_or("ELF segment VA overflow")?;
+            if address.replace(candidate).is_some() {
+                return Err("ELF file offset maps to multiple load segments".into());
+            }
+        }
+        let address = address.ok_or("ELF file offset is not mapped to a VA")?;
+        if self.elf_va_range(captured_len, address, 1)?.0 != offset {
+            return Err("ELF file offset has ambiguous VA mapping".into());
+        }
+        Ok(address)
     }
 }
 
@@ -3518,6 +3583,11 @@ mod tests {
             report.elf_va_range(bytes.len(), report.entry, 4).unwrap(),
             (0x100, 0x104)
         );
+        assert_eq!(
+            report.elf_offset_va(bytes.len(), 0x100).unwrap(),
+            report.entry
+        );
+        assert!(report.elf_offset_va(bytes.len(), 0x110).is_err());
         let mut overflow = bytes;
         overflow[60..64].copy_from_slice(&0xffff_fff0_u32.to_be_bytes());
         overflow[72..76].copy_from_slice(&32_u32.to_be_bytes());
@@ -4713,6 +4783,9 @@ mod tests {
             report.pe_rva_range(bytes.len(), 0x1001, 2).unwrap(),
             (0x201, 0x203)
         );
+        assert_eq!(report.pe_offset_rva(bytes.len(), 0x201).unwrap(), 0x1001);
+        assert_eq!(report.pe_offset_rva(bytes.len(), 0x80).unwrap(), 0x80);
+        assert!(report.pe_offset_rva(bytes.len(), 0x204).is_err());
         assert_eq!(
             report.pe_rva_range(bytes.len(), 0x80, 4).unwrap(),
             (0x80, 0x84)
@@ -4738,6 +4811,10 @@ mod tests {
         assert_eq!(
             ambiguous.pe_rva_range(bytes.len(), 0x1000, 1).unwrap_err(),
             "RVA maps to multiple PE regions"
+        );
+        assert_eq!(
+            ambiguous.pe_offset_rva(bytes.len(), 0x200).unwrap_err(),
+            "PE file offset maps to multiple regions"
         );
     }
 

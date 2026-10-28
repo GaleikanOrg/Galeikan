@@ -6418,6 +6418,14 @@ impl Runtime {
                     i64::try_from(start).map_err(|_| "PE file offset out of range")?,
                 ))
             }
+            ("offset_rva", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "PE file offset must not be negative")?;
+                let address = report.pe_offset_rva(source.bytes().len(), offset)?;
+                Ok(Value::Int(
+                    i64::try_from(address).map_err(|_| "PE RVA out of range")?,
+                ))
+            }
             ("va", [Value::Format(source, report), va, count]) => {
                 let va = u64::try_from(va.as_int()?).map_err(|_| "VA must not be negative")?;
                 let count = usize::try_from(count.as_int()?)
@@ -6435,6 +6443,14 @@ impl Runtime {
                 let (start, _) = report.elf_va_range(source.bytes().len(), va, 1)?;
                 Ok(Value::Int(
                     i64::try_from(start).map_err(|_| "ELF file offset out of range")?,
+                ))
+            }
+            ("offset_va", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "ELF file offset must not be negative")?;
+                let address = report.elf_offset_va(source.bytes().len(), offset)?;
+                Ok(Value::Int(
+                    i64::try_from(address).map_err(|_| "ELF VA out of range")?,
                 ))
             }
             ("entry_view", [Value::Format(source, report), count]) => {
@@ -7722,7 +7738,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "section") => (&[Format, Int], Type::Section),
         ("formats", "overlay") => (&[Format], Source),
         ("formats", "rva" | "va") => (&[Format, Int, Int], Source),
-        ("formats", "rva_offset" | "va_offset") => (&[Format, Int], Int),
+        ("formats", "rva_offset" | "va_offset" | "offset_rva" | "offset_va") => {
+            (&[Format, Int], Int)
+        }
         ("formats", "entry_view") => (&[Format, Int], Source),
         ("formats", "name" | "address" | "flags") => (&[Type::Section], Str),
         ("formats", "writable" | "executable") => (&[Type::Section], Bool),

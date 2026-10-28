@@ -967,6 +967,97 @@ int64_t gak_native_formats_va_offset(const void *value, int64_t address) {
     return offset;
 }
 
+static int64_t gak_native_formats_offset_address(const void *value, int64_t offset,
+                                                  int pe) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (format->kind != (pe ? 1 : 2)) {
+        gak_format_fail(pe ? "formats.offset_rva requires a PE image"
+                           : "formats.offset_va requires an ELF image");
+        return 0;
+    }
+    if (offset < 0) {
+        gak_format_fail(pe ? "PE file offset must not be negative"
+                           : "ELF file offset must not be negative");
+        return 0;
+    }
+    const GakSourceHead *source = format->source;
+    uint64_t file_offset = (uint64_t)offset;
+    if (file_offset >= source->end - source->start) {
+        gak_format_fail(pe ? "PE file offset outside captured Source"
+                           : "ELF file offset outside captured Source");
+        return 0;
+    }
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t address = 0;
+    int mapped = 0;
+    if (pe) {
+        if (format->headers_available && file_offset < format->headers_size) {
+            address = file_offset;
+            mapped = 1;
+        }
+        for (uint64_t index = 0; index < format->sections; index++) {
+            uint64_t at = format->section_table + index * 40u;
+            uint64_t raw_size = gak_number(bytes, at + 16, 4, 0);
+            uint64_t raw_offset = gak_number(bytes, at + 20, 4, 0);
+            if (file_offset < raw_offset || file_offset - raw_offset >= raw_size) continue;
+            if (mapped) { gak_format_fail("PE file offset maps to multiple regions"); return 0; }
+            uint64_t start = gak_number(bytes, at + 12, 4, 0);
+            address = start + file_offset - raw_offset;
+            mapped = 1;
+        }
+    } else {
+        unsigned width = format->bits == 32 ? 4 : 8;
+        int big = format->big_endian != 0;
+        for (uint64_t index = 0; index < format->program_count; index++) {
+            uint64_t at = format->program_table + index * format->program_stride;
+            if (gak_number(bytes, at, 4, big) != 1) continue;
+            uint64_t raw_size = gak_number(bytes, at + (width == 4 ? 16 : 32), width, big);
+            uint64_t memory_size = gak_number(bytes, at + (width == 4 ? 20 : 40), width, big);
+            uint64_t raw_offset = gak_number(bytes, at + (width == 4 ? 4 : 8), width, big);
+            if (file_offset < raw_offset || file_offset - raw_offset >= raw_size ||
+                file_offset - raw_offset >= memory_size) continue;
+            if (mapped) { gak_format_fail("ELF file offset maps to multiple load segments"); return 0; }
+            uint64_t start = gak_number(bytes, at + (width == 4 ? 8 : 16), width, big);
+            uint64_t within = file_offset - raw_offset;
+            if (start > UINT64_MAX - within) {
+                gak_format_fail("ELF segment VA overflow"); return 0;
+            }
+            address = start + within;
+            mapped = 1;
+        }
+    }
+    if (!mapped) {
+        gak_format_fail(pe ? "PE file offset is not mapped to an RVA"
+                           : "ELF file offset is not mapped to a VA");
+        return 0;
+    }
+    if (address > INT64_MAX) {
+        gak_format_fail(pe ? "PE RVA out of range" : "ELF VA out of range");
+        return 0;
+    }
+    GakFormatRange *range = pe ? gak_pe_rva(format, address, 1)
+                               : gak_elf_va(format, address, 1);
+    if (!range) return 0;
+    int valid = range->start == file_offset;
+    format_memory -= sizeof(*range);
+    free(range);
+    if (!valid) {
+        gak_format_fail(pe ? "PE file offset has ambiguous RVA mapping"
+                           : "ELF file offset has ambiguous VA mapping");
+        return 0;
+    }
+    return (int64_t)address;
+}
+
+int64_t gak_native_formats_offset_rva(const void *value, int64_t offset) {
+    return gak_native_formats_offset_address(value, offset, 1);
+}
+
+int64_t gak_native_formats_offset_va(const void *value, int64_t offset) {
+    return gak_native_formats_offset_address(value, offset, 0);
+}
+
 void *gak_native_formats_entry_view(const void *value, int64_t count) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

@@ -4400,7 +4400,7 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}", self.arg0(), report_slot * 8, self.arg1(), address_slot * 8, self.arg2()).unwrap();
                 return self.formats_range_result();
             }
-            ("rva_offset" | "va_offset", [report, address]) => {
+            ("rva_offset" | "va_offset" | "offset_rva" | "offset_va", [report, address]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));
                 }
