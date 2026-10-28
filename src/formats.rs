@@ -1933,6 +1933,33 @@ impl FormatReport {
         Ok(address)
     }
 
+    pub fn pe_image_base(&self) -> Result<u64, String> {
+        if !self.name.starts_with("PE") {
+            return Err("formats.image_base requires a PE image".into());
+        }
+        self.pe_image_base_field
+            .map(|field| field.value)
+            .ok_or_else(|| "PE image base is unavailable".into())
+    }
+
+    pub fn pe_va_range(
+        &self,
+        captured_len: usize,
+        va: u64,
+        count: usize,
+    ) -> Result<(usize, usize), String> {
+        let rva = va
+            .checked_sub(self.pe_image_base()?)
+            .ok_or("PE VA is below image base")?;
+        self.pe_rva_range(captured_len, rva, count)
+    }
+
+    pub fn pe_offset_va(&self, captured_len: usize, offset: usize) -> Result<u64, String> {
+        self.pe_image_base()?
+            .checked_add(self.pe_offset_rva(captured_len, offset)?)
+            .ok_or_else(|| "PE VA overflow".into())
+    }
+
     pub fn x86_entry_window(&self, captured_len: usize) -> Result<(usize, usize, u32), String> {
         let (start, end, bitness) = self.x86_entry_region(captured_len)?;
         let count = (end - start).min(15);

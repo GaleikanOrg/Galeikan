@@ -5180,6 +5180,82 @@ fn native_format_address_mapping_boundaries_match_vm() {
 }
 
 #[test]
+fn native_pe_high_image_base_addresses_match_interpreters() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut pe = vec![0u8; 0x220];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes());
+    pe[0x86..0x88].copy_from_slice(&1u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20bu16.to_le_bytes());
+    pe[0xa8..0xac].copy_from_slice(&0x1000u32.to_le_bytes());
+    pe[0xb0..0xb8].copy_from_slice(&0x8000_0000_0000_0000u64.to_le_bytes());
+    pe[0xd4..0xd8].copy_from_slice(&0x200u32.to_le_bytes());
+    pe[0x190..0x194].copy_from_slice(&0x20u32.to_le_bytes());
+    pe[0x194..0x198].copy_from_slice(&0x1000u32.to_le_bytes());
+    pe[0x198..0x19c].copy_from_slice(&0x10u32.to_le_bytes());
+    pe[0x19c..0x1a0].copy_from_slice(&0x200u32.to_le_bytes());
+    pe[0x200..0x210].copy_from_slice(b"0123456789abcdef");
+    let mut overflow = pe.clone();
+    overflow[0xb0..0xb8].copy_from_slice(&u64::MAX.to_le_bytes());
+    fs::write(s.0.join("high.exe"), pe).unwrap();
+    fs::write(s.0.join("overflow.exe"), overflow).unwrap();
+    let script = s.write(
+        "pe-high-address.gak",
+        "requires { file.read }\nfrom std.binary import analyze, size\nfrom std.formats import probe, image_base, pe_va, pe_va_offset, offset_pe_va\nfrom std.result import is_error\nlet report: Format = probe(analyze(\"high.exe\", 1024))\nlet overflow_report: Format = probe(analyze(\"overflow.exe\", 1024))\nfn below_base() -> Result<Source> = pe_va(report, 0x7fffffffffffffffu64, 1)\nfn overflow_va() -> Result<u64> = offset_pe_va(overflow_report, 0x203)\nfn overlay() -> Result<u64> = offset_pe_va(report, 0x210)\nprint image_base(report)\nprint pe_va_offset(report, 0x8000000000001003u64)\nprint offset_pe_va(report, 0x203)\nprint size(pe_va(report, 0x8000000000001000u64, 4))\nprint is_error(below_base())\nprint is_error(overlay())\nprint is_error(overflow_va())\nprint pe_va(report, 0x8000000000001000u64, 4)\n",
+    );
+    let run = |engine| {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-read"])
+            .arg(&s.0)
+            .output()
+            .unwrap()
+    };
+    let vm = run("vm");
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(vm
+        .stdout
+        .starts_with(b"9223372036854775808\n515\n9223372036854779907\n4\ntrue\ntrue\ntrue\n"));
+    assert!(String::from_utf8_lossy(&vm.stdout).contains("PE VA 0x8000000000001000"));
+    let ast = run("ast");
+    assert!(
+        ast.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ast.stderr)
+    );
+    assert_eq!(ast.stdout, vm.stdout);
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(&executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_elf_high_unsigned_addresses_match_interpreters() {
     if !gcc_available() {
         return;

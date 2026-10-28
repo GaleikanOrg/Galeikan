@@ -2588,9 +2588,12 @@ impl Codegen {
     fn print_source_address(&mut self, source_slot: usize, origin: bool) -> Result<(), String> {
         let absent = self.label();
         let elf = self.label();
+        let pe_va = self.label();
         let printed_prefix = self.label();
-        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+96]\n    test r11, r11\n    jz {absent}\n    cmp r11, 2\n    je {elf}", source_slot * 8).unwrap();
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+96]\n    test r11, r11\n    jz {absent}\n    cmp r11, 2\n    je {elf}\n    cmp r11, 3\n    je {pe_va}", source_slot * 8).unwrap();
         self.write_const(if origin { "PE RVA 0x" } else { " @ PE RVA 0x" })?;
+        writeln!(self.code, "    jmp {printed_prefix}\n{pe_va}:").unwrap();
+        self.write_const(if origin { "PE VA 0x" } else { " @ PE VA 0x" })?;
         writeln!(self.code, "    jmp {printed_prefix}\n{elf}:").unwrap();
         self.write_const(if origin { "ELF VA 0x" } else { " @ ELF VA 0x" })?;
         writeln!(
@@ -4341,6 +4344,15 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_dependency_name\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Str);
             }
+            ("image_base", [report]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.image_base expects Format".into());
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_image_base\n    mov r10, rax\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    test rax, rax\n    jz {ready}\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov rax, r10", self.arg0()).unwrap();
+                return Ok(Scalar::UInt);
+            }
             ("overlay", [report]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err("formats.overlay expects Format".into());
@@ -4372,7 +4384,7 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_entry_view", self.arg0(), report_slot * 8, self.arg1()).unwrap();
                 return self.formats_range_result();
             }
-            ("rva" | "va" | "va_u64", [report, address, count]) => {
+            ("rva" | "va" | "va_u64" | "pe_va", [report, address, count]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));
                 }
@@ -4384,7 +4396,7 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(address, scope)?
-                    != if name == "va_u64" {
+                    != if matches!(name, "va_u64" | "pe_va") {
                         Scalar::UInt
                     } else {
                         Scalar::Int
@@ -4408,7 +4420,7 @@ impl Codegen {
             }
             (
                 "rva_offset" | "va_offset" | "offset_rva" | "offset_va" | "va_offset_u64"
-                | "offset_va_u64",
+                | "offset_va_u64" | "pe_va_offset" | "offset_pe_va",
                 [report, address],
             ) => {
                 if self.expr(report, scope)? != Scalar::Format {
@@ -4422,7 +4434,7 @@ impl Codegen {
                 )
                 .unwrap();
                 if self.expr(address, scope)?
-                    != if name == "va_offset_u64" {
+                    != if matches!(name, "va_offset_u64" | "pe_va_offset") {
                         Scalar::UInt
                     } else {
                         Scalar::Int
@@ -4433,7 +4445,7 @@ impl Codegen {
                 self.uses_formats = true;
                 let ready = self.label();
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}\n    mov r10, rax\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    test rax, rax\n    jz {ready}\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov rax, r10", self.arg0(), report_slot * 8, self.arg1()).unwrap();
-                return Ok(if name == "offset_va_u64" {
+                return Ok(if matches!(name, "offset_va_u64" | "offset_pe_va") {
                     Scalar::UInt
                 } else {
                     Scalar::Int

@@ -161,12 +161,14 @@ enum SourceParent {
 #[derive(Clone, Copy)]
 enum SourceAddress {
     PeRva(u64),
+    PeVa(u64),
     ElfVa(u64),
 }
 impl SourceAddress {
     fn display(self) -> String {
         match self {
             Self::PeRva(value) => format!("PE RVA 0x{value:x}"),
+            Self::PeVa(value) => format!("PE VA 0x{value:x}"),
             Self::ElfVa(value) => format!("ELF VA 0x{value:x}"),
         }
     }
@@ -174,6 +176,7 @@ impl SourceAddress {
     fn as_json(self) -> JsonValue {
         match self {
             Self::PeRva(value) => json!({ "space": "pe.rva", "value": format!("0x{value:x}") }),
+            Self::PeVa(value) => json!({ "space": "pe.va", "value": format!("0x{value:x}") }),
             Self::ElfVa(value) => json!({ "space": "elf.va", "value": format!("0x{value:x}") }),
         }
     }
@@ -283,6 +286,12 @@ impl Source {
         let mut view = Self::view(parent, start, end)?;
         view.label = format!("{} @ PE RVA 0x{rva:x}", view.label);
         view.address = Some(SourceAddress::PeRva(rva));
+        Ok(view)
+    }
+    fn pe_va_view(parent: Arc<Self>, start: usize, end: usize, va: u64) -> Result<Self, String> {
+        let mut view = Self::view(parent, start, end)?;
+        view.label = format!("{} @ PE VA 0x{va:x}", view.label);
+        view.address = Some(SourceAddress::PeVa(va));
         Ok(view)
     }
     fn va_view(parent: Arc<Self>, start: usize, end: usize, va: u64) -> Result<Self, String> {
@@ -6385,6 +6394,7 @@ impl Runtime {
                     value: field.value,
                 })))
             }
+            ("image_base", [Value::Format(_, report)]) => Ok(Value::UInt(report.pe_image_base()?)),
             ("section", [Value::Format(source, report), index]) => {
                 let index =
                     usize::try_from(index.as_int()?).map_err(|_| "section index out of range")?;
@@ -6411,9 +6421,27 @@ impl Runtime {
                     rva,
                 )?)))
             }
+            ("pe_va", [Value::Format(source, report), va, count]) => {
+                let va = va.as_uint()?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "PE VA view length must not be negative")?;
+                let (start, end) = report.pe_va_range(source.bytes().len(), va, count)?;
+                Ok(Value::Source(Arc::new(Source::pe_va_view(
+                    source.clone(),
+                    start,
+                    end,
+                    va,
+                )?)))
+            }
             ("rva_offset", [Value::Format(source, report), rva]) => {
                 let rva = u64::try_from(rva.as_int()?).map_err(|_| "RVA must not be negative")?;
                 let (start, _) = report.pe_rva_range(source.bytes().len(), rva, 1)?;
+                Ok(Value::Int(
+                    i64::try_from(start).map_err(|_| "PE file offset out of range")?,
+                ))
+            }
+            ("pe_va_offset", [Value::Format(source, report), va]) => {
+                let (start, _) = report.pe_va_range(source.bytes().len(), va.as_uint()?, 1)?;
                 Ok(Value::Int(
                     i64::try_from(start).map_err(|_| "PE file offset out of range")?,
                 ))
@@ -6424,6 +6452,13 @@ impl Runtime {
                 let address = report.pe_offset_rva(source.bytes().len(), offset)?;
                 Ok(Value::Int(
                     i64::try_from(address).map_err(|_| "PE RVA out of range")?,
+                ))
+            }
+            ("offset_pe_va", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "PE file offset must not be negative")?;
+                Ok(Value::UInt(
+                    report.pe_offset_va(source.bytes().len(), offset)?,
                 ))
             }
             ("va", [Value::Format(source, report), va, count]) => {
@@ -7760,15 +7795,19 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             | "delay_import_summary",
         ) => (&[Format, Int], Str),
         ("formats", "field") => (&[Format, Str], Observation),
+        ("formats", "image_base") => (&[Format], UInt),
         ("formats", "section") => (&[Format, Int], Type::Section),
         ("formats", "overlay") => (&[Format], Source),
         ("formats", "rva" | "va") => (&[Format, Int, Int], Source),
+        ("formats", "pe_va") => (&[Format, UInt, Int], Source),
         ("formats", "va_u64") => (&[Format, UInt, Int], Source),
         ("formats", "rva_offset" | "va_offset" | "offset_rva" | "offset_va") => {
             (&[Format, Int], Int)
         }
         ("formats", "va_offset_u64") => (&[Format, UInt], Int),
         ("formats", "offset_va_u64") => (&[Format, Int], UInt),
+        ("formats", "pe_va_offset") => (&[Format, UInt], Int),
+        ("formats", "offset_pe_va") => (&[Format, Int], UInt),
         ("formats", "entry_view") => (&[Format, Int], Source),
         ("formats", "name" | "address" | "flags") => (&[Type::Section], Str),
         ("formats", "writable" | "executable") => (&[Type::Section], Bool),
@@ -8187,12 +8226,16 @@ mod binary_tests {
             vec![1, 2, 3],
         ));
         let rva = Source::rva_view(root.clone(), 1, 3, 0x1000).unwrap();
+        let pe_va = Source::pe_va_view(root.clone(), 1, 3, 0x8000_0000_0000_1000).unwrap();
         let va = Source::va_view(root, 0, 2, 0x400000).unwrap();
         assert_eq!(rva.lineage()[1]["address"]["space"], "pe.rva");
         assert_eq!(rva.lineage()[1]["address"]["value"], "0x1000");
+        assert_eq!(pe_va.lineage()[1]["address"]["space"], "pe.va");
+        assert_eq!(pe_va.lineage()[1]["address"]["value"], "0x8000000000001000");
         assert_eq!(va.lineage()[1]["address"]["space"], "elf.va");
         assert_eq!(va.lineage()[1]["address"]["value"], "0x400000");
         assert!(rva.provenance().starts_with("PE RVA 0x1000;"));
+        assert!(pe_va.provenance().starts_with("PE VA 0x8000000000001000;"));
     }
 
     #[test]

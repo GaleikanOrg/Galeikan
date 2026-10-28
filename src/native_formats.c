@@ -59,7 +59,7 @@ typedef struct {
     const GakSourceHead *source;
     uint64_t start;
     uint64_t end;
-    uint64_t address_kind; /* 0 = ordinary view, 1 = PE RVA, 2 = ELF VA */
+    uint64_t address_kind; /* 0 = ordinary view, 1 = PE RVA, 2 = ELF VA, 3 = PE VA */
     uint64_t address;
 } GakFormatRange;
 
@@ -884,6 +884,32 @@ static GakFormatRange *gak_pe_rva(const GakFormat *format, uint64_t rva,
     return gak_format_range(format, file_start, file_end, 1, rva);
 }
 
+static int gak_pe_image_base(const GakFormat *format, uint64_t *base) {
+    if (format->kind != 1) {
+        gak_format_fail("formats.image_base requires a PE image"); return 0;
+    }
+    if (!format->image_base_width) {
+        gak_format_fail("PE image base is unavailable"); return 0;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    *base = gak_number(bytes, format->image_base_at,
+                       (unsigned)format->image_base_width, 0);
+    return 1;
+}
+
+static GakFormatRange *gak_pe_va(const GakFormat *format, uint64_t va,
+                                 uint64_t count) {
+    uint64_t base;
+    if (!gak_pe_image_base(format, &base)) return NULL;
+    if (va < base) { gak_format_fail("PE VA is below image base"); return NULL; }
+    GakFormatRange *range = gak_pe_rva(format, va - base, count);
+    if (!range) return NULL;
+    range->address_kind = 3;
+    range->address = va;
+    return range;
+}
+
 static GakFormatRange *gak_elf_va(const GakFormat *format, uint64_t va,
                                   uint64_t count) {
     if (format->kind != 2) {
@@ -942,6 +968,19 @@ void *gak_native_formats_rva(const void *value, int64_t address, int64_t count) 
     return gak_pe_rva(value, (uint64_t)address, (uint64_t)count);
 }
 
+uint64_t gak_native_formats_image_base(const void *value) {
+    gak_formats_error = NULL;
+    uint64_t base = 0;
+    gak_pe_image_base(value, &base);
+    return base;
+}
+
+void *gak_native_formats_pe_va(const void *value, uint64_t address, int64_t count) {
+    gak_formats_error = NULL;
+    if (count < 0) { gak_format_fail("PE VA view length must not be negative"); return NULL; }
+    return gak_pe_va(value, address, (uint64_t)count);
+}
+
 void *gak_native_formats_va(const void *value, int64_t address, int64_t count) {
     gak_formats_error = NULL;
     if (address < 0) { gak_format_fail("VA must not be negative"); return NULL; }
@@ -957,6 +996,15 @@ void *gak_native_formats_va_u64(const void *value, uint64_t address, int64_t cou
 
 int64_t gak_native_formats_rva_offset(const void *value, int64_t address) {
     GakFormatRange *range = gak_native_formats_rva(value, address, 1);
+    if (!range) return 0;
+    int64_t offset = (int64_t)range->start;
+    format_memory -= sizeof(*range);
+    free(range);
+    return offset;
+}
+
+int64_t gak_native_formats_pe_va_offset(const void *value, uint64_t address) {
+    GakFormatRange *range = gak_native_formats_pe_va(value, address, 1);
     if (!range) return 0;
     int64_t offset = (int64_t)range->start;
     format_memory -= sizeof(*range);
@@ -1075,6 +1123,17 @@ int64_t gak_native_formats_offset_va(const void *value, int64_t offset) {
 
 uint64_t gak_native_formats_offset_va_u64(const void *value, int64_t offset) {
     return gak_native_formats_offset_address(value, offset, 0, 1);
+}
+
+uint64_t gak_native_formats_offset_pe_va(const void *value, int64_t offset) {
+    int64_t rva = gak_native_formats_offset_rva(value, offset);
+    if (gak_formats_error) return 0;
+    uint64_t base;
+    if (!gak_pe_image_base(value, &base)) return 0;
+    if (base > UINT64_MAX - (uint64_t)rva) {
+        gak_format_fail("PE VA overflow"); return 0;
+    }
+    return base + (uint64_t)rva;
 }
 
 void *gak_native_formats_entry_view(const void *value, int64_t count) {

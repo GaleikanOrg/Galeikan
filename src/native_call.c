@@ -690,7 +690,8 @@ static void gak_json_label(GakCallJson *json, const GakCallSource **chain, int c
         }
         if (child->address_kind) {
             gak_json_text(json, child->address_kind == 1
-                ? " @ PE RVA 0x" : " @ ELF VA 0x");
+                ? " @ PE RVA 0x" : child->address_kind == 3
+                ? " @ PE VA 0x" : " @ ELF VA 0x");
             gak_json_hex(json, child->address);
         }
     }
@@ -702,7 +703,8 @@ static void gak_json_origin(GakCallJson *json, const GakCallSource *source) {
     gak_json_text(json, "\"");
     if (source->address_kind) {
         gak_json_text(json, source->address_kind == 1
-            ? "PE RVA 0x" : "ELF VA 0x");
+            ? "PE RVA 0x" : source->address_kind == 3
+            ? "PE VA 0x" : "ELF VA 0x");
         gak_json_hex(json, source->address);
         gak_json_text(json, "; ");
     }
@@ -750,6 +752,8 @@ static void gak_json_lineage(GakCallJson *json, const GakCallSource **chain, int
                 else {
                     gak_json_text(json, item->address_kind == 1
                         ? ",\"address\":{\"space\":\"pe.rva\",\"value\":\"0x"
+                        : item->address_kind == 3
+                        ? ",\"address\":{\"space\":\"pe.va\",\"value\":\"0x"
                         : ",\"address\":{\"space\":\"elf.va\",\"value\":\"0x");
                     gak_json_hex(json, item->address);
                     gak_json_text(json, "\"}");
