@@ -274,6 +274,11 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_cstring_offset_bounds", "string offset out of bounds"),
     ("gak_cstring_unterminated", "unterminated string within max_bytes"),
     ("gak_cstring_utf8", "invalid UTF-8 string"),
+    ("gak_wstring_max_range", "max_units out of range"),
+    ("gak_wstring_max_limit", "max_units must be 1 to 4096"),
+    ("gak_wstring_encoding", "string encoding must be utf16le or utf16be"),
+    ("gak_wstring_unterminated", "unterminated string within max_units"),
+    ("gak_wstring_utf16", "invalid UTF-16 string"),
     (
         "gak_strings_minimum_range",
         "minimum string length out of range",
@@ -5110,6 +5115,70 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+16]\n    add r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]\n    jmp {done}\n{bounds}:\n    jmp gak_cstring_offset_bounds\n{unterminated}:\n    jmp gak_cstring_unterminated\n{done}:", result_slot * 8, self.arg0(), source_slot * 8, offset_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
+            ("read_wstring", [source, offset, max_units, encoding]) => {
+                self.uses_text = true;
+                if self.expr(source, scope)? != Scalar::Source {
+                    return Err("binary.read_wstring expects Source".into());
+                }
+                let source_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    source_slot * 8
+                )
+                .unwrap();
+                if self.expr(offset, scope)? != Scalar::Int {
+                    return Err("binary.read_wstring offset must be i64".into());
+                }
+                let offset_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    offset_slot * 8
+                )
+                .unwrap();
+                if self.expr(max_units, scope)? != Scalar::Int {
+                    return Err("binary.read_wstring max_units must be i64".into());
+                }
+                let options_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    options_slot * 8
+                )
+                .unwrap();
+                if self.expr(encoding, scope)? != Scalar::Str {
+                    return Err("binary.read_wstring encoding must be str".into());
+                }
+                let encoding_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    encoding_slot * 8
+                )
+                .unwrap();
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_cstring_offset_negative\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_wstring_max_range\n    cmp r10, 1\n    jb gak_wstring_max_limit\n    cmp r10, 4096\n    ja gak_wstring_max_limit", offset_slot * 8, options_slot * 8).unwrap();
+                let le = self.literal("utf16le")?;
+                let be = self.literal("utf16be")?;
+                let check_be = self.label();
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{le}]\n    call gak_str_eq\n    test eax, eax\n    jz {check_be}\n    jmp {ready}\n{check_be}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{be}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_wstring_encoding\n    or QWORD PTR [rbp-{}], 65536\n{ready}:", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), options_slot * 8).unwrap();
+                let bounds = self.label();
+                let unterminated = self.label();
+                let invalid = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    xor {}, {}\n    call gak_native_read_wstring\n    cmp rax, -1\n    je {bounds}\n    cmp rax, -2\n    je {unterminated}\n    cmp rax, -3\n    je {invalid}", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), options_slot * 8, self.arg3(), self.arg3()).unwrap();
+                let length_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax\n    call gak_alloc_str",
+                    length_slot * 8
+                )
+                .unwrap();
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_read_wstring\n    mov rax, QWORD PTR [rbp-{}]\n    jmp {done}\n{bounds}:\n    jmp gak_cstring_offset_bounds\n{unterminated}:\n    jmp gak_wstring_unterminated\n{invalid}:\n    jmp gak_wstring_utf16\n{done}:", result_slot * 8, self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), options_slot * 8, self.arg3(), result_slot * 8).unwrap();
+                Ok(Scalar::Str)
+            }
             ("strings", [source, minimum, encoding]) => {
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.strings expects Source".into());
@@ -6471,6 +6540,17 @@ impl Codegen {
                 "unterminated string within max_bytes",
             ),
             ("gak_cstring_utf8", "invalid UTF-8 string"),
+            ("gak_wstring_max_range", "max_units out of range"),
+            ("gak_wstring_max_limit", "max_units must be 1 to 4096"),
+            (
+                "gak_wstring_encoding",
+                "string encoding must be utf16le or utf16be",
+            ),
+            (
+                "gak_wstring_unterminated",
+                "unterminated string within max_units",
+            ),
+            ("gak_wstring_utf16", "invalid UTF-16 string"),
         ] {
             writeln!(
                 out,
@@ -7556,6 +7636,11 @@ gak_cli_utf8_done:
             ("gak_cstring_offset_bounds", "gak_cstring_offset_bounds_msg"),
             ("gak_cstring_unterminated", "gak_cstring_unterminated_msg"),
             ("gak_cstring_utf8", "gak_cstring_utf8_msg"),
+            ("gak_wstring_max_range", "gak_wstring_max_range_msg"),
+            ("gak_wstring_max_limit", "gak_wstring_max_limit_msg"),
+            ("gak_wstring_encoding", "gak_wstring_encoding_msg"),
+            ("gak_wstring_unterminated", "gak_wstring_unterminated_msg"),
+            ("gak_wstring_utf16", "gak_wstring_utf16_msg"),
             ("gak_strings_minimum_range", "gak_strings_minimum_range_msg"),
             ("gak_strings_minimum_limit", "gak_strings_minimum_limit_msg"),
             ("gak_strings_many", "gak_strings_many_msg"),

@@ -6621,6 +6621,50 @@ fn native_binary_read_cstring_matches_vm_and_captures_errors() {
 }
 
 #[test]
+fn native_binary_read_wstring_matches_vm_and_captures_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-read-wstring.gak",
+        "from std.binary import from_hex, snapshot, view, read_wstring\nfrom std.result import message\nfn read(source: Source, offset: i64, limit: i64, encoding: str) -> Result<str> = read_wstring(source, offset, limit, encoding)\nlet le = snapshot(from_hex(\"48 00 69 00 00 00 3d d8 00 de 00 00 00 d8 00 00\"))\nlet be = snapshot(from_hex(\"00 48 00 69 00 00\"))\nlet part = view(le, 6, 6)\nprint read_wstring(le, 0, 3, \"utf16le\")\nprint read_wstring(be, 0, 3, \"utf16be\")\nprint read_wstring(part, 0, 3, \"utf16le\")\nprint message(read(le, -1, 1, \"utf16le\"))\nprint message(read(le, 0, -1, \"utf16le\"))\nprint message(read(le, 0, 0, \"utf16le\"))\nprint message(read(le, 0, 4097, \"utf16le\"))\nprint message(read(le, 0, 1, \"latin1\"))\nprint message(read(le, 16, 1, \"utf16le\"))\nprint message(read(le, 0, 2, \"utf16le\"))\nprint message(read(le, 12, 2, \"utf16le\"))\nprint message(read(part, 0, 2, \"utf16le\"))\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let output = String::from_utf8_lossy(&vm.stdout);
+    assert!(output.starts_with("Hi\nHi\n😀\n"), "{output}");
+    assert!(output.contains("invalid UTF-16 string"), "{output}");
+    assert!(
+        output.contains("unterminated string within max_units"),
+        "{output}"
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_read_text_errors_match_vm_and_result_capture() {
     if !gcc_available() {
         return;

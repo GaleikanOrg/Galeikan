@@ -5032,6 +5032,46 @@ impl Runtime {
                     std::str::from_utf8(&window[..end]).map_err(|_| "invalid UTF-8 string")?;
                 Ok(Value::Str(value.to_owned()))
             }
+            ("read_wstring", [source, offset, max_units, encoding]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "string offset must not be negative")?;
+                let max_units =
+                    usize::try_from(max_units.as_int()?).map_err(|_| "max_units out of range")?;
+                if !(1..=4096).contains(&max_units) {
+                    return Err("max_units must be 1 to 4096".into());
+                }
+                let little_endian = match encoding.as_str()? {
+                    "utf16le" => true,
+                    "utf16be" => false,
+                    _ => return Err("string encoding must be utf16le or utf16be".into()),
+                };
+                let bytes = source.bytes();
+                let tail = bytes
+                    .get(offset..)
+                    .filter(|tail| !tail.is_empty())
+                    .ok_or("string offset out of bounds")?;
+                let read_unit = |index: usize| -> Option<u16> {
+                    let pair =
+                        tail.get(index.checked_mul(2)?..index.checked_mul(2)?.checked_add(2)?)?;
+                    Some(if little_endian {
+                        u16::from_le_bytes([pair[0], pair[1]])
+                    } else {
+                        u16::from_be_bytes([pair[0], pair[1]])
+                    })
+                };
+                let mut units = Vec::new();
+                for index in 0..max_units {
+                    let unit = read_unit(index).ok_or("unterminated string within max_units")?;
+                    if unit == 0 {
+                        return String::from_utf16(&units)
+                            .map(Value::Str)
+                            .map_err(|_| "invalid UTF-16 string".into());
+                    }
+                    units.push(unit);
+                }
+                Err("unterminated string within max_units".into())
+            }
             ("sha256", [Value::Bytes(bytes)]) => {
                 let digest = Sha256::digest(bytes.as_slice());
                 Ok(Value::Str(
@@ -7368,6 +7408,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "strings") => (&[Source, Int, Str], Offsets),
         ("binary", "read_text") => (&[Source, Int, Int, Str], Str),
         ("binary", "read_cstring") => (&[Source, Int, Int], Str),
+        ("binary", "read_wstring") => (&[Source, Int, Int, Str], Str),
         ("binary", "size") => (&[Type::Any], Int),
         ("binary", "sha256") => (&[Type::Any], Str),
         ("formats", "probe") => (&[Source], Format),
