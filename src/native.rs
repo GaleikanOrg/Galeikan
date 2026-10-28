@@ -4942,11 +4942,7 @@ impl Codegen {
                 let lsb_label = self.literal("lsb0")?;
                 let msb_label = self.literal("msb0")?;
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{lsb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz {msb}\n    mov QWORD PTR [rbp-{}], 0\n    jmp {ready}\n{msb}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{msb_label}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_bits_order\n    mov QWORD PTR [rbp-{}], 1\n{ready}:", self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8, self.arg0(), order_slot * 8, self.arg1(), mode_slot * 8).unwrap();
-                let loop_start = self.label();
-                let msb_step = self.label();
-                let next = self.label();
-                let done = self.label();
-                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov r8, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea r11, [r11+rdx+8]\n    xor eax, eax\n    xor r9d, r9d\n{loop_start}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {done}\n    mov r10, r8\n    add r10, r9\n    mov rcx, r10\n    shr r10, 3\n    and ecx, 7\n    movzx edx, BYTE PTR [r11+r10]\n    cmp QWORD PTR [rbp-{}], 0\n    jne {msb_step}\n    shr edx, cl\n    and edx, 1\n    mov ecx, r9d\n    shl rdx, cl\n    or rax, rdx\n    jmp {next}\n{msb_step}:\n    mov r10d, 7\n    sub r10d, ecx\n    mov ecx, r10d\n    shr edx, cl\n    and edx, 1\n    shl rax, 1\n    or rax, rdx\n{next}:\n    inc r9\n    jmp {loop_start}\n{done}:", source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, count_slot * 8, mode_slot * 8).unwrap();
+                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+24]\n    sub r10, QWORD PTR [r11+16]\n    shl r10, 3\n    mov r8, QWORD PTR [rbp-{}]\n    add r8, QWORD PTR [rbp-{}]\n    jc gak_bits_bounds\n    cmp r8, r10\n    ja gak_bits_bounds\n    mov rax, r11\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_read_bits", source_slot * 8, offset_slot * 8, count_slot * 8, offset_slot * 8, count_slot * 8, mode_slot * 8).unwrap();
                 if name == "signed_bits" {
                     writeln!(self.code, "    mov rcx, 64\n    sub rcx, QWORD PTR [rbp-{}]\n    shl rax, cl\n    sar rax, cl", count_slot * 8).unwrap();
                     Ok(Scalar::Int)
@@ -5021,14 +5017,7 @@ impl Codegen {
                 let copy = self.label();
                 let copy_done = self.label();
                 writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11]\n    mov r8, QWORD PTR [r11+16]\n    add r8, QWORD PTR [rbp-{}]\n    lea r10, [r10+r8+8]\n    xor r9d, r9d\n{copy}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {copy_done}\n    mov dl, BYTE PTR [r10+r9]\n    mov BYTE PTR [rax+r9+8], dl\n    inc r9\n    jmp {copy}\n{copy_done}:", source_slot * 8, start_slot * 8, length_slot * 8).unwrap();
-                let bit_loop = self.label();
-                let bit_lsb = self.label();
-                let value_lsb = self.label();
-                let shift = self.label();
-                let clear = self.label();
-                let next = self.label();
-                let done = self.label();
-                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    xor r9d, r9d\n{bit_loop}:\n    cmp r9, QWORD PTR [rbp-{}]\n    jae {done}\n    mov r10, QWORD PTR [rbp-{}]\n    add r10, r9\n    mov rcx, r10\n    shr r10, 3\n    sub r10, QWORD PTR [rbp-{}]\n    and ecx, 7\n    cmp QWORD PTR [rbp-{}], 0\n    je {bit_lsb}\n    mov edx, 7\n    sub edx, ecx\n    mov ecx, edx\n{bit_lsb}:\n    mov r8d, 1\n    shl r8b, cl\n    mov rdx, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [rbp-{}], 0\n    je {value_lsb}\n    mov rcx, QWORD PTR [rbp-{}]\n    dec rcx\n    sub rcx, r9\n    jmp {shift}\n{value_lsb}:\n    mov rcx, r9\n{shift}:\n    shr rdx, cl\n    test dl, 1\n    jz {clear}\n    or BYTE PTR [r11+r10+8], r8b\n    jmp {next}\n{clear}:\n    not r8b\n    and BYTE PTR [r11+r10+8], r8b\n{next}:\n    inc r9\n    jmp {bit_loop}\n{done}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_patch_source", replacement_slot * 8, count_slot * 8, offset_slot * 8, start_slot * 8, mode_slot * 8, value_slot * 8, mode_slot * 8, count_slot * 8, source_slot * 8, start_slot * 8, replacement_slot * 8).unwrap();
+                writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rbp-{}]\n    mov r9, QWORD PTR [rbp-{}]\n    call gak_write_bits\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_patch_source", replacement_slot * 8, offset_slot * 8, start_slot * 8, count_slot * 8, value_slot * 8, mode_slot * 8, source_slot * 8, start_slot * 8, replacement_slot * 8).unwrap();
                 Ok(Scalar::Source)
             }
             ("deep", [source, offset, decoder]) => {
@@ -7762,6 +7751,7 @@ gak_cli_utf8_done:
                 if self.windows { "    add rsp, 32" } else { "" },
             );
         out.push_str(&patch_runtime);
+        out.push_str(include_str!("native_bits.S"));
         let splice_runtime = include_str!("native_splice.S")
             .replace(
                 "__SHADOW_ENTER__",
