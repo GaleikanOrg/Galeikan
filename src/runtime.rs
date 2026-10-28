@@ -5009,6 +5009,29 @@ impl Runtime {
                     encoding,
                 )?))
             }
+            ("read_cstring", [source, offset, max_bytes]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "string offset must not be negative")?;
+                let max_bytes =
+                    usize::try_from(max_bytes.as_int()?).map_err(|_| "max_bytes out of range")?;
+                if !(1..=4096).contains(&max_bytes) {
+                    return Err("max_bytes must be 1 to 4096".into());
+                }
+                let bytes = source.bytes();
+                let tail = bytes
+                    .get(offset..)
+                    .filter(|tail| !tail.is_empty())
+                    .ok_or("string offset out of bounds")?;
+                let window = &tail[..tail.len().min(max_bytes)];
+                let end = window
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .ok_or("unterminated string within max_bytes")?;
+                let value =
+                    std::str::from_utf8(&window[..end]).map_err(|_| "invalid UTF-8 string")?;
+                Ok(Value::Str(value.to_owned()))
+            }
             ("sha256", [Value::Bytes(bytes)]) => {
                 let digest = Sha256::digest(bytes.as_slice());
                 Ok(Value::Str(
@@ -7344,6 +7367,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "hunt") => (&[Source, Type::Any], Offsets),
         ("binary", "strings") => (&[Source, Int, Str], Offsets),
         ("binary", "read_text") => (&[Source, Int, Int, Str], Str),
+        ("binary", "read_cstring") => (&[Source, Int, Int], Str),
         ("binary", "size") => (&[Type::Any], Int),
         ("binary", "sha256") => (&[Type::Any], Str),
         ("formats", "probe") => (&[Source], Format),

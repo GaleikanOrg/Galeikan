@@ -6577,6 +6577,50 @@ fn native_binary_read_text_matches_vm_for_ascii_utf16le_and_views() {
 }
 
 #[test]
+fn native_binary_read_cstring_matches_vm_and_captures_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-read-cstring.gak",
+        "from std.binary import from_hex, snapshot, view, read_cstring\nfrom std.result import message\nfn read(source: Source, offset: i64, limit: i64) -> Result<str> = read_cstring(source, offset, limit)\nlet source = snapshot(from_hex(\"41 00 68 c3 a9 00 00 c0 af 00 42 43\"))\nlet part = view(source, 2, 4)\nprint read_cstring(source, 0, 2)\nprint read_cstring(part, 0, 4)\nprint read_cstring(source, 6, 1)\nprint message(read(source, -1, 1))\nprint message(read(source, 0, -1))\nprint message(read(source, 0, 0))\nprint message(read(source, 0, 4097))\nprint message(read(source, 12, 1))\nprint message(read(source, 10, 2))\nprint message(read(source, 7, 3))\nprint message(read(part, 0, 2))\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let output = String::from_utf8_lossy(&vm.stdout);
+    assert!(output.starts_with("A\nhé\n\n"), "{output}");
+    assert!(
+        output.contains("unterminated string within max_bytes"),
+        "{output}"
+    );
+    assert!(output.contains("invalid UTF-8 string"), "{output}");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_read_text_errors_match_vm_and_result_capture() {
     if !gcc_available() {
         return;
