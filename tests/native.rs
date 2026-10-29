@@ -5335,6 +5335,7 @@ fn native_pe_and_elf_dependencies_match_vm() {
     delay_va[optional + 24..optional + 32].copy_from_slice(&image_base.to_le_bytes());
     delay_va[0x300..0x304].fill(0);
     delay_va[0x304..0x308].copy_from_slice(&((image_base + 0x1160) as u32).to_le_bytes());
+    delay_va[0x30c..0x310].copy_from_slice(&((image_base + 0x1150) as u32).to_le_bytes());
     delay_va[0x310..0x314].copy_from_slice(&((image_base + 0x1140) as u32).to_le_bytes());
     delay_va[0x340..0x348].copy_from_slice(&(image_base + 0x1180).to_le_bytes());
     fs::write(s.0.join("sample.pe"), &pe).unwrap();
@@ -5393,12 +5394,81 @@ fn native_pe_and_elf_dependencies_match_vm() {
         }
     }
 
+    let iat_script = s.write(
+        "import-addresses.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, import_iat_rva, delay_import_iat_rva, delay_import_count\nfrom std.cli import arg\nlet report = probe(analyze(arg(0), 4096))\nprint import_iat_rva(report, 0)\nprint import_iat_rva(report, 1)\nif delay_import_count(report) > 0 {\n    print delay_import_iat_rva(report, 0)\n    print delay_import_iat_rva(report, 1)\n}\n",
+    );
+    let built = s.compile(&iat_script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let iat_executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    for (fixture, expected) in [
+        ("sample.pe", "4192\n4196\n"),
+        ("sample-delay.pe", "4192\n4200\n4432\n4440\n"),
+        ("sample-delay-va.pe", "4192\n4200\n4432\n4440\n"),
+    ] {
+        let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&iat_script)
+            .args(["--engine", "vm", "--allow-read"])
+            .arg(&s.0)
+            .args(["--", fixture])
+            .output()
+            .unwrap();
+        let native = Command::new(&iat_executable)
+            .arg("--allow-read")
+            .arg(&s.0)
+            .args(["--", fixture])
+            .output()
+            .unwrap();
+        assert!(
+            vm.status.success(),
+            "{fixture}: {}",
+            String::from_utf8_lossy(&vm.stderr)
+        );
+        assert!(
+            native.status.success(),
+            "{fixture}: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&vm.stdout), expected, "{fixture}");
+        assert_eq!(native.stdout, vm.stdout, "{fixture}");
+    }
+    let mut missing_iat = pe.clone();
+    missing_iat[0x210..0x214].fill(0);
+    fs::write(s.0.join("missing-iat.pe"), missing_iat).unwrap();
+    let missing_vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&iat_script)
+        .args(["--engine", "vm", "--allow-read"])
+        .arg(&s.0)
+        .args(["--", "missing-iat.pe"])
+        .output()
+        .unwrap();
+    let missing_native = Command::new(&iat_executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .args(["--", "missing-iat.pe"])
+        .output()
+        .unwrap();
+    assert!(!missing_vm.status.success());
+    assert!(!missing_native.status.success());
+    assert!(String::from_utf8_lossy(&missing_vm.stderr).contains("import has no address table"));
+    assert!(String::from_utf8_lossy(&missing_native.stderr).contains("import has no address table"));
+
     let mut invalid_ordinal = pe.clone();
     invalid_ordinal[0x244..0x248].copy_from_slice(&(1u32 << 31 | 1u32 << 16 | 7).to_le_bytes());
+    let mut invalid_iat = pe.clone();
+    invalid_iat[0x210..0x214].copy_from_slice(&u32::MAX.to_le_bytes());
     let mut invalid_delay = delay.clone();
     invalid_delay[0x300..0x304].copy_from_slice(&2u32.to_le_bytes());
     let mut invalid_delay_va = delay_va.clone();
     invalid_delay_va[0x304..0x308].copy_from_slice(&0x1160u32.to_le_bytes());
+    let mut invalid_delay_iat_va = delay_va.clone();
+    invalid_delay_iat_va[0x30c..0x310].copy_from_slice(&0x1150u32.to_le_bytes());
     pe[0x98 + 108..0x98 + 112].copy_from_slice(&20u32.to_le_bytes());
     elf[100..104].copy_from_slice(&40u32.to_le_bytes());
     elf[104..108].copy_from_slice(&40u32.to_le_bytes());
@@ -5416,6 +5486,11 @@ fn native_pe_and_elf_dependencies_match_vm() {
             "PE import ordinal has reserved bits set",
         ),
         (
+            "invalid-iat.pe",
+            invalid_iat,
+            "PE import address table RVA outside PE address space",
+        ),
+        (
             "invalid-delay.pe",
             invalid_delay,
             "PE delay import descriptor has reserved attribute bits",
@@ -5423,6 +5498,11 @@ fn native_pe_and_elf_dependencies_match_vm() {
         (
             "invalid-delay-va.pe",
             invalid_delay_va,
+            "PE delay import VA is below image base",
+        ),
+        (
+            "invalid-delay-iat-va.pe",
+            invalid_delay_iat_va,
             "PE delay import VA is below image base",
         ),
     ] {

@@ -4398,6 +4398,25 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, rax\n    mov {}, {}\n    call gak_native_formats_import_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1(), if name.starts_with("delay_") { 1 } else { 0 }).unwrap();
                 return Ok(Scalar::Int);
             }
+            ("import_iat_rva" | "delay_import_iat_rva", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {}\n    call gak_native_formats_import_iat_rva\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2(), if name.starts_with("delay_") { 1 } else { 0 }).unwrap();
+                return Ok(Scalar::UInt);
+            }
             (
                 "import_library"
                 | "import_symbol"

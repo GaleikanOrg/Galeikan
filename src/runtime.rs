@@ -6454,6 +6454,19 @@ impl Runtime {
                     rva,
                 )?)))
             }
+            ("import_iat_rva" | "delay_import_iat_rva", [Value::Format(source, report), index]) => {
+                let index =
+                    usize::try_from(index.as_int()?).map_err(|_| "import index out of range")?;
+                let imports = if name.starts_with("delay_") {
+                    report.delay_imports(source.bytes())?
+                } else {
+                    report.imports(source.bytes())?
+                };
+                let import = imports.get(index).ok_or("import index out of range")?;
+                Ok(Value::UInt(
+                    import.iat_rva.ok_or("import has no address table")?,
+                ))
+            }
             (
                 "import_library"
                 | "import_symbol"
@@ -7974,6 +7987,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             (&[Format, Int], Str)
         }
         ("formats", "relocation_address_u64") => (&[Format, Int], UInt),
+        ("formats", "import_iat_rva" | "delay_import_iat_rva") => (&[Format, Int], UInt),
         ("formats", "export_name" | "export_target" | "export_kind" | "export_summary") => {
             (&[Format, Int], Str)
         }

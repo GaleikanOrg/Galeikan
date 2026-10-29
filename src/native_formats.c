@@ -2221,6 +2221,7 @@ typedef struct {
     size_t symbol_length;
     uint16_t ordinal;
     int is_ordinal;
+    uint64_t iat_rva;
 } GakImportSelection;
 
 static int gak_pe_import_directory(const GakFormat *format, int delayed,
@@ -2299,6 +2300,7 @@ static int gak_pe_delay_dependencies(const GakFormat *format, int64_t selected,
             return 0;
         }
         uint64_t library_address = gak_number(bytes, at + 4, 4, 0);
+        uint64_t iat_address = gak_number(bytes, at + 12, 4, 0);
         uint64_t lookup_address = gak_number(bytes, at + 16, 4, 0);
         if (!library_address || !lookup_address) {
             gak_format_fail("PE delay import descriptor lacks a library or name table");
@@ -2308,6 +2310,9 @@ static int gak_pe_delay_dependencies(const GakFormat *format, int64_t selected,
         int va_based = attributes == 0;
         if (!gak_pe_delay_rva(format, library_address, va_based, &library_rva) ||
             !gak_pe_delay_rva(format, lookup_address, va_based, &lookup_rva)) return 0;
+        uint64_t ignored_iat;
+        if (iat_address && !gak_pe_delay_rva(format, iat_address, va_based, &ignored_iat))
+            return 0;
         (void)lookup_rva;
         const uint8_t *text;
         size_t text_size;
@@ -2364,7 +2369,7 @@ static int gak_pe_import_scan(const GakFormat *format, int delayed,
                                     : "PE import directory exceeds 4096 descriptors");
             return 0;
         }
-        uint64_t lookup_rva, library_rva;
+        uint64_t lookup_rva, library_rva, iat_rva;
         int va_based = 0;
         if (delayed) {
             uint64_t attributes = gak_number(bytes, at, 4, 0);
@@ -2373,6 +2378,7 @@ static int gak_pe_import_scan(const GakFormat *format, int delayed,
                 return 0;
             }
             uint64_t library_address = gak_number(bytes, at + 4, 4, 0);
+            uint64_t iat_address = gak_number(bytes, at + 12, 4, 0);
             uint64_t lookup_address = gak_number(bytes, at + 16, 4, 0);
             if (!library_address || !lookup_address) {
                 gak_format_fail("PE delay import descriptor lacks a library or name table");
@@ -2381,10 +2387,13 @@ static int gak_pe_import_scan(const GakFormat *format, int delayed,
             va_based = attributes == 0;
             if (!gak_pe_delay_rva(format, library_address, va_based, &library_rva) ||
                 !gak_pe_delay_rva(format, lookup_address, va_based, &lookup_rva)) return 0;
+            iat_rva = 0;
+            if (iat_address && !gak_pe_delay_rva(format, iat_address, va_based, &iat_rva))
+                return 0;
         } else {
             lookup_rva = gak_number(bytes, at, 4, 0);
             library_rva = gak_number(bytes, at + 12, 4, 0);
-            uint64_t iat_rva = gak_number(bytes, at + 16, 4, 0);
+            iat_rva = gak_number(bytes, at + 16, 4, 0);
             if (!library_rva || (!lookup_rva && !iat_rva)) {
                 gak_format_fail("PE import descriptor lacks a library or lookup table");
                 return 0;
@@ -2406,6 +2415,10 @@ static int gak_pe_import_scan(const GakFormat *format, int delayed,
             if (!raw) break;
             if (result->count >= 10000) {
                 gak_format_fail("PE imports exceed 10000 symbols"); return 0;
+            }
+            if (iat_rva && (iat_rva > UINT32_MAX || delta > UINT32_MAX - iat_rva)) {
+                gak_format_fail("PE import address table RVA outside PE address space");
+                return 0;
             }
             const uint8_t *symbol = NULL;
             size_t symbol_length = 0;
@@ -2434,6 +2447,7 @@ static int gak_pe_import_scan(const GakFormat *format, int delayed,
                 result->symbol_length = symbol_length;
                 result->ordinal = ordinal;
                 result->is_ordinal = is_ordinal;
+                result->iat_rva = iat_rva ? iat_rva + delta : 0;
             }
             result->count++;
             if (symbol_index == 10000) {
@@ -2452,6 +2466,22 @@ int64_t gak_native_formats_import_count(const void *value, int delayed) {
     GakImportSelection result = {0};
     if (!gak_pe_import_scan(value, delayed, -1, &result)) return -1;
     return (int64_t)result.count;
+}
+
+int64_t gak_native_formats_import_iat_rva(const void *value, int64_t index,
+                                           int delayed) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return -1; }
+    if (index < 0) { gak_format_fail("import index out of range"); return -1; }
+    GakImportSelection result = {0};
+    if (!gak_pe_import_scan(value, delayed, index, &result)) return -1;
+    if ((uint64_t)index >= result.count) {
+        gak_format_fail("import index out of range"); return -1;
+    }
+    if (!result.iat_rva) {
+        gak_format_fail("import has no address table"); return -1;
+    }
+    return (int64_t)result.iat_rva;
 }
 
 void *gak_native_formats_import_text(const void *value, int64_t index,

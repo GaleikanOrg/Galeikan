@@ -5754,6 +5754,7 @@ fn pe_imports_and_delay_imports_are_available_in_ast_vm_and_bundles() {
     legacy[optional + 24..optional + 32].copy_from_slice(&base.to_le_bytes());
     legacy[0x300..0x304].fill(0);
     legacy[0x304..0x308].copy_from_slice(&((base + 0x1160) as u32).to_le_bytes());
+    legacy[0x30c..0x310].copy_from_slice(&((base + 0x1150) as u32).to_le_bytes());
     legacy[0x310..0x314].copy_from_slice(&((base + 0x1140) as u32).to_le_bytes());
     legacy[0x340..0x348].copy_from_slice(&(base + 0x1180).to_le_bytes());
     let legacy_hex = legacy
@@ -5769,6 +5770,30 @@ fn pe_imports_and_delay_imports_are_available_in_ast_vm_and_bundles() {
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(stdout(&out), "268435456\nUSER32.dll!MessageBoxA\n");
     }
+
+    let iat_script = s.write(
+        "iat.gak",
+        &format!("from std.binary import from_hex, snapshot\nfrom std.formats import probe, import_iat_rva, delay_import_iat_rva\nlet report = probe(snapshot(from_hex(\"{hex}\")))\nprint import_iat_rva(report, 0)\nprint import_iat_rva(report, 1)\nprint delay_import_iat_rva(report, 0)\nprint delay_import_iat_rva(report, 1)\n"),
+    );
+    let expected_iat = "4192\n4200\n4432\n4440\n";
+    for engine in ["ast", "vm"] {
+        let out = s.run_engine(&iat_script, engine, false, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), expected_iat);
+    }
+    let build = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&iat_script)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", stderr(&build));
+    let bundled = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(iat_script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundled.status.success(), "{}", stderr(&bundled));
+    assert_eq!(stdout(&bundled), expected_iat);
 }
 
 #[test]

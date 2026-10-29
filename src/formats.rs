@@ -53,6 +53,7 @@ pub struct ImportInfo {
     pub library: String,
     pub symbol: String,
     pub kind: &'static str,
+    pub iat_rva: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -921,8 +922,12 @@ impl FormatReport {
             return Err("PE delay dependencies require a PE image".into());
         }
         match self.pe_delay_dependencies.get_or_init(|| {
-            self.pe_delay_import_descriptors(bytes)
-                .map(|descriptors| descriptors.into_iter().map(|(_, name, _)| name).collect())
+            self.pe_delay_import_descriptors(bytes).map(|descriptors| {
+                descriptors
+                    .into_iter()
+                    .map(|(_, _, name, _)| name)
+                    .collect()
+            })
         }) {
             Ok(names) => Ok(names),
             Err(error) => Err(error.clone()),
@@ -1619,7 +1624,7 @@ impl FormatReport {
         }
         match self.pe_dependencies.get_or_init(|| {
             self.pe_import_descriptors(bytes)
-                .map(|descriptors| descriptors.into_iter().map(|(_, name)| name).collect())
+                .map(|descriptors| descriptors.into_iter().map(|(_, _, name)| name).collect())
         }) {
             Ok(names) => Ok(names),
             Err(error) => Err(error.clone()),
@@ -1806,7 +1811,7 @@ impl FormatReport {
         Ok(exports)
     }
 
-    fn pe_import_descriptors(&self, bytes: &[u8]) -> Result<Vec<(u64, String)>, String> {
+    fn pe_import_descriptors(&self, bytes: &[u8]) -> Result<Vec<(u64, u64, String)>, String> {
         let (directory_rva, directory_size) = match &self.pe_import_directory {
             Ok(Some(directory)) => *directory,
             Ok(None) => return Ok(Vec::new()),
@@ -1843,7 +1848,7 @@ impl FormatReport {
             }
             let library = self.pe_text(bytes, library_rva, MAX_IMPORT_LIBRARY_BYTES)?;
             let lookup_rva = if lookup_rva == 0 { iat_rva } else { lookup_rva };
-            descriptors.push((lookup_rva, library));
+            descriptors.push((lookup_rva, iat_rva, library));
         }
         Err(format!(
             "PE import directory exceeds {MAX_IMPORT_DESCRIPTORS} descriptors"
@@ -1853,7 +1858,7 @@ impl FormatReport {
     fn pe_delay_import_descriptors(
         &self,
         bytes: &[u8],
-    ) -> Result<Vec<(u64, String, bool)>, String> {
+    ) -> Result<Vec<(u64, u64, String, bool)>, String> {
         let (directory_rva, directory_size) = match &self.pe_delay_import_directory {
             Ok(Some(directory)) => *directory,
             Ok(None) => return Ok(Vec::new()),
@@ -1887,6 +1892,7 @@ impl FormatReport {
                 return Err("PE delay import descriptor has reserved attribute bits".into());
             }
             let library_address = number(bytes, offset + 4, 4, false)?;
+            let iat_address = number(bytes, offset + 12, 4, false)?;
             let lookup_address = number(bytes, offset + 16, 4, false)?;
             if library_address == 0 || lookup_address == 0 {
                 return Err("PE delay import descriptor lacks a library or name table".into());
@@ -1894,8 +1900,13 @@ impl FormatReport {
             let va_based = attributes == 0;
             let library_rva = self.pe_delay_rva(library_address, va_based)?;
             let lookup_rva = self.pe_delay_rva(lookup_address, va_based)?;
+            let iat_rva = if iat_address == 0 {
+                0
+            } else {
+                self.pe_delay_rva(iat_address, va_based)?
+            };
             let library = self.pe_text(bytes, library_rva, MAX_IMPORT_LIBRARY_BYTES)?;
-            descriptors.push((lookup_rva, library, va_based));
+            descriptors.push((lookup_rva, iat_rva, library, va_based));
         }
         Err(format!(
             "PE delay import directory exceeds {MAX_IMPORT_DESCRIPTORS} descriptors"
@@ -1906,7 +1917,7 @@ impl FormatReport {
         let descriptors = self
             .pe_import_descriptors(bytes)?
             .into_iter()
-            .map(|(lookup_rva, library)| (lookup_rva, library, false))
+            .map(|(lookup_rva, iat_rva, library)| (lookup_rva, iat_rva, library, false))
             .collect();
         self.parse_pe_import_symbols(bytes, descriptors)
     }
@@ -1918,10 +1929,10 @@ impl FormatReport {
     fn parse_pe_import_symbols(
         &self,
         bytes: &[u8],
-        descriptors: Vec<(u64, String, bool)>,
+        descriptors: Vec<(u64, u64, String, bool)>,
     ) -> Result<Vec<ImportInfo>, String> {
         let mut imports = Vec::new();
-        for (lookup_rva, library, va_based) in descriptors {
+        for (lookup_rva, iat_rva, library, va_based) in descriptors {
             let ordinal_flag = 1_u64 << (self.pe_thunk_width * 8 - 1);
             for symbol_index in 0..=MAX_IMPORT_SYMBOLS {
                 let delta = symbol_index
@@ -1956,6 +1967,18 @@ impl FormatReport {
                     library: library.clone(),
                     symbol,
                     kind,
+                    iat_rva: if iat_rva == 0 {
+                        None
+                    } else {
+                        Some(u64::from(
+                            u32::try_from(
+                                iat_rva
+                                    .checked_add(delta as u64)
+                                    .ok_or("PE import address table RVA overflow")?,
+                            )
+                            .map_err(|_| "PE import address table RVA outside PE address space")?,
+                        ))
+                    },
                 });
                 if symbol_index == MAX_IMPORT_SYMBOLS {
                     return Err("PE import lookup table has no null entry".into());
@@ -4566,6 +4589,7 @@ mod tests {
         }
         bytes[0x300..0x304].fill(0);
         bytes[0x304..0x308].copy_from_slice(&((base + 0x1160) as u32).to_le_bytes());
+        bytes[0x30c..0x310].copy_from_slice(&((base + 0x1150) as u32).to_le_bytes());
         bytes[0x310..0x314].copy_from_slice(&((base + 0x1140) as u32).to_le_bytes());
         if plus {
             bytes[0x340..0x348].copy_from_slice(&(base + 0x1180).to_le_bytes());
@@ -4601,6 +4625,8 @@ mod tests {
                 assert_eq!(report.delay_dependencies(&bytes).unwrap(), ["USER32.dll"]);
                 let imports = report.delay_imports(&bytes).unwrap();
                 assert_eq!(imports.len(), 2);
+                assert_eq!(imports[0].iat_rva, Some(0x1150));
+                assert_eq!(imports[1].iat_rva, Some(0x1150 + if plus { 8 } else { 4 }));
                 assert_eq!(
                     (&imports[0].library, &imports[0].symbol, imports[0].kind),
                     (&"USER32.dll".into(), &"MessageBoxA".into(), "name")
@@ -4610,6 +4636,7 @@ mod tests {
                     (&"#9".into(), "ordinal")
                 );
                 assert_eq!(report.imports(&bytes).unwrap().len(), 2);
+                assert_eq!(report.imports(&bytes).unwrap()[0].iat_rva, Some(0x1060));
             }
         }
     }
@@ -4756,9 +4783,17 @@ mod tests {
             assert_eq!(imports[0].library, "KERNEL32.dll");
             assert_eq!(imports[0].symbol, "CreateFileW");
             assert_eq!(imports[0].kind, "name");
+            assert_eq!(imports[0].iat_rva, Some(0x1060));
             assert_eq!(imports[1].symbol, "#7");
             assert_eq!(imports[1].kind, "ordinal");
+            assert_eq!(imports[1].iat_rva, Some(0x1060 + if plus { 8 } else { 4 }));
             assert_eq!(report.dependencies(&bytes).unwrap(), ["KERNEL32.dll"]);
+            let mut no_iat = bytes.clone();
+            no_iat[0x210..0x214].fill(0);
+            assert_eq!(
+                probe(&no_iat).unwrap().imports(&no_iat).unwrap()[0].iat_rva,
+                None
+            );
             let mut no_symbols = bytes.clone();
             no_symbols[0x240..0x250].fill(0);
             let no_symbols_report = probe(&no_symbols).unwrap();
