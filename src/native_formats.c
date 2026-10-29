@@ -3254,6 +3254,30 @@ int64_t gak_native_formats_symbol_at_address(const void *value, uint64_t address
     return best;
 }
 
+void *gak_native_formats_symbol_view(const void *value, int64_t index,
+                                      int static_table) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    const GakFormat *format = value;
+    if (format->kind == 2 && format->file_type == 1) {
+        gak_format_fail("symbol view is unavailable for relocatable ELF");
+        return NULL;
+    }
+    if (index < 0) {
+        gak_format_fail(static_table ? "static symbol index out of range" :
+                                       "dynamic symbol index out of range"); return NULL;
+    }
+    GakSymbolSelection symbol = {0};
+    if (!gak_elf_symbol_scan(format, static_table, index, &symbol)) return NULL;
+    if ((uint64_t)index >= symbol.count) {
+        gak_format_fail(static_table ? "static symbol index out of range" :
+                                       "dynamic symbol index out of range"); return NULL;
+    }
+    if (!symbol.section) { gak_format_fail("ELF symbol is undefined"); return NULL; }
+    if (!symbol.size) { gak_format_fail("ELF symbol size is zero"); return NULL; }
+    return gak_elf_va(format, symbol.address, symbol.size);
+}
+
 static const char *gak_elf_symbol_binding(uint8_t value) {
     switch (value) {
         case 0: return "local";

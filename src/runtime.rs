@@ -6165,6 +6165,24 @@ impl Runtime {
                 )?)
                 .map_err(|_| "symbol index outside i64 range")?,
             )),
+            ("symbol_view" | "static_symbol_view", [Value::Format(source, report), index]) => {
+                let static_table = name == "static_symbol_view";
+                let index = usize::try_from(index.as_int()?).map_err(|_| {
+                    if static_table {
+                        "static symbol index out of range"
+                    } else {
+                        "dynamic symbol index out of range"
+                    }
+                })?;
+                let (start, end, address) =
+                    report.symbol_view_range(source.bytes(), index, static_table)?;
+                Ok(Value::Source(Arc::new(Source::va_view(
+                    source.clone(),
+                    start,
+                    end,
+                    address,
+                )?)))
+            }
             ("relocation_count", [Value::Format(source, report)]) => Ok(Value::Int(
                 i64::try_from(report.relocations(source.bytes())?.len())
                     .map_err(|_| "relocation count outside i64 range")?,
@@ -7851,6 +7869,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ) => (&[Format, Int], Int),
         ("formats", "symbol_defined" | "static_symbol_defined") => (&[Format, Int], Bool),
         ("formats", "symbol_at_address" | "static_symbol_at_address") => (&[Format, UInt], Int),
+        ("formats", "symbol_view" | "static_symbol_view") => (&[Format, Int], Source),
         ("formats", "symbol_address_u64" | "static_symbol_address_u64") => (&[Format, Int], UInt),
         (
             "formats",

@@ -666,6 +666,39 @@ impl FormatReport {
             .ok_or_else(|| "no ELF symbol covers address".into())
     }
 
+    pub fn symbol_view_range(
+        &self,
+        bytes: &[u8],
+        index: usize,
+        static_table: bool,
+    ) -> Result<(usize, usize, u64), String> {
+        if self.name.starts_with("ELF") && self.elf_file_type == 1 {
+            return Err("symbol view is unavailable for relocatable ELF".into());
+        }
+        let symbols = if static_table {
+            self.static_symbols(bytes)?
+        } else {
+            self.dynamic_symbols(bytes)?
+        };
+        let symbol = symbols.get(index).ok_or_else(|| {
+            if static_table {
+                "static symbol index out of range"
+            } else {
+                "dynamic symbol index out of range"
+            }
+        })?;
+        if symbol.section_index == 0 {
+            return Err("ELF symbol is undefined".into());
+        }
+        if symbol.size == 0 {
+            return Err("ELF symbol size is zero".into());
+        }
+        let count = usize::try_from(symbol.size)
+            .map_err(|_| "ELF symbol size outside host address space")?;
+        let (start, end) = self.elf_va_range(bytes.len(), symbol.address, count)?;
+        Ok((start, end, symbol.address))
+    }
+
     pub fn imports(&self, bytes: &[u8]) -> Result<&[ImportInfo], String> {
         if !self.name.starts_with("PE") {
             return Err("PE imports require a PE image".into());
@@ -3391,6 +3424,41 @@ mod tests {
                 .symbol_at_address(&bytes, 0x401005, false)
                 .unwrap_err(),
             "symbol address lookup is unavailable for relocatable ELF"
+        );
+    }
+
+    #[test]
+    fn symbol_view_requires_defined_file_backed_bytes() {
+        let mut bytes = elf64_with_dynsym(true, false);
+        let address_at = 0x200 + 2 * 24 + 8;
+        bytes[address_at..address_at + 8].copy_from_slice(&0x400350_u64.to_le_bytes());
+        bytes[0x350..0x35c].copy_from_slice(&[0x90; 12]);
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_view_range(&bytes, 2, false).unwrap(),
+            (0x350, 0x35c, 0x400350)
+        );
+        assert_eq!(
+            report.symbol_view_range(&bytes, 1, false).unwrap_err(),
+            "ELF symbol is undefined"
+        );
+        assert_eq!(
+            report.symbol_view_range(&bytes, 3, false).unwrap_err(),
+            "dynamic symbol index out of range"
+        );
+
+        bytes[0x200 + 2 * 24 + 16..0x200 + 2 * 24 + 24].copy_from_slice(&0_u64.to_le_bytes());
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_view_range(&bytes, 2, false).unwrap_err(),
+            "ELF symbol size is zero"
+        );
+
+        bytes[16..18].copy_from_slice(&1_u16.to_le_bytes());
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_view_range(&bytes, 2, false).unwrap_err(),
+            "symbol view is unavailable for relocatable ELF"
         );
     }
 

@@ -4692,6 +4692,84 @@ fn native_elf_dynamic_symbols_match_vm_for_sections_and_hash_tables() {
 }
 
 #[test]
+fn native_elf_symbol_views_match_vm_and_reject_unmapped_bytes() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let file = s.0.join("symbols.elf");
+    let script = s.write(
+        "symbol_views.gak",
+        "requires { file.read }\nfrom std.binary import analyze, size, deep, value\nfrom std.formats import probe, symbol_view, static_symbol_view\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nlet dynamic: Source = symbol_view(report, 2)\nlet local: Source = static_symbol_view(report, 1)\nprint size(dynamic)\nprint value(deep(dynamic, 0, \"u8\"))\nprint size(local)\nprint value(deep(local, 0, \"u8\"))\n",
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let run_vm = || {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", "vm", "--allow-read"])
+            .arg(&s.0)
+            .output()
+            .unwrap()
+    };
+    let run_native = || {
+        Command::new(&executable)
+            .arg("--allow-read")
+            .arg(&s.0)
+            .output()
+            .unwrap()
+    };
+
+    let mut bytes = elf_static_symbol_fixture();
+    bytes[0x200 + 2 * 24 + 8..0x200 + 2 * 24 + 16].copy_from_slice(&0x400340_u64.to_le_bytes());
+    bytes[0x500 + 24 + 8..0x500 + 24 + 16].copy_from_slice(&0x400350_u64.to_le_bytes());
+    bytes[0x340] = 0x90;
+    bytes[0x350] = 0xcc;
+    fs::write(&file, &bytes).unwrap();
+    let vm = run_vm();
+    let native = run_native();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(native.stdout, b"12\n144\n8\n204\n");
+
+    for (section, size, expected) in [
+        (
+            1_u16,
+            0x1000_u64,
+            "VA range crosses ELF load segment boundary",
+        ),
+        (0, 8, "ELF symbol is undefined"),
+        (1, 0, "ELF symbol size is zero"),
+    ] {
+        let mut invalid = bytes.clone();
+        invalid[0x500 + 24 + 6..0x500 + 24 + 8].copy_from_slice(&section.to_le_bytes());
+        invalid[0x500 + 24 + 16..0x500 + 24 + 24].copy_from_slice(&size.to_le_bytes());
+        fs::write(&file, invalid).unwrap();
+        let vm = run_vm();
+        let native = run_native();
+        assert!(!vm.status.success());
+        assert!(!native.status.success());
+        assert!(String::from_utf8_lossy(&vm.stderr).contains(expected));
+        assert!(String::from_utf8_lossy(&native.stderr).contains(expected));
+    }
+}
+
+#[test]
 fn native_pe_relocations_match_vm_and_reject_malformed_blocks() {
     if !gcc_available() {
         return;

@@ -4007,6 +4007,25 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_symbol_at_address\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Int);
             }
+            ("symbol_view" | "static_symbol_view", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                self.uses_formats = true;
+                let mode = u8::from(name == "static_symbol_view");
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_symbol_view", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
+                return self.formats_range_result();
+            }
             (
                 "symbol_name"
                 | "symbol_binding"
