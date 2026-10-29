@@ -587,6 +587,19 @@ enum NativeImport {
     Formats,
 }
 
+struct PythonImport {
+    path: PathBuf,
+    digest: String,
+    function: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PythonRequestKind {
+    Call,
+    Get,
+    Discard,
+}
+
 struct Codegen {
     code: String,
     data: String,
@@ -688,7 +701,7 @@ fn python_module_target(
     if !path.starts_with(&project.root) {
         return Err(format!("Python import outside project: {}", path.display()));
     }
-    let (file, _) = file_access::open_authorized(&path, &[project.root.clone()])
+    let (file, _) = file_access::open_authorized(&path, std::slice::from_ref(&project.root))
         .map_err(|e| format!("cannot read Python module {}: {e}", path.display()))?;
     let metadata = file
         .metadata()
@@ -754,7 +767,7 @@ fn collect_module(
         return Err("native import depth exceeds 64 modules".into());
     }
     let mut source_bytes = Vec::new();
-    file_access::open_authorized(&path, &[project.root.clone()])
+    file_access::open_authorized(&path, std::slice::from_ref(&project.root))
         .map_err(|e| format!("{}: {e}", path.display()))?
         .0
         .take(MAX_SOURCE + 1)
@@ -1654,14 +1667,18 @@ impl Codegen {
         }
     }
 
-    fn python_import(&self, name: &str) -> Option<(PathBuf, String, String)> {
+    fn python_import(&self, name: &str) -> Option<PythonImport> {
         let (alias, function) = name.split_once('.')?;
         let NativeImport::Python(path, digest) =
             self.module_imports.get(&self.active_module)?.get(alias)?
         else {
             return None;
         };
-        Some((path.clone(), digest.clone(), function.to_owned()))
+        Some(PythonImport {
+            path: path.clone(),
+            digest: digest.clone(),
+            function: function.to_owned(),
+        })
     }
 
     fn python_kind(kind: Scalar) -> Result<u64, String> {
@@ -1687,16 +1704,13 @@ impl Codegen {
 
     fn python_call(
         &mut self,
-        path: &Path,
-        digest: &str,
-        function: &str,
+        import: &PythonImport,
         args: &[Expr],
         scope: &HashMap<String, Binding>,
         expected: Scalar,
-        get_value: bool,
-        discard: bool,
+        request: PythonRequestKind,
     ) -> Result<Scalar, String> {
-        let tag = if discard {
+        let tag = if request == PythonRequestKind::Discard {
             11
         } else {
             Self::python_kind(expected)?
@@ -1705,16 +1719,16 @@ impl Codegen {
             return Err("native Python call exceeds 64 arguments".into());
         }
         self.uses_python = true;
-        let module_path = native_python_module_path(&self.root_module, path)?;
+        let module_path = native_python_module_path(&self.root_module, &import.path)?;
         let module_label = self.literal(&module_path)?;
-        let digest_label = self.literal(digest)?;
-        let function_label = self.literal(function)?;
+        let digest_label = self.literal(&import.digest)?;
+        let function_label = self.literal(&import.function)?;
         let request_slot = self.reserve_slot()?;
         writeln!(self.code, "    lea {}, [rip+{module_label}]", self.arg0()).unwrap();
         writeln!(self.code, "    lea {}, [rip+{digest_label}]", self.arg1()).unwrap();
         writeln!(self.code, "    lea {}, [rip+{function_label}]", self.arg2()).unwrap();
         writeln!(self.code, "    mov {}, {tag}", self.arg3()).unwrap();
-        self.code.push_str(if get_value {
+        self.code.push_str(if request == PythonRequestKind::Get {
             "    call gak_python_request_get\n"
         } else {
             "    call gak_python_request_new\n"
@@ -1750,7 +1764,7 @@ impl Codegen {
         .unwrap();
         self.code.push_str("    call gak_native_python_call\n");
         self.python_check();
-        if !discard {
+        if request != PythonRequestKind::Discard {
             self.code.push_str("    mov rax, QWORD PTR [rax+8]\n");
         }
         Ok(expected)
@@ -1765,23 +1779,24 @@ impl Codegen {
         if let Some(expected) = expected {
             match &expr.kind {
                 ExprKind::Call(name, args) => {
-                    if let Some((path, digest, function)) = self.python_import(name) {
+                    if let Some(import) = self.python_import(name) {
                         return self.python_call(
-                            &path, &digest, &function, args, scope, expected, false, false,
+                            &import,
+                            args,
+                            scope,
+                            expected,
+                            PythonRequestKind::Call,
                         );
                     }
                 }
                 ExprKind::Var(name) => {
-                    if let Some((path, digest, function)) = self.python_import(name) {
+                    if let Some(import) = self.python_import(name) {
                         return self.python_call(
-                            &path,
-                            &digest,
-                            &function,
+                            &import,
                             &[],
                             scope,
                             expected,
-                            true,
-                            false,
+                            PythonRequestKind::Get,
                         );
                     }
                 }
@@ -1860,16 +1875,13 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
     ) -> Result<(), String> {
         if let ExprKind::Call(name, args) = &expr.kind {
-            if let Some((path, digest, function)) = self.python_import(name) {
+            if let Some(import) = self.python_import(name) {
                 self.python_call(
-                    &path,
-                    &digest,
-                    &function,
+                    &import,
                     args,
                     scope,
                     Scalar::Bool,
-                    false,
-                    true,
+                    PythonRequestKind::Discard,
                 )?;
                 return Ok(());
             }

@@ -680,7 +680,7 @@ impl FormatReport {
         } else {
             self.dynamic_symbols(bytes)?
         };
-        let symbol = symbols.get(index).ok_or_else(|| {
+        let symbol = symbols.get(index).ok_or({
             if static_table {
                 "static symbol index out of range"
             } else {
