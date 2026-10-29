@@ -233,6 +233,8 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_range_limit", "range exceeds 100000 items"),
     ("gak_list_index", "list index out of range"),
     ("gak_cli_index", "argument index out of range"),
+    ("gak_process_address_range", "process address out of range"),
+    ("gak_process_length_range", "process length out of range"),
     ("gak_hex_invalid", "invalid hex data"),
     ("gak_hex_odd", "hex data needs an even number of digits"),
     ("gak_hex_limit", "hex data exceeds 1048576 bytes"),
@@ -3849,6 +3851,10 @@ impl Codegen {
                 if self.expr(address, scope)? != address_kind {
                     return Err(format!("process.{name} address/offset has the wrong type"));
                 }
+                if name == "snapshot_at" {
+                    self.code
+                        .push_str("    test rax, rax\n    js gak_process_address_range\n");
+                }
                 let address_slot = self.reserve_slot()?;
                 writeln!(
                     self.code,
@@ -3878,6 +3884,10 @@ impl Codegen {
                 if self.expr(address, scope)? != expected_address {
                     return Err(format!("process.{name} address has the wrong type"));
                 }
+                if name == "snapshot" {
+                    self.code
+                        .push_str("    test rax, rax\n    js gak_process_address_range\n");
+                }
                 let address_slot = self.reserve_slot()?;
                 writeln!(
                     self.code,
@@ -3888,6 +3898,8 @@ impl Codegen {
                 if self.expr(length, scope)? != Scalar::Int {
                     return Err(format!("process.{name} length must be i64"));
                 }
+                self.code
+                    .push_str("    test rax, rax\n    js gak_process_length_range\n");
                 let ready = self.label();
                 let result_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_process_snapshot\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_file_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov r11, QWORD PTR [r10]\n    mov r8, QWORD PTR [rip+gak_source_backing_bytes]\n    lea r9, [r11+8]\n    add r8, r9\n    jc gak_source_backing_limit\n    cmp r8, 536870920\n    ja gak_source_backing_limit\n    mov QWORD PTR [rip+gak_source_backing_bytes], r8\n    mov rax, r10\n    xor edx, edx\n    xor r10d, r10d\n    xor r8d, r8d\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+8]\n    mov QWORD PTR [rax+80], r10\n    mov r10, QWORD PTR [r11+16]\n    mov QWORD PTR [rax+88], r10", self.arg0(), pid_slot * 8, self.arg1(), address_slot * 8, self.arg2(), result_slot * 8, result_slot * 8).unwrap();

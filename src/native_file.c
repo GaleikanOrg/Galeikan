@@ -1596,19 +1596,30 @@ uint64_t gak_native_region_resolve(GakRegion *region, const uint8_t *reference) 
 }
 
 GakFileResult *gak_native_process_snapshot_region(GakRegion *region,
-                                                   uint64_t offset, uint64_t length) {
+                                                   int64_t offset, int64_t length) {
     gak_file_error = NULL;
-    if (!region || offset > region->size || length > region->size - offset) {
+    if (!region) {
         gak_failf("snapshot exceeds region boundaries");
+        return NULL;
+    }
+    if (!gak_process_allowed((uint32_t)region->pid)) {
+        gak_failf("process access not allowed: %llu", (unsigned long long)region->pid);
         return NULL;
     }
     if (region->access[8] != 'r') {
         gak_failf("region is not marked readable");
         return NULL;
     }
-    uint64_t address = gak_native_region_address(region, offset);
+    if (offset < 0) { gak_failf("region offset out of range"); return NULL; }
+    if (length < 0) { gak_failf("region length out of range"); return NULL; }
+    if ((uint64_t)offset > region->size ||
+        (uint64_t)length > region->size - (uint64_t)offset) {
+        gak_failf("snapshot exceeds region boundaries");
+        return NULL;
+    }
+    uint64_t address = gak_native_region_address(region, (uint64_t)offset);
     if (address == UINT64_MAX) return NULL;
-    GakFileResult *result = gak_native_process_snapshot(region->pid, address, length);
+    GakFileResult *result = gak_native_process_snapshot(region->pid, address, (uint64_t)length);
     if (!result) return NULL;
     uint8_t *escaped_label = gak_escaped_box((const char *)(region->label + 8));
     if (!escaped_label) goto metadata_failed;
@@ -1651,15 +1662,19 @@ metadata_failed:
 }
 
 GakFileResult *gak_native_process_snapshot_at(GakRegions *regions,
-                                               uint64_t address, uint64_t length) {
+                                               uint64_t address, int64_t length) {
     GakRegion *region = gak_native_process_locate(regions, address);
     if (!region) return NULL;
-    return gak_native_process_snapshot_region(region, address - region->start, length);
+    uint64_t offset = address - region->start;
+    if (offset > INT64_MAX) { gak_failf("region offset outside i64 range"); return NULL; }
+    return gak_native_process_snapshot_region(region, (int64_t)offset, length);
 }
 
 GakFileResult *gak_native_process_snapshot_ref(GakRegion *region,
-                                                const uint8_t *reference, uint64_t length) {
+                                                const uint8_t *reference, int64_t length) {
     uint64_t address = gak_native_region_resolve(region, reference);
     if (address == UINT64_MAX) return NULL;
-    return gak_native_process_snapshot_region(region, address - region->start, length);
+    uint64_t offset = address - region->start;
+    if (offset > INT64_MAX) { gak_failf("region offset outside i64 range"); return NULL; }
+    return gak_native_process_snapshot_region(region, (int64_t)offset, length);
 }

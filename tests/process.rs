@@ -337,6 +337,59 @@ fn native_process_snapshot_errors_are_catchable() {
 }
 
 #[test]
+fn native_process_snapshot_rejects_negative_inputs_like_vm() {
+    if Command::new("gcc").arg("--version").output().is_err() {
+        return;
+    }
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "galeikan-native-process-negative-test-{}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("negative.gak");
+    fs::write(
+        &script,
+        "requires { process.inspect }\nimport std.process\nfrom std.result import message\nfn bad_address() -> Result<Source> = process.snapshot(process.self_pid(), -1, 1)\nfn bad_length() -> Result<Source> = process.snapshot(process.self_pid(), 1, -1)\nfn bad_region_offset() -> Result<Source> {\n    let region: Region = process.at(process.images(process.self_pid()), 0)\n    return process.snapshot_region(region, -1, 1)\n}\nfn bad_region_length() -> Result<Source> {\n    let region: Region = process.at(process.images(process.self_pid()), 0)\n    return process.snapshot_region(region, 0, -1)\n}\nfn bad_at_address() -> Result<Source> {\n    let regions: Regions = process.regions(process.self_pid())\n    return process.snapshot_at(regions, -1, 1)\n}\nprint message(bad_address())\nprint message(bad_length())\nprint message(bad_region_offset())\nprint message(bad_region_length())\nprint message(bad_at_address())\n",
+    )
+    .unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(&executable)
+        .args(["--allow-process", "self"])
+        .output()
+        .unwrap();
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm", "--allow-process", "self"])
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(native.stdout, b"process address out of range\nprocess length out of range\nregion offset out of range\nregion length out of range\nprocess address out of range\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn native_process_regions_locate_live_memory_and_match_vm() {
     if Command::new("gcc").arg("--version").output().is_err() {
         return;
