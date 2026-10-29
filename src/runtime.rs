@@ -6154,6 +6154,17 @@ impl Runtime {
                     i64::try_from(symbols.len()).map_err(|_| "symbol count outside i64 range")?,
                 ))
             }
+            (
+                "symbol_at_address" | "static_symbol_at_address",
+                [Value::Format(source, report), address],
+            ) => Ok(Value::Int(
+                i64::try_from(report.symbol_at_address(
+                    source.bytes(),
+                    address.as_uint()?,
+                    name == "static_symbol_at_address",
+                )?)
+                .map_err(|_| "symbol index outside i64 range")?,
+            )),
             ("relocation_count", [Value::Format(source, report)]) => Ok(Value::Int(
                 i64::try_from(report.relocations(source.bytes())?.len())
                     .map_err(|_| "relocation count outside i64 range")?,
@@ -7839,6 +7850,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             "symbol_size" | "symbol_section" | "static_symbol_size" | "static_symbol_section",
         ) => (&[Format, Int], Int),
         ("formats", "symbol_defined" | "static_symbol_defined") => (&[Format, Int], Bool),
+        ("formats", "symbol_at_address" | "static_symbol_at_address") => (&[Format, UInt], Int),
         ("formats", "symbol_address_u64" | "static_symbol_address_u64") => (&[Format, Int], UInt),
         (
             "formats",

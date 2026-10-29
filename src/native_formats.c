@@ -3216,6 +3216,44 @@ uint64_t gak_native_formats_symbol_address_u64(const void *value, int64_t index,
     return result.address;
 }
 
+int64_t gak_native_formats_symbol_at_address(const void *value, uint64_t address,
+                                              int static_table) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return -1; }
+    const GakFormat *format = value;
+    if (format->kind == 2 && format->file_type == 1) {
+        gak_format_fail("symbol address lookup is unavailable for relocatable ELF");
+        return -1;
+    }
+    GakSymbolSelection validated = {0};
+    if (!gak_elf_symbol_scan(format, static_table, -1, &validated)) return -1;
+    uint64_t symbols = 0, count = 0, strings = 0, string_size = 0;
+    if (!gak_elf_symbol_table(format, static_table, &symbols, &count,
+                              &strings, &string_size)) return -1;
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t entry_size = format->bits == 32 ? 16 : 24;
+    int big = format->big_endian != 0;
+    int64_t best = -1;
+    uint64_t best_start = 0;
+    for (uint64_t index = 0; index < validated.count; index++) {
+        uint64_t at = symbols + index * entry_size;
+        uint64_t section = gak_number(bytes, at + (entry_size == 16 ? 14 : 6), 2, big);
+        if (!section) continue;
+        uint64_t start = gak_number(bytes, at + (entry_size == 16 ? 4 : 8),
+                                    entry_size == 16 ? 4 : 8, big);
+        uint64_t size = gak_number(bytes, at + (entry_size == 16 ? 8 : 16),
+                                   entry_size == 16 ? 4 : 8, big);
+        if (address < start || (size ? address - start >= size : address != start)) continue;
+        if (best < 0 || start > best_start) {
+            best = (int64_t)index;
+            best_start = start;
+        }
+    }
+    if (best < 0) gak_format_fail("no ELF symbol covers address");
+    return best;
+}
+
 static const char *gak_elf_symbol_binding(uint8_t value) {
     switch (value) {
         case 0: return "local";

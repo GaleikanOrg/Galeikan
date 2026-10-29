@@ -632,6 +632,40 @@ impl FormatReport {
         }
     }
 
+    pub fn symbol_at_address(
+        &self,
+        bytes: &[u8],
+        address: u64,
+        static_table: bool,
+    ) -> Result<usize, String> {
+        if self.name.starts_with("ELF") && self.elf_file_type == 1 {
+            return Err("symbol address lookup is unavailable for relocatable ELF".into());
+        }
+        let symbols = if static_table {
+            self.static_symbols(bytes)?
+        } else {
+            self.dynamic_symbols(bytes)?
+        };
+        let mut best = None;
+        for (index, symbol) in symbols.iter().enumerate() {
+            if symbol.section_index == 0 {
+                continue;
+            }
+            let Some(relative) = address.checked_sub(symbol.address) else {
+                continue;
+            };
+            if (symbol.size == 0 && relative != 0) || (symbol.size != 0 && relative >= symbol.size)
+            {
+                continue;
+            }
+            if best.is_none_or(|(_, start)| symbol.address > start) {
+                best = Some((index, symbol.address));
+            }
+        }
+        best.map(|(index, _)| index)
+            .ok_or_else(|| "no ELF symbol covers address".into())
+    }
+
     pub fn imports(&self, bytes: &[u8]) -> Result<&[ImportInfo], String> {
         if !self.name.starts_with("PE") {
             return Err("PE imports require a PE image".into());
@@ -3304,6 +3338,60 @@ mod tests {
         assert_eq!(symbols[1].name, "puts");
         assert_eq!(symbols[2].name, "inspect");
         assert_eq!(symbols[2].address, 0x2000);
+    }
+
+    #[test]
+    fn symbol_lookup_uses_defined_ranges_and_nearest_start() {
+        let mut bytes = elf64_with_dynsym(true, false);
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0x401005, false).unwrap(),
+            2
+        );
+        assert_eq!(
+            report
+                .symbol_at_address(&bytes, 0x40100c, false)
+                .unwrap_err(),
+            "no ELF symbol covers address"
+        );
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0, false).unwrap_err(),
+            "no ELF symbol covers address"
+        );
+
+        let second = 0x200 + 24;
+        bytes[second + 6..second + 8].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[second + 8..second + 16].copy_from_slice(&0x401004_u64.to_le_bytes());
+        bytes[second + 16..second + 24].copy_from_slice(&4_u64.to_le_bytes());
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0x401005, false).unwrap(),
+            1
+        );
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0x401008, false).unwrap(),
+            2
+        );
+
+        bytes[second + 16..second + 24].copy_from_slice(&0_u64.to_le_bytes());
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0x401004, false).unwrap(),
+            1
+        );
+        assert_eq!(
+            report.symbol_at_address(&bytes, 0x401005, false).unwrap(),
+            2
+        );
+
+        bytes[16..18].copy_from_slice(&1_u16.to_le_bytes());
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report
+                .symbol_at_address(&bytes, 0x401005, false)
+                .unwrap_err(),
+            "symbol address lookup is unavailable for relocatable ELF"
+        );
     }
 
     #[test]
