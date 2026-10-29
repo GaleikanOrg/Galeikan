@@ -6165,6 +6165,18 @@ impl Runtime {
                 )?)
                 .map_err(|_| "symbol index outside i64 range")?,
             )),
+            (
+                "symbol_at_address_at" | "static_symbol_at_address_at",
+                [Value::Format(source, report), load_bias, address],
+            ) => Ok(Value::Int(
+                i64::try_from(report.symbol_at_address_at(
+                    source.bytes(),
+                    load_bias.as_uint()?,
+                    address.as_uint()?,
+                    name == "static_symbol_at_address_at",
+                )?)
+                .map_err(|_| "symbol index outside i64 range")?,
+            )),
             ("symbol_view" | "static_symbol_view", [Value::Format(source, report), index]) => {
                 let static_table = name == "static_symbol_view";
                 let index = usize::try_from(index.as_int()?).map_err(|_| {
@@ -7882,6 +7894,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ) => (&[Format, Int], Int),
         ("formats", "symbol_defined" | "static_symbol_defined") => (&[Format, Int], Bool),
         ("formats", "symbol_at_address" | "static_symbol_at_address") => (&[Format, UInt], Int),
+        ("formats", "symbol_at_address_at" | "static_symbol_at_address_at") => {
+            (&[Format, UInt, UInt], Int)
+        }
         ("formats", "symbol_view" | "static_symbol_view") => (&[Format, Int], Source),
         ("formats", "symbol_address_u64" | "static_symbol_address_u64") => (&[Format, Int], UInt),
         (

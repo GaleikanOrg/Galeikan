@@ -4521,6 +4521,50 @@ fn native_elf_static_symbols_match_vm_and_are_separate_from_dynamic_symbols() {
 }
 
 #[test]
+fn native_elf_biased_symbol_lookup_matches_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    fs::write(s.0.join("symbols.elf"), elf_static_symbol_fixture()).unwrap();
+    let script = s.write(
+        "biased_symbols.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, symbol_at_address_at, static_symbol_at_address_at\nfrom std.result import message\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nlet bias: u64 = 0x8000000000000000u64\nfn below() -> Result<i64> = symbol_at_address_at(report, bias, bias - 1u64)\nprint symbol_at_address_at(report, bias, bias + 0x401005u64)\nprint static_symbol_at_address_at(report, bias, bias + 0x401205u64)\nprint message(below())\n",
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm", "--allow-read"])
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    let native = Command::new(&executable)
+        .arg("--allow-read")
+        .arg(&s.0)
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(native.stdout, b"2\n2\nELF VA is below load bias\n");
+}
+
+#[test]
 fn native_elf_dynamic_symbols_match_vm_for_sections_and_hash_tables() {
     if !gcc_available() {
         return;

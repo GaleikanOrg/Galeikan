@@ -3273,6 +3273,19 @@ int64_t gak_native_formats_symbol_at_address(const void *value, uint64_t address
     return best;
 }
 
+int64_t gak_native_formats_symbol_at_address_at(const void *value,
+                                                 uint64_t load_bias,
+                                                 uint64_t address,
+                                                 int static_table) {
+    if (address < load_bias) {
+        gak_formats_error = NULL;
+        gak_format_fail("ELF VA is below load bias");
+        return -1;
+    }
+    return gak_native_formats_symbol_at_address(value, address - load_bias,
+                                                 static_table);
+}
+
 void *gak_native_formats_symbol_view(const void *value, int64_t index,
                                       int static_table) {
     gak_formats_error = NULL;

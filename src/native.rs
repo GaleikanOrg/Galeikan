@@ -4031,6 +4031,34 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_symbol_at_address\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Int);
             }
+            (
+                "symbol_at_address_at" | "static_symbol_at_address_at",
+                [report, load_bias, address],
+            ) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(load_bias, scope)? != Scalar::UInt {
+                    return Err(format!("formats.{name} load bias must be u64"));
+                }
+                let bias_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", bias_slot * 8).unwrap();
+                if self.expr(address, scope)? != Scalar::UInt {
+                    return Err(format!("formats.{name} address must be u64"));
+                }
+                self.uses_formats = true;
+                let mode = u8::from(name == "static_symbol_at_address_at");
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_symbol_at_address_at\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), bias_slot * 8, self.arg2(), self.arg3()).unwrap();
+                return Ok(Scalar::Int);
+            }
             ("symbol_view" | "static_symbol_view", [report, index]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));

@@ -666,6 +666,19 @@ impl FormatReport {
             .ok_or_else(|| "no ELF symbol covers address".into())
     }
 
+    pub fn symbol_at_address_at(
+        &self,
+        bytes: &[u8],
+        load_bias: u64,
+        address: u64,
+        static_table: bool,
+    ) -> Result<usize, String> {
+        let linked_address = address
+            .checked_sub(load_bias)
+            .ok_or("ELF VA is below load bias")?;
+        self.symbol_at_address(bytes, linked_address, static_table)
+    }
+
     pub fn symbol_view_range(
         &self,
         bytes: &[u8],
@@ -3397,6 +3410,19 @@ mod tests {
         assert_eq!(
             report.symbol_at_address(&bytes, 0x401005, false).unwrap(),
             2
+        );
+        let bias = 0x8000_0000_0000_0000_u64;
+        assert_eq!(
+            report
+                .symbol_at_address_at(&bytes, bias, bias + 0x401005, false)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            report
+                .symbol_at_address_at(&bytes, bias, bias - 1, false)
+                .unwrap_err(),
+            "ELF VA is below load bias"
         );
         assert_eq!(
             report
