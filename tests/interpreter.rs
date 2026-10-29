@@ -5283,13 +5283,14 @@ fn pe_section_inspection_preserves_source_and_matches_both_engines() {
     bytes[payload..].copy_from_slice(b"GAK\0");
     let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let script = s.write("section.gak", &format!(
-        "import std.binary\nimport std.formats\nlet source = binary.snapshot(binary.from_hex(\"{hex}\"))\nlet report = formats.probe(source)\nlet section = formats.section(report, 0)\nprint formats.name(section)\nprint formats.offset(section)\nprint formats.size(section)\nprint formats.address(section)\nprint formats.flags(section)\nimpact section\nimpact binary.deep(formats.data(section), 0, \"u16le\")\nprint formats.rva(report, 4096, 2)\nimpact binary.deep(formats.rva(report, 4096, 2), 0, \"u16le\")\nimpact binary.deep(formats.entry_view(report, 2), 0, \"u16le\")\n"
+        "import std.binary\nimport std.formats\nlet source = binary.snapshot(binary.from_hex(\"{hex}\"))\nlet report = formats.probe(source)\nlet section = formats.section(report, 0)\nfn missing_offset() -> Result<Section> = formats.section_at_offset(report, 0)\nfn missing_address() -> Result<Section> = formats.section_at_address(report, 0x2000u64)\nprint formats.name(section)\nprint formats.offset(section)\nprint formats.size(section)\nprint formats.address(section)\nprint formats.flags(section)\nprint formats.name(formats.section_at_offset(report, {payload} + 1))\nprint formats.name(formats.section_at_address(report, 0x1001u64))\nprint std.result.is_error(missing_offset())\nprint std.result.is_error(missing_address())\nimpact section\nimpact binary.deep(formats.data(section), 0, \"u16le\")\nprint formats.rva(report, 4096, 2)\nimpact binary.deep(formats.rva(report, 4096, 2), 0, \"u16le\")\nimpact binary.deep(formats.entry_view(report, 2), 0, \"u16le\")\n"
     ));
     let ast = s.run_engine(&script, "ast", false, &[]);
     let vm = s.run_engine(&script, "vm", false, &[]);
     assert!(ast.status.success(), "{}", stderr(&ast));
     assert_eq!(stdout(&ast), stdout(&vm));
     assert!(stdout(&ast).contains(".text\n432\n4\n0x1000\n0x60000020\n"));
+    assert!(stdout(&ast).contains("0x60000020\n.text\n.text\ntrue\ntrue\n"));
     assert!(stdout(&ast).contains("decoder: u16le, value: 16711"));
     assert!(stdout(&ast).contains("view of sha256:"));
     assert!(stdout(&ast).contains("PE RVA 0x1000"));

@@ -5488,7 +5488,7 @@ fn native_format_sections_match_vm_and_keep_data_provenance() {
     let data_index = if cfg!(windows) { 0 } else { 1 };
     let script = s.write(
         "format-sections.gak",
-        &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size as binary_size\nfrom std.formats import probe, section, name, offset, size, virtual_size, address, flags, writable, executable, data\nfrom std.result import is_error\nfrom std.cli import arg\nlet report: Format = probe(analyze(arg(0), 67108864))\nlet first: Section = section(report, 0)\nlet chosen: Section = section(report, {data_index})\nfn invalid_section() -> Result<Section> = section(report, 999999)\nprint name(first)\nprint offset(first)\nprint size(first)\nprint virtual_size(first)\nprint address(first)\nprint flags(first)\nprint writable(first)\nprint executable(first)\nprint is_error(invalid_section())\nprint name(chosen)\nprint binary_size(data(chosen))\nprint sha256(data(chosen))\n"),
+        &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size as binary_size, value_u64\nfrom std.formats import probe, section, section_at_offset, section_at_address, field, name, offset, size, virtual_size, address, flags, writable, executable, data\nfrom std.result import is_error\nfrom std.cli import arg\nlet report: Format = probe(analyze(arg(0), 67108864))\nlet first: Section = section(report, 0)\nlet chosen: Section = section(report, {data_index})\nfn invalid_section() -> Result<Section> = section(report, 999999)\nfn invalid_offset() -> Result<Section> = section_at_offset(report, -1)\nfn invalid_address() -> Result<Section> = section_at_address(report, 0xffffffffffffffffu64)\nprint name(first)\nprint offset(first)\nprint size(first)\nprint virtual_size(first)\nprint address(first)\nprint flags(first)\nprint writable(first)\nprint executable(first)\nprint is_error(invalid_section())\nprint name(chosen)\nprint name(section_at_offset(report, offset(chosen)))\nprint name(section_at_address(report, value_u64(field(report, \"entry\"))))\nprint is_error(invalid_offset())\nprint is_error(invalid_address())\nprint binary_size(data(chosen))\nprint sha256(data(chosen))\n"),
     );
     let input = if cfg!(windows) {
         PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()))
@@ -5531,6 +5531,61 @@ fn native_format_sections_match_vm_and_keep_data_provenance() {
         String::from_utf8_lossy(&native.stderr)
     );
     assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
+fn native_elf_section_address_lookup_rejects_nonalloc_and_relocatable_sections() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut nonalloc = elf_dynamic_symbol_fixture(true, false);
+    nonalloc[0x3c8..0x3d0].fill(0);
+    let mut relocatable = elf_dynamic_symbol_fixture(true, false);
+    relocatable[16..18].copy_from_slice(&1u16.to_le_bytes());
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let script = s.write(
+        "section-address.gak",
+        &format!(
+            "let nonalloc = std.formats.probe(std.binary.snapshot(std.binary.from_hex(\"{}\")))\nlet relocatable = std.formats.probe(std.binary.snapshot(std.binary.from_hex(\"{}\")))\nfn missing() -> Result<Section> = std.formats.section_at_address(nonalloc, 0u64)\nfn ambiguous() -> Result<Section> = std.formats.section_at_address(relocatable, 0u64)\nprint std.result.message(missing())\nprint std.result.message(ambiguous())\n",
+            hex(&nonalloc),
+            hex(&relocatable)
+        ),
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        "address is not within a section\nsection address lookup is unavailable for relocatable ELF\n"
+    );
 }
 
 #[test]

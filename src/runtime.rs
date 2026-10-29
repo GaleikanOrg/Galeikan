@@ -6401,6 +6401,18 @@ impl Runtime {
                 let info = report.section(index).ok_or("section index out of range")?;
                 Ok(Value::Section(source.clone(), info.clone()))
             }
+            ("section_at_offset", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "section file offset out of range")?;
+                let info = report
+                    .section_at_offset(offset)
+                    .ok_or("file offset is not within a file-backed section")?;
+                Ok(Value::Section(source.clone(), info.clone()))
+            }
+            ("section_at_address", [Value::Format(source, report), address]) => {
+                let info = report.section_at_address(address.as_uint()?)?;
+                Ok(Value::Section(source.clone(), info.clone()))
+            }
             ("overlay", [Value::Format(source, report)]) => {
                 let (start, end) = report.overlay_range(source.bytes().len())?;
                 Ok(Value::Source(Arc::new(Source::view(
@@ -7868,6 +7880,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "field") => (&[Format, Str], Observation),
         ("formats", "image_base") => (&[Format], UInt),
         ("formats", "section") => (&[Format, Int], Type::Section),
+        ("formats", "section_at_offset") => (&[Format, Int], Type::Section),
+        ("formats", "section_at_address") => (&[Format, UInt], Type::Section),
         ("formats", "overlay") => (&[Format], Source),
         ("formats", "rva" | "va") => (&[Format, Int, Int], Source),
         ("formats", "pe_va") => (&[Format, UInt, Int], Source),

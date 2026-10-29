@@ -4522,9 +4522,11 @@ impl Codegen {
             }
             _ => {}
         }
-        if let ("section", [report, index]) = (name, args) {
+        if let ("section" | "section_at_offset" | "section_at_address", [report, index]) =
+            (name, args)
+        {
             if self.expr(report, scope)? != Scalar::Format {
-                return Err("formats.section expects Format".into());
+                return Err(format!("formats.{name} expects Format"));
             }
             let report_slot = self.reserve_slot()?;
             writeln!(
@@ -4533,12 +4535,17 @@ impl Codegen {
                 report_slot * 8
             )
             .unwrap();
-            if self.expr(index, scope)? != Scalar::Int {
-                return Err("formats.section index must be i64".into());
+            let expected = if name == "section_at_address" {
+                Scalar::UInt
+            } else {
+                Scalar::Int
+            };
+            if self.expr(index, scope)? != expected {
+                return Err(format!("formats.{name} address has the wrong integer type"));
             }
             self.uses_formats = true;
             let ready = self.label();
-            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_section\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_{name}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
             return Ok(Scalar::Section);
         }
         if let [section] = args {

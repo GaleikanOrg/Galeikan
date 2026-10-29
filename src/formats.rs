@@ -509,6 +509,37 @@ impl FormatReport {
         self.section_info.get(index)
     }
 
+    pub fn section_at_offset(&self, offset: usize) -> Option<&SectionInfo> {
+        self.section_info.iter().find(|section| {
+            section.file_backed
+                && offset
+                    .checked_sub(section.file_offset)
+                    .is_some_and(|relative| relative < section.file_size)
+        })
+    }
+
+    pub fn section_at_address(&self, address: u64) -> Result<&SectionInfo, String> {
+        if self.name.starts_with("ELF") && self.elf_file_type == 1 {
+            return Err("section address lookup is unavailable for relocatable ELF".into());
+        }
+        self.section_info
+            .iter()
+            .find(|section| {
+                if self.name.starts_with("ELF") && section.flags & 2 == 0 {
+                    return false;
+                }
+                let span = if self.name.starts_with("PE") {
+                    section.virtual_size.max(section.file_size as u64)
+                } else {
+                    section.virtual_size
+                };
+                address
+                    .checked_sub(section.virtual_address)
+                    .is_some_and(|relative| relative < span)
+            })
+            .ok_or_else(|| "address is not within a section".into())
+    }
+
     pub fn relocation_location(&self) -> &'static str {
         if self.name.starts_with("PE") {
             "rva"

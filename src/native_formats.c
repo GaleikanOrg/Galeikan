@@ -550,6 +550,60 @@ void *gak_native_formats_section(const void *value, int64_t index) {
     return result;
 }
 
+static void *gak_native_formats_section_at(const void *value, uint64_t point,
+                                            int by_address) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (!format) { gak_format_fail("invalid Format"); return NULL; }
+    if (by_address && format->kind == 2 && format->file_type == 1) {
+        gak_format_fail("section address lookup is unavailable for relocatable ELF");
+        return NULL;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    unsigned width = format->bits == 32 ? 4 : 8;
+    int big = format->big_endian != 0;
+    for (uint64_t index = 0; index < format->sections; index++) {
+        uint64_t at = format->section_table + index * format->section_stride;
+        uint64_t file_offset, file_size, address, virtual_size;
+        if (format->kind == 1) {
+            virtual_size = gak_number(bytes, at + 8, 4, 0);
+            address = gak_number(bytes, at + 12, 4, 0);
+            file_size = gak_number(bytes, at + 16, 4, 0);
+            file_offset = gak_number(bytes, at + 20, 4, 0);
+            if (virtual_size < file_size) virtual_size = file_size;
+        } else {
+            uint64_t kind = gak_number(bytes, at + 4, 4, big);
+            uint64_t flags = gak_number(bytes, at + 8, width, big);
+            if (by_address && (flags & 2u) == 0) continue;
+            address = gak_number(bytes, at + (width == 4 ? 12 : 16), width, big);
+            file_offset = gak_number(bytes, at + (width == 4 ? 16 : 24), width, big);
+            virtual_size = gak_number(bytes, at + (width == 4 ? 20 : 32), width, big);
+            file_size = index == 0 || kind == 8 ? 0 : virtual_size;
+        }
+        uint64_t start = by_address ? address : file_offset;
+        uint64_t size = by_address ? virtual_size : file_size;
+        if (size && point >= start && point - start < size)
+            return gak_native_formats_section(value, (int64_t)index);
+    }
+    gak_format_fail(by_address ? "address is not within a section"
+                               : "file offset is not within a file-backed section");
+    return NULL;
+}
+
+void *gak_native_formats_section_at_offset(const void *value, int64_t offset) {
+    if (offset < 0) {
+        gak_formats_error = NULL;
+        gak_format_fail("section file offset out of range");
+        return NULL;
+    }
+    return gak_native_formats_section_at(value, (uint64_t)offset, 0);
+}
+
+void *gak_native_formats_section_at_address(const void *value, uint64_t address) {
+    return gak_native_formats_section_at(value, address, 1);
+}
+
 static void *gak_format_box(const char *text, size_t length) {
     if (length > 64u * 1024u * 1024u - 8u ||
         format_memory > 64u * 1024u * 1024u - 8u - length) {
