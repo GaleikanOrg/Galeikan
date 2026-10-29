@@ -1819,6 +1819,18 @@ int64_t gak_native_formats_relocation_number(const void *value, int64_t index,
          : part == 2 ? (int64_t)result.symbol : result.addend;
 }
 
+uint64_t gak_native_formats_relocation_address_u64(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    if (index < 0) { gak_format_fail("relocation index out of range"); return 0; }
+    GakRelocationSelection result = {0};
+    if (!gak_relocation_scan(value, index, &result)) return 0;
+    if ((uint64_t)index >= result.count) {
+        gak_format_fail("relocation index out of range"); return 0;
+    }
+    return result.address;
+}
+
 static const char *gak_elf_relocation_label(uint16_t machine, uint64_t kind) {
     static const struct { uint16_t machine; uint32_t kind; const char *name; } labels[] = {
         {3, 1, "R_386_32"}, {3, 2, "R_386_PC32"}, {3, 3, "R_386_GOT32"},

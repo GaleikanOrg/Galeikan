@@ -4078,8 +4078,14 @@ impl Codegen {
                 return Ok(Scalar::Int);
             }
             (
-                "relocation_rva" | "relocation_address" | "relocation_type" | "relocation_kind"
-                | "relocation_summary" | "relocation_symbol" | "relocation_addend",
+                "relocation_rva"
+                | "relocation_address"
+                | "relocation_address_u64"
+                | "relocation_type"
+                | "relocation_kind"
+                | "relocation_summary"
+                | "relocation_symbol"
+                | "relocation_addend",
                 [report, index],
             ) => {
                 if self.expr(report, scope)? != Scalar::Format {
@@ -4097,6 +4103,10 @@ impl Codegen {
                 }
                 self.uses_formats = true;
                 let ready = self.label();
+                if name == "relocation_address_u64" {
+                    writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_relocation_address_u64\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                    return Ok(Scalar::UInt);
+                }
                 if matches!(
                     name,
                     "relocation_rva"

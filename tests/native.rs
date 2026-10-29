@@ -3643,7 +3643,7 @@ fn native_elf32_rel_and_rela_match_vm_in_both_byte_orders() {
     let file = s.0.join("relocations32.elf");
     let script = s.write(
         "elf32_relocations.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_address, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.result import is_error, recover\nlet report: Format = probe(analyze(\"relocations32.elf\", 4096))\nfn addend() -> Result<i64> = relocation_addend(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nprint relocation_summary(report, 0)\nprint relocation_address(report, 0)\nprint relocation_type(report, 0)\nprint relocation_kind(report, 0)\nprint relocation_symbol(report, 0)\nprint is_error(addend())\nprint recover(addend(), 0)\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_address, relocation_address_u64, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.result import is_error, recover\nlet report: Format = probe(analyze(\"relocations32.elf\", 4096))\nfn addend() -> Result<i64> = relocation_addend(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nprint relocation_summary(report, 0)\nprint relocation_address(report, 0)\nprint relocation_address_u64(report, 0)\nprint relocation_type(report, 0)\nprint relocation_kind(report, 0)\nprint relocation_symbol(report, 0)\nprint is_error(addend())\nprint recover(addend(), 0)\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -4053,7 +4053,7 @@ fn native_elf_relocations_match_vm_from_sections_and_dynamic_tables() {
     let file = s.0.join("relocations.elf");
     let script = s.write(
         "elf_relocations.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_rva, relocation_address, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"relocations.elf\", 4096))\nfn no_rva() -> Result<i64> = relocation_rva(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nfor index in range(relocation_count(report)) {\n    print relocation_summary(report, index)\n    print relocation_address(report, index)\n    print relocation_type(report, index)\n    print relocation_kind(report, index)\n    print relocation_symbol(report, index)\n    print relocation_addend(report, index)\n}\nprint is_error(no_rva())\nprint message(no_rva())\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_rva, relocation_address, relocation_address_u64, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"relocations.elf\", 4096))\nfn no_rva() -> Result<i64> = relocation_rva(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nfor index in range(relocation_count(report)) {\n    print relocation_summary(report, index)\n    print relocation_address(report, index)\n    print relocation_address_u64(report, index)\n    print relocation_type(report, index)\n    print relocation_kind(report, index)\n    print relocation_symbol(report, index)\n    print relocation_addend(report, index)\n}\nprint is_error(no_rva())\nprint message(no_rva())\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -4158,6 +4158,24 @@ fn native_elf_relocations_match_vm_from_sections_and_dynamic_tables() {
             );
         }
     }
+    let high_address = 0x8000_0000_0040_4000u64;
+    let mut high = bytes.clone();
+    high[0x200..0x208].copy_from_slice(&high_address.to_le_bytes());
+    fs::write(&file, high).unwrap();
+    let vm = run_vm();
+    let native = run_native();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(String::from_utf8_lossy(&native.stdout).contains(&high_address.to_string()));
     for (offset, value, error) in [
         (
             0x120 + 2 * 16 + 8,
@@ -4615,7 +4633,7 @@ fn native_pe_relocations_match_vm_and_reject_malformed_blocks() {
     fs::write(&file, &bytes).unwrap();
     let script = s.write(
         "relocations.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_rva, relocation_address, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"relocations.pe\", 4096))\nfn missing_symbol() -> Result<i64> = relocation_symbol(report, 0)\nfn missing_addend() -> Result<i64> = relocation_addend(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nfor index in range(relocation_count(report)) {\n    print relocation_summary(report, index)\n    print relocation_rva(report, index)\n    print relocation_address(report, index)\n    print relocation_type(report, index)\n    print relocation_kind(report, index)\n}\nprint is_error(missing_symbol())\nprint message(missing_symbol())\nprint is_error(missing_addend())\nprint message(missing_addend())\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, relocation_count, relocation_location, relocation_rva, relocation_address, relocation_address_u64, relocation_type, relocation_kind, relocation_summary, relocation_symbol, relocation_addend\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"relocations.pe\", 4096))\nfn missing_symbol() -> Result<i64> = relocation_symbol(report, 0)\nfn missing_addend() -> Result<i64> = relocation_addend(report, 0)\nprint relocation_count(report)\nprint relocation_location(report)\nfor index in range(relocation_count(report)) {\n    print relocation_summary(report, index)\n    print relocation_rva(report, index)\n    print relocation_address(report, index)\n    print relocation_address_u64(report, index)\n    print relocation_type(report, index)\n    print relocation_kind(report, index)\n}\nprint is_error(missing_symbol())\nprint message(missing_symbol())\nprint is_error(missing_addend())\nprint message(missing_addend())\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -4653,7 +4671,7 @@ fn native_pe_relocations_match_vm_and_reject_malformed_blocks() {
         String::from_utf8_lossy(&native.stderr)
     );
     assert_eq!(native.stdout, vm.stdout);
-    assert_eq!(native.stdout, b"1\nrva\nDIR64 @ 0x1020\n4128\n0x1020\n10\nDIR64\ntrue\nELF relocation expected\ntrue\nrelocation has no explicit addend\n");
+    assert_eq!(native.stdout, b"1\nrva\nDIR64 @ 0x1020\n4128\n0x1020\n4128\n10\nDIR64\ntrue\nELF relocation expected\ntrue\nrelocation has no explicit addend\n");
 
     for (offset, replacement, error) in [
         (

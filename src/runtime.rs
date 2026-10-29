@@ -6270,8 +6270,14 @@ impl Runtime {
                 }
             }
             (
-                "relocation_rva" | "relocation_address" | "relocation_type" | "relocation_kind"
-                | "relocation_summary" | "relocation_symbol" | "relocation_addend",
+                "relocation_rva"
+                | "relocation_address"
+                | "relocation_address_u64"
+                | "relocation_type"
+                | "relocation_kind"
+                | "relocation_summary"
+                | "relocation_symbol"
+                | "relocation_addend",
                 [Value::Format(source, report), index],
             ) => {
                 let index = usize::try_from(index.as_int()?)
@@ -6288,6 +6294,7 @@ impl Runtime {
                     )),
                     "relocation_rva" => Err("relocation_rva requires a PE image".into()),
                     "relocation_address" => Ok(Value::Str(format!("0x{:x}", relocation.address))),
+                    "relocation_address_u64" => Ok(Value::UInt(relocation.address)),
                     "relocation_type" if relocation.relr => {
                         Err("RELR relocation has no raw type code".into())
                     }
@@ -7865,6 +7872,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "relocation_address" | "relocation_kind" | "relocation_summary") => {
             (&[Format, Int], Str)
         }
+        ("formats", "relocation_address_u64") => (&[Format, Int], UInt),
         ("formats", "export_name" | "export_target" | "export_kind" | "export_summary") => {
             (&[Format, Int], Str)
         }
