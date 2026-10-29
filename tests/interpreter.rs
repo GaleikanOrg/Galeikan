@@ -9,6 +9,35 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn ip_relative_data_references_match_ast_vm_and_bundle() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "data-refs.gak",
+        "import std.binary\nimport std.asm\nimport std.list\nlet source = binary.snapshot(binary.from_hex(\"48 8d 05 09 00 00 00 48 8b 05 02 00 00 00 c3\"))\nlet lines = asm.reachable(source, 0, 0x1000u64, 64, 3)\nlet targets: List<u64> = asm.data_refs(lines)\nlet sites: List<u64> = asm.data_xrefs(lines, 0x1010u64)\nprint list.count(targets)\nprint targets[0]\nprint asm.data_target_u64(asm.at(lines, 0))\nprint list.count(sites)\nprint sites[0]\nprint sites[1]\nprint list.count(asm.data_xrefs(lines, 0x1011u64))\nprint list.count(asm.xrefs(lines, 0x1010u64))\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "1\n4112\n4112\n2\n4096\n4103\n0\n0\n");
+    }
+}
+
+#[test]
 fn direct_xrefs_calls_and_overlaps_match_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(

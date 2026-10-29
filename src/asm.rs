@@ -10,6 +10,7 @@ pub struct Decoded {
     pub mnemonic: String,
     pub flow: &'static str,
     pub target: Option<u64>,
+    pub data_target: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -83,6 +84,9 @@ pub fn decode(bytes: &[u8], offset: usize, ip: u64, bitness: u32) -> Result<Deco
     } else {
         None
     };
+    let data_target = instruction
+        .is_ip_rel_memory_operand()
+        .then(|| instruction.ip_rel_memory_address());
     Ok(Decoded {
         size: instruction.len(),
         ip,
@@ -90,6 +94,7 @@ pub fn decode(bytes: &[u8], offset: usize, ip: u64, bitness: u32) -> Result<Deco
         mnemonic: format!("{:?}", instruction.mnemonic()).to_ascii_lowercase(),
         flow,
         target,
+        data_target,
     })
 }
 
@@ -219,6 +224,25 @@ pub fn call_targets(instructions: &[&Decoded]) -> Vec<u64> {
         .collect()
 }
 
+/// Distinct IP-relative memory addresses, sorted by address.
+pub fn data_refs(instructions: &[&Decoded]) -> Vec<u64> {
+    instructions
+        .iter()
+        .filter_map(|instruction| instruction.data_target)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Instruction addresses that refer to `target` through IP-relative memory.
+pub fn data_xrefs(instructions: &[&Decoded], target: u64) -> Vec<u64> {
+    instructions
+        .iter()
+        .filter(|instruction| instruction.data_target == Some(target))
+        .map(|instruction| instruction.ip)
+        .collect()
+}
+
 /// Marks starts that fall inside an earlier decoded instruction's byte span.
 pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
     let mut end = 0_u64;
@@ -236,7 +260,30 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{blocks, call_targets, decode, overlaps, reachable, xrefs};
+    use super::{blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs};
+
+    #[test]
+    fn ip_relative_data_references_are_separate_from_branch_targets() {
+        let bytes = b"\x48\x8d\x05\x09\0\0\0\x48\x8b\x05\x02\0\0\0\xc3";
+        let found = reachable(bytes, 0, 0x1000, 64, 3).unwrap();
+        let decoded = found
+            .iter()
+            .map(|(_, instruction)| instruction)
+            .collect::<Vec<_>>();
+        assert_eq!(decoded[0].data_target, Some(0x1010));
+        assert_eq!(decoded[1].data_target, Some(0x1010));
+        assert_eq!(decoded[0].target, None);
+        assert_eq!(data_refs(&decoded), [0x1010]);
+        assert_eq!(data_xrefs(&decoded, 0x1010), [0x1000, 0x1007]);
+        assert!(xrefs(&decoded, 0x1010).is_empty());
+        assert!(data_xrefs(&decoded, 0x1011).is_empty());
+        let absolute = decode(b"\x48\xa1\x10\x10\0\0\0\0\0\0", 0, 0x2000, 64).unwrap();
+        assert_eq!(absolute.data_target, None);
+        let indirect = decode(b"\xff\x15\x02\0\0\0", 0, 0x3000, 64).unwrap();
+        assert_eq!(indirect.flow, "indirect_call");
+        assert_eq!(indirect.target, None);
+        assert_eq!(indirect.data_target, Some(0x3008));
+    }
 
     #[test]
     fn decodes_single_instructions_without_running_them() {

@@ -1682,6 +1682,7 @@ fn encode_call_value(value: Value) -> Result<JsonValue, String> {
             "size": instruction.decoded.size, "offset": instruction.offset,
             "address": format!("0x{:x}", instruction.decoded.ip),
             "target": instruction.decoded.target.map(|target| format!("0x{target:x}")),
+            "data_target": instruction.decoded.data_target.map(|target| format!("0x{target:x}")),
             "source": instruction.source.label, "origin": instruction.source.provenance(),
             "sha256": instruction.source.sha256,
             "source_lineage": instruction.source.lineage()
@@ -5895,6 +5896,11 @@ impl Runtime {
                 .target
                 .map(Value::UInt)
                 .ok_or_else(|| "instruction has no direct branch target".into()),
+            ("data_target_u64", [Value::Instruction(i)]) => i
+                .decoded
+                .data_target
+                .map(Value::UInt)
+                .ok_or_else(|| "instruction has no IP-relative data target".into()),
             ("successors", [Value::Instruction(i)]) => Ok(Value::List(
                 Arc::new(
                     i.decoded
@@ -5930,9 +5936,40 @@ impl Runtime {
                 ),
                 Some(ResultKind::UInt),
             )),
+            ("data_refs", [Value::Disassembly(disassembly)]) => Ok(Value::List(
+                Arc::new(
+                    asm::data_refs(
+                        &disassembly
+                            .instructions
+                            .iter()
+                            .map(|instruction| &instruction.decoded)
+                            .collect::<Vec<_>>(),
+                    )
+                    .into_iter()
+                    .map(Value::UInt)
+                    .collect(),
+                ),
+                Some(ResultKind::UInt),
+            )),
             ("xrefs", [Value::Disassembly(disassembly), address]) => Ok(Value::List(
                 Arc::new(
                     asm::xrefs(
+                        &disassembly
+                            .instructions
+                            .iter()
+                            .map(|instruction| &instruction.decoded)
+                            .collect::<Vec<_>>(),
+                        address.as_uint()?,
+                    )
+                    .into_iter()
+                    .map(Value::UInt)
+                    .collect(),
+                ),
+                Some(ResultKind::UInt),
+            )),
+            ("data_xrefs", [Value::Disassembly(disassembly), address]) => Ok(Value::List(
+                Arc::new(
+                    asm::data_xrefs(
                         &disassembly
                             .instructions
                             .iter()
@@ -7775,15 +7812,15 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             check_arguments(&qualified, args, &[Disassembly])?;
             return Ok(Int);
         }
-        if name == "call_targets" || name == "overlap_count" {
+        if matches!(name, "call_targets" | "data_refs" | "overlap_count") {
             check_arguments(&qualified, args, &[Disassembly])?;
-            return Ok(if name == "call_targets" {
+            return Ok(if name != "overlap_count" {
                 Type::List(Some(ResultKind::UInt))
             } else {
                 Int
             });
         }
-        if name == "xrefs" {
+        if matches!(name, "xrefs" | "data_xrefs") {
             check_arguments(&qualified, args, &[Disassembly, UInt])?;
             return Ok(Type::List(Some(ResultKind::UInt)));
         }
@@ -7826,7 +7863,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         }
         let result = match name {
             "text" | "mnemonic" | "flow" | "address" | "target" => Str,
-            "address_u64" | "target_u64" => UInt,
+            "address_u64" | "target_u64" | "data_target_u64" => UInt,
             "size" | "offset" | "next" => Int,
             "source" => Source,
             "bytes" => Bytes,
