@@ -6213,6 +6213,7 @@ impl Runtime {
                 | "symbol_visibility"
                 | "symbol_role"
                 | "symbol_address"
+                | "symbol_address_u64"
                 | "symbol_size"
                 | "symbol_section"
                 | "symbol_defined"
@@ -6223,6 +6224,7 @@ impl Runtime {
                 | "static_symbol_visibility"
                 | "static_symbol_role"
                 | "static_symbol_address"
+                | "static_symbol_address_u64"
                 | "static_symbol_size"
                 | "static_symbol_section"
                 | "static_symbol_defined"
@@ -6249,6 +6251,7 @@ impl Runtime {
                     "symbol_visibility" => Ok(Value::Str(symbol.visibility_name().into())),
                     "symbol_role" => Ok(Value::Str(symbol.role().into())),
                     "symbol_address" => Ok(Value::Str(format!("0x{:x}", symbol.address))),
+                    "symbol_address_u64" => Ok(Value::UInt(symbol.address)),
                     "symbol_size" => {
                         Ok(Value::Int(i64::try_from(symbol.size).map_err(|_| {
                             format!("{label} symbol size outside i64 range")
@@ -7836,6 +7839,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             "symbol_size" | "symbol_section" | "static_symbol_size" | "static_symbol_section",
         ) => (&[Format, Int], Int),
         ("formats", "symbol_defined" | "static_symbol_defined") => (&[Format, Int], Bool),
+        ("formats", "symbol_address_u64" | "static_symbol_address_u64") => (&[Format, Int], UInt),
         (
             "formats",
             "symbol_name"

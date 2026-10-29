@@ -3199,6 +3199,23 @@ int64_t gak_native_formats_symbol_number(const void *value, int64_t index,
     return result.section != 0;
 }
 
+uint64_t gak_native_formats_symbol_address_u64(const void *value, int64_t index,
+                                                int static_table) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    if (index < 0) {
+        gak_format_fail(static_table ? "static symbol index out of range" :
+                                       "dynamic symbol index out of range"); return 0;
+    }
+    GakSymbolSelection result = {0};
+    if (!gak_elf_symbol_scan(value, static_table, index, &result)) return 0;
+    if ((uint64_t)index >= result.count) {
+        gak_format_fail(static_table ? "static symbol index out of range" :
+                                       "dynamic symbol index out of range"); return 0;
+    }
+    return result.address;
+}
+
 static const char *gak_elf_symbol_binding(uint8_t value) {
     switch (value) {
         case 0: return "local";

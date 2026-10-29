@@ -3994,6 +3994,7 @@ impl Codegen {
                 | "symbol_visibility"
                 | "symbol_role"
                 | "symbol_address"
+                | "symbol_address_u64"
                 | "symbol_size"
                 | "symbol_section"
                 | "symbol_defined"
@@ -4004,6 +4005,7 @@ impl Codegen {
                 | "static_symbol_visibility"
                 | "static_symbol_role"
                 | "static_symbol_address"
+                | "static_symbol_address_u64"
                 | "static_symbol_size"
                 | "static_symbol_section"
                 | "static_symbol_defined"
@@ -4027,6 +4029,10 @@ impl Codegen {
                 }
                 self.uses_formats = true;
                 let ready = self.label();
+                if property == "symbol_address_u64" {
+                    writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {mode}\n    call gak_native_formats_symbol_address_u64\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
+                    return Ok(Scalar::UInt);
+                }
                 if matches!(
                     property,
                     "symbol_size" | "symbol_section" | "symbol_defined"

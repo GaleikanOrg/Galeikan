@@ -4419,7 +4419,7 @@ fn native_elf_static_symbols_match_vm_and_are_separate_from_dynamic_symbols() {
     let file = s.0.join("symbols.elf");
     let script = s.write(
         "static_symbols.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, symbol_count, static_symbol_count, static_symbol_name, static_symbol_binding, static_symbol_type, static_symbol_visibility, static_symbol_role, static_symbol_address, static_symbol_size, static_symbol_section, static_symbol_defined, static_symbol_summary\nfrom std.iter import range\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nprint symbol_count(report)\nprint static_symbol_count(report)\nfor index in range(static_symbol_count(report)) {\n    print static_symbol_name(report, index)\n    print static_symbol_binding(report, index)\n    print static_symbol_type(report, index)\n    print static_symbol_visibility(report, index)\n    print static_symbol_role(report, index)\n    print static_symbol_address(report, index)\n    print static_symbol_size(report, index)\n    print static_symbol_section(report, index)\n    print static_symbol_defined(report, index)\n    print static_symbol_summary(report, index)\n}\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, symbol_count, static_symbol_count, static_symbol_name, static_symbol_binding, static_symbol_type, static_symbol_visibility, static_symbol_role, static_symbol_address, static_symbol_address_u64, static_symbol_size, static_symbol_section, static_symbol_defined, static_symbol_summary\nfrom std.iter import range\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nprint symbol_count(report)\nprint static_symbol_count(report)\nfor index in range(static_symbol_count(report)) {\n    print static_symbol_name(report, index)\n    print static_symbol_binding(report, index)\n    print static_symbol_type(report, index)\n    print static_symbol_visibility(report, index)\n    print static_symbol_role(report, index)\n    print static_symbol_address(report, index)\n    print static_symbol_address_u64(report, index)\n    print static_symbol_size(report, index)\n    print static_symbol_section(report, index)\n    print static_symbol_defined(report, index)\n    print static_symbol_summary(report, index)\n}\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -4466,6 +4466,25 @@ fn native_elf_static_symbols_match_vm_and_are_separate_from_dynamic_symbols() {
     );
     assert!(String::from_utf8_lossy(&native.stdout).contains("hidden [local object] @ 0x402000"));
 
+    let high_address = 0x8000_0000_0040_1200u64;
+    let mut high = elf_static_symbol_fixture();
+    high[0x500 + 2 * 24 + 8..0x500 + 2 * 24 + 16].copy_from_slice(&high_address.to_le_bytes());
+    fs::write(&file, high).unwrap();
+    let vm = run_vm();
+    let native = run_native();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(String::from_utf8_lossy(&native.stdout).contains(&high_address.to_string()));
+
     bytes[0x380 + 3 * 64 + 40..0x380 + 3 * 64 + 44].copy_from_slice(&0u32.to_le_bytes());
     fs::write(&file, &bytes).unwrap();
     let vm = run_vm();
@@ -4510,7 +4529,7 @@ fn native_elf_dynamic_symbols_match_vm_for_sections_and_hash_tables() {
     let file = s.0.join("symbols.elf");
     let script = s.write(
         "symbols.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, symbol_count, symbol_name, symbol_binding, symbol_type, symbol_visibility, symbol_role, symbol_address, symbol_size, symbol_section, symbol_defined, symbol_summary\nfrom std.iter import range\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nprint symbol_count(report)\nfor index in range(symbol_count(report)) {\n    print symbol_name(report, index)\n    print symbol_binding(report, index)\n    print symbol_type(report, index)\n    print symbol_visibility(report, index)\n    print symbol_role(report, index)\n    print symbol_address(report, index)\n    print symbol_size(report, index)\n    print symbol_section(report, index)\n    print symbol_defined(report, index)\n    print symbol_summary(report, index)\n}\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, symbol_count, symbol_name, symbol_binding, symbol_type, symbol_visibility, symbol_role, symbol_address, symbol_address_u64, symbol_size, symbol_section, symbol_defined, symbol_summary\nfrom std.iter import range\nlet report: Format = probe(analyze(\"symbols.elf\", 4096))\nprint symbol_count(report)\nfor index in range(symbol_count(report)) {\n    print symbol_name(report, index)\n    print symbol_binding(report, index)\n    print symbol_type(report, index)\n    print symbol_visibility(report, index)\n    print symbol_role(report, index)\n    print symbol_address(report, index)\n    print symbol_address_u64(report, index)\n    print symbol_size(report, index)\n    print symbol_section(report, index)\n    print symbol_defined(report, index)\n    print symbol_summary(report, index)\n}\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -4587,6 +4606,25 @@ fn native_elf_dynamic_symbols_match_vm_for_sections_and_hash_tables() {
     assert!(native
         .stdout
         .ends_with(b"inspect [exported function] @ 0x2000\n"));
+
+    let high_address = 0x8000_0000_0040_1000u64;
+    let mut high = elf_dynamic_symbol_fixture(true, false);
+    high[0x200 + 2 * 24 + 8..0x200 + 2 * 24 + 16].copy_from_slice(&high_address.to_le_bytes());
+    fs::write(&file, high).unwrap();
+    let vm = run_vm();
+    let native = run_native();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+    assert!(String::from_utf8_lossy(&native.stdout).contains(&high_address.to_string()));
 
     let mut oversized = elf_dynamic_symbol_fixture(true, false);
     oversized[0x200 + 2 * 24 + 16..0x200 + 2 * 24 + 24]
