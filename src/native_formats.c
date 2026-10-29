@@ -2678,6 +2678,25 @@ int64_t gak_native_formats_export_number(const void *value, int64_t index,
     return (int64_t)(address ? result.rva : result.ordinal);
 }
 
+void *gak_native_formats_export_view(const void *value, int64_t index,
+                                      int64_t count) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    if (index < 0) { gak_format_fail("export index out of range"); return NULL; }
+    if (count < 0) {
+        gak_format_fail("RVA view length must not be negative"); return NULL;
+    }
+    GakExportSelection result = {0};
+    if (!gak_pe_export_scan(value, index, &result)) return NULL;
+    if ((uint64_t)index >= result.count) {
+        gak_format_fail("export index out of range"); return NULL;
+    }
+    if (result.is_forwarder) {
+        gak_format_fail("forwarded export has no direct address"); return NULL;
+    }
+    return gak_pe_rva(value, result.rva, (uint64_t)count);
+}
+
 static void *gak_export_name(const GakExportSelection *result) {
     if (result->named)
         return gak_dependency_text(result->name, result->name_length);

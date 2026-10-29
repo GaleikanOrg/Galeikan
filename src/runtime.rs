@@ -6392,6 +6392,19 @@ impl Runtime {
                     }
                 }
             }
+            ("export_view", [Value::Format(source, report), index, count]) => {
+                let index =
+                    usize::try_from(index.as_int()?).map_err(|_| "export index out of range")?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "RVA view length must not be negative")?;
+                let (start, end, rva) = report.export_view_range(source.bytes(), index, count)?;
+                Ok(Value::Source(Arc::new(Source::rva_view(
+                    source.clone(),
+                    start,
+                    end,
+                    rva,
+                )?)))
+            }
             (
                 "import_library"
                 | "import_symbol"
@@ -7890,6 +7903,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ) => (&[Format, Int], Str),
         ("formats", "dependency_name" | "delay_dependency_name") => (&[Format, Int], Str),
         ("formats", "export_ordinal" | "export_address") => (&[Format, Int], Int),
+        ("formats", "export_view") => (&[Format, Int, Int], Source),
         (
             "formats",
             "certificate_offset" | "certificate_size" | "certificate_revision" | "certificate_type",

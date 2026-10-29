@@ -926,6 +926,23 @@ impl FormatReport {
         }
     }
 
+    pub fn export_view_range(
+        &self,
+        bytes: &[u8],
+        index: usize,
+        count: usize,
+    ) -> Result<(usize, usize, u64), String> {
+        let export = self
+            .exports(bytes)?
+            .get(index)
+            .ok_or("export index out of range")?;
+        if export.kind != "rva" {
+            return Err("forwarded export has no direct address".into());
+        }
+        let (start, end) = self.pe_rva_range(bytes.len(), export.rva, count)?;
+        Ok((start, end, export.rva))
+    }
+
     pub fn relocations(&self, bytes: &[u8]) -> Result<&[RelocationInfo], String> {
         let parsed = if self.name.starts_with("PE") {
             self.pe_relocations
@@ -4373,6 +4390,37 @@ mod tests {
             assert_eq!((&exports[2].name, exports[2].ordinal), (&"#7".into(), 7));
             assert!(!exports[2].named);
         }
+    }
+
+    #[test]
+    fn pe_export_view_maps_only_direct_file_backed_bytes() {
+        let mut bytes = pe_with_exports(true);
+        bytes.resize(0x600, 0);
+        bytes[0x86..0x88].copy_from_slice(&2_u16.to_le_bytes());
+        let text = 0x98 + 0xf0 + 40;
+        bytes[text..text + 5].copy_from_slice(b".text");
+        bytes[text + 8..text + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+        bytes[text + 12..text + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[text + 16..text + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+        bytes[text + 20..text + 24].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[0x400..0x402].copy_from_slice(&[0x90, 0xc3]);
+        let report = probe(&bytes).unwrap();
+        assert_eq!(
+            report.export_view_range(&bytes, 0, 2).unwrap(),
+            (0x400, 0x402, 0x2000)
+        );
+        assert_eq!(
+            report.export_view_range(&bytes, 1, 2).unwrap_err(),
+            "forwarded export has no direct address"
+        );
+        assert_eq!(
+            report.export_view_range(&bytes, 2, 2).unwrap_err(),
+            "RVA is not mapped to PE file bytes"
+        );
+        assert_eq!(
+            report.export_view_range(&bytes, 0, 0).unwrap_err(),
+            "RVA view length must be positive"
+        );
     }
 
     #[test]

@@ -5071,12 +5071,12 @@ fn native_pe_exports_match_vm_for_names_ordinals_and_forwarders() {
     let s = Sandbox::new();
     let optional = 0x98;
     let section = optional + 0xf0;
-    let mut bytes = vec![0u8; 0x400];
+    let mut bytes = vec![0u8; 0x600];
     bytes[..2].copy_from_slice(b"MZ");
     bytes[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
     bytes[0x80..0x84].copy_from_slice(b"PE\0\0");
     bytes[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes());
-    bytes[0x86..0x88].copy_from_slice(&1u16.to_le_bytes());
+    bytes[0x86..0x88].copy_from_slice(&2u16.to_le_bytes());
     bytes[0x94..0x96].copy_from_slice(&0xf0u16.to_le_bytes());
     bytes[optional..optional + 2].copy_from_slice(&0x20bu16.to_le_bytes());
     bytes[optional + 60..optional + 64].copy_from_slice(&0x200u32.to_le_bytes());
@@ -5088,6 +5088,12 @@ fn native_pe_exports_match_vm_for_names_ordinals_and_forwarders() {
     bytes[section + 12..section + 16].copy_from_slice(&0x1000u32.to_le_bytes());
     bytes[section + 16..section + 20].copy_from_slice(&0x200u32.to_le_bytes());
     bytes[section + 20..section + 24].copy_from_slice(&0x200u32.to_le_bytes());
+    let text = section + 40;
+    bytes[text..text + 5].copy_from_slice(b".text");
+    bytes[text + 8..text + 12].copy_from_slice(&0x200u32.to_le_bytes());
+    bytes[text + 12..text + 16].copy_from_slice(&0x2000u32.to_le_bytes());
+    bytes[text + 16..text + 20].copy_from_slice(&0x200u32.to_le_bytes());
+    bytes[text + 20..text + 24].copy_from_slice(&0x400u32.to_le_bytes());
     bytes[0x210..0x214].copy_from_slice(&5u32.to_le_bytes());
     bytes[0x214..0x218].copy_from_slice(&3u32.to_le_bytes());
     bytes[0x218..0x21c].copy_from_slice(&2u32.to_le_bytes());
@@ -5103,11 +5109,12 @@ fn native_pe_exports_match_vm_for_names_ordinals_and_forwarders() {
     bytes[0x280..0x28d].copy_from_slice(b"OTHER.Target\0");
     bytes[0x2a0..0x2a6].copy_from_slice(b"Alpha\0");
     bytes[0x2a8..0x2ad].copy_from_slice(b"Beta\0");
+    bytes[0x400..0x402].copy_from_slice(&[0x90, 0xc3]);
     let file = s.0.join("exports.pe");
     fs::write(&file, &bytes).unwrap();
     let script = s.write(
         "exports.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, export_count, export_name, export_ordinal, export_address, export_target, export_kind, export_summary\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"exports.pe\", 4096))\nfn forwarded() -> Result<i64> = export_address(report, 1)\nprint export_count(report)\nprint export_address(report, 0)\nfor index in range(export_count(report)) {\n    print export_summary(report, index)\n    print export_name(report, index)\n    print export_ordinal(report, index)\n    print export_target(report, index)\n    print export_kind(report, index)\n}\nprint is_error(forwarded())\nprint message(forwarded())\n",
+        "requires { file.read }\nfrom std.binary import analyze, size, deep, value\nfrom std.formats import probe, export_count, export_name, export_ordinal, export_address, export_target, export_kind, export_summary, export_view\nfrom std.iter import range\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(\"exports.pe\", 4096))\nlet body: Source = export_view(report, 0, 2)\nfn forwarded() -> Result<i64> = export_address(report, 1)\nfn forwarded_view() -> Result<Source> = export_view(report, 1, 2)\nfn unmapped_view() -> Result<Source> = export_view(report, 2, 2)\nfn negative_view() -> Result<Source> = export_view(report, 1, -1)\nprint export_count(report)\nprint export_address(report, 0)\nprint size(body)\nprint value(deep(body, 0, \"u8\"))\nfor index in range(export_count(report)) {\n    print export_summary(report, index)\n    print export_name(report, index)\n    print export_ordinal(report, index)\n    print export_target(report, index)\n    print export_kind(report, index)\n}\nprint is_error(forwarded())\nprint message(forwarded())\nprint message(forwarded_view())\nprint message(unmapped_view())\nprint message(negative_view())\n",
     );
     let built = s.compile(&script);
     assert!(
@@ -5150,6 +5157,9 @@ fn native_pe_exports_match_vm_for_names_ordinals_and_forwarders() {
     assert!(output.contains("Beta (#6) -> OTHER.Target"));
     assert!(output.contains("#7 @ 0x3000"));
     assert!(output.contains("forwarded export has no direct address"));
+    assert!(output.contains("2\n144\n"));
+    assert!(output.contains("RVA is not mapped to PE file bytes"));
+    assert!(output.contains("RVA view length must not be negative"));
 
     for (label, offset, replacement, error) in [
         (

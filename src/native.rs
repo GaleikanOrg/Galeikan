@@ -4293,6 +4293,29 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_export_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
                 return Ok(Scalar::Int);
             }
+            ("export_view", [report, index, count]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.export_view expects Format".into());
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err("formats.export_view index must be i64".into());
+                }
+                let index_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", index_slot * 8).unwrap();
+                if self.expr(count, scope)? != Scalar::Int {
+                    return Err("formats.export_view length must be i64".into());
+                }
+                self.uses_formats = true;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_export_view", self.arg0(), report_slot * 8, self.arg1(), index_slot * 8, self.arg2()).unwrap();
+                return self.formats_range_result();
+            }
             (
                 "export_name" | "export_ordinal" | "export_address" | "export_target"
                 | "export_kind" | "export_summary",
