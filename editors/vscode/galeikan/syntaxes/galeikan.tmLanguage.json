@@ -43,6 +43,12 @@
           "1": { "name": "storage.type.struct.galeikan" },
           "2": { "name": "entity.name.type.galeikan" }
         }
+      }, {
+        "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "keyword.control.galeikan" },
+          "2": { "name": "entity.name.type.galeikan" }
+        }
       }]
     },
     "imports": {
@@ -94,7 +100,7 @@
     "keywords": {
       "patterns": [{
         "name": "keyword.control.galeikan",
-        "match": "\\b(?:requires|import|from|as|struct|class|let|var|return|break|continue|for|while|in|if|else|match|and|or|not|print|impact)\\b"
+        "match": "\\b(?:requires|import|from|as|struct|class|impl|let|var|return|break|continue|for|while|in|if|else|match|and|or|not|print|impact)\\b"
       }]
     },
     "constants": { "patterns": [{ "name": "constant.language.galeikan", "match": "\\b(?:true|false)\\b" }] },

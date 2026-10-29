@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
+$vsixName = "galeikan-language-$($extensionManifest.version).vsix"
 $installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview2-windows-x64-setup.exe'
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
@@ -66,12 +68,12 @@ if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $exam
     throw 'Installer did not produce the expected binary and example.'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $smokeRoot 'icons\galeikan.ico')) -or
-    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\galeikan-language-0.1.1.vsix')) -or
+    -not (Test-Path -LiteralPath (Join-Path $smokeRoot "editor\$vsixName")) -or
     -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\package.json'))) {
     throw 'Installed file icons or editor assets are missing'
 }
-$installedVsix = Join-Path $smokeRoot 'editor\galeikan-language-0.1.1.vsix'
-$builtVsix = Join-Path $projectRoot 'dist\galeikan-language-0.1.1.vsix'
+$installedVsix = Join-Path $smokeRoot "editor\$vsixName"
+$builtVsix = Join-Path (Join-Path $projectRoot 'dist') $vsixName
 if ((Get-FileHash -LiteralPath $installedVsix -Algorithm SHA256).Hash -ne
     (Get-FileHash -LiteralPath $builtVsix -Algorithm SHA256).Hash) {
     throw 'Installed VS Code extension does not match the current build'

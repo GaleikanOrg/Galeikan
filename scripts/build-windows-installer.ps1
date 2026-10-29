@@ -17,6 +17,9 @@ if (-not $SkipCargoBuild) {
 $binary = Join-Path $projectRoot 'target\release\galeikan.exe'
 if (-not (Test-Path -LiteralPath $binary)) { throw "Missing binary: $binary" }
 & (Join-Path $PSScriptRoot 'build-vscode-extension.ps1') | Out-Null
+$extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
+$vsix = Join-Path $distDir ("galeikan-language-{0}.vsix" -f $extensionManifest.version)
+if (-not (Test-Path -LiteralPath $vsix)) { throw "Missing VS Code extension: $vsix" }
 
 $pathHelper = Join-Path $distDir 'galeikan-path.exe'
 $pathHelperSource = Join-Path $projectRoot 'packaging\windows\path_helper.c'
@@ -29,7 +32,7 @@ $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 Push-Location (Split-Path -Parent $script)
 try {
     if ($makensis) {
-        & $makensis.Source "-DPROJECT_ROOT=$($projectRoot.Replace('\', '/'))" "-DOUTPUT_EXE=$($output.Replace('\', '/'))" $script
+        & $makensis.Source "-DPROJECT_ROOT=$($projectRoot.Replace('\', '/'))" "-DOUTPUT_EXE=$($output.Replace('\', '/'))" "-DVSIX_FILE=$($vsix.Replace('\', '/'))" $script
     } else {
         $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
         if (-not $wsl) { throw 'NSIS makensis was not found; install NSIS or use WSL with makensis.' }
@@ -40,7 +43,8 @@ try {
         $rootWsl = ConvertTo-WslPath $projectRoot
         $outputWsl = ConvertTo-WslPath $output
         $scriptWsl = ConvertTo-WslPath $script
-        & wsl.exe makensis "-DPROJECT_ROOT=$rootWsl" "-DOUTPUT_EXE=$outputWsl" $scriptWsl
+        $vsixWsl = ConvertTo-WslPath $vsix
+        & wsl.exe makensis "-DPROJECT_ROOT=$rootWsl" "-DOUTPUT_EXE=$outputWsl" "-DVSIX_FILE=$vsixWsl" $scriptWsl
     }
 } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) { throw 'NSIS installer build failed' }

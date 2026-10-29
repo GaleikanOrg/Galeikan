@@ -7,6 +7,9 @@ Unicode true
 !ifndef OUTPUT_EXE
   !error "Pass -DOUTPUT_EXE=<absolute path> to makensis"
 !endif
+!ifndef VSIX_FILE
+  !error "Pass -DVSIX_FILE=<absolute path> to makensis"
+!endif
 
 Name "Galeikan 0.1.0 Preview 2"
 OutFile "${OUTPUT_EXE}"
@@ -48,7 +51,7 @@ Section "Galeikan CLI" SEC_CLI
   SetOutPath "$INSTDIR\editor\vscode"
   File /r "${PROJECT_ROOT}/editors/vscode/galeikan/*"
   SetOutPath "$INSTDIR\editor"
-  File "${PROJECT_ROOT}/dist/galeikan-language-0.1.1.vsix"
+  File "${VSIX_FILE}"
 
   SetOutPath "$INSTDIR\tools"
   File /oname=galeikan-path.exe "${PROJECT_ROOT}/dist/galeikan-path.exe"
