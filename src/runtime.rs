@@ -6653,7 +6653,9 @@ impl Runtime {
             ("address", [Value::Section(_, info)]) => {
                 Ok(Value::Str(format!("0x{:x}", info.virtual_address)))
             }
+            ("address_u64", [Value::Section(_, info)]) => Ok(Value::UInt(info.virtual_address)),
             ("flags", [Value::Section(_, info)]) => Ok(Value::Str(format!("0x{:x}", info.flags))),
+            ("flags_u64", [Value::Section(_, info)]) => Ok(Value::UInt(info.flags)),
             ("writable", [Value::Section(_, info)]) => Ok(Value::Bool(info.writable)),
             ("executable", [Value::Section(_, info)]) => Ok(Value::Bool(info.executable)),
             ("field", [_, _]) => Err("format report expected".into()),
@@ -7901,6 +7903,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "offset_elf_va_at") => (&[Format, UInt, Int], UInt),
         ("formats", "entry_view") => (&[Format, Int], Source),
         ("formats", "name" | "address" | "flags") => (&[Type::Section], Str),
+        ("formats", "address_u64" | "flags_u64") => (&[Type::Section], UInt),
         ("formats", "writable" | "executable") => (&[Type::Section], Bool),
         ("formats", "data") => (&[Type::Section], Source),
         ("formats", "offset" | "size" | "virtual_size") => (&[Type::Section], Int),

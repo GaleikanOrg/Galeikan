@@ -4552,7 +4552,9 @@ impl Codegen {
             let (result, helper) = match name {
                 "name" => (Scalar::Str, "gak_native_formats_section_name"),
                 "address" => (Scalar::Str, "gak_native_formats_section_address"),
+                "address_u64" => (Scalar::UInt, "gak_native_formats_section_address_u64"),
                 "flags" => (Scalar::Str, "gak_native_formats_section_flags"),
+                "flags_u64" => (Scalar::UInt, "gak_native_formats_section_flags_u64"),
                 "offset" => (Scalar::Int, "gak_native_formats_section_offset"),
                 "size" => (Scalar::Int, "gak_native_formats_section_size"),
                 "virtual_size" => (Scalar::Int, "gak_native_formats_section_virtual_size"),

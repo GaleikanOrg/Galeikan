@@ -852,8 +852,14 @@ static void *gak_format_hex(uint64_t value) {
 void *gak_native_formats_section_address(const void *value) {
     return gak_format_hex(((const GakSection *)value)->virtual_address);
 }
+uint64_t gak_native_formats_section_address_u64(const void *value) {
+    return ((const GakSection *)value)->virtual_address;
+}
 void *gak_native_formats_section_flags(const void *value) {
     return gak_format_hex(((const GakSection *)value)->flags);
+}
+uint64_t gak_native_formats_section_flags_u64(const void *value) {
+    return ((const GakSection *)value)->flags;
 }
 uint64_t gak_native_formats_section_offset(const void *value) { return ((const GakSection *)value)->file_offset; }
 uint64_t gak_native_formats_section_size(const void *value) { return ((const GakSection *)value)->file_size; }
