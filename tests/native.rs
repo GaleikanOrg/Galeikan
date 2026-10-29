@@ -3654,54 +3654,59 @@ fn native_elf32_rel_and_rela_match_vm_in_both_byte_orders() {
     let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
     for big in [false, true] {
         for rela in [false, true] {
-            let mut bytes = vec![0u8; 0x200];
-            bytes[..4].copy_from_slice(b"\x7fELF");
-            bytes[4..7].copy_from_slice(&[1, if big { 2 } else { 1 }, 1]);
-            put16(&mut bytes, 16, 1, big);
-            put16(&mut bytes, 18, 3, big);
-            put32(&mut bytes, 20, 1, big);
-            put32(&mut bytes, 32, 0x80, big);
-            put16(&mut bytes, 40, 52, big);
-            put16(&mut bytes, 46, 40, big);
-            put16(&mut bytes, 48, 2, big);
-            let section = 0xa8;
-            let entry_size = if rela { 12 } else { 8 };
-            put32(&mut bytes, section + 4, if rela { 4 } else { 9 }, big);
-            put32(&mut bytes, section + 16, 0x150, big);
-            put32(&mut bytes, section + 20, entry_size, big);
-            put32(&mut bytes, section + 36, entry_size, big);
-            put32(&mut bytes, 0x150, 0x10, big);
-            put32(&mut bytes, 0x154, (2 << 8) | 1, big);
-            if rela {
-                put32(&mut bytes, 0x158, u32::MAX - 3, big);
+            for (machine, kind, expected) in
+                [(3u16, 1u32, "R_386_32"), (40u16, 2u32, "R_ARM_ABS32")]
+            {
+                let mut bytes = vec![0u8; 0x200];
+                bytes[..4].copy_from_slice(b"\x7fELF");
+                bytes[4..7].copy_from_slice(&[1, if big { 2 } else { 1 }, 1]);
+                put16(&mut bytes, 16, 1, big);
+                put16(&mut bytes, 18, machine, big);
+                put32(&mut bytes, 20, 1, big);
+                put32(&mut bytes, 32, 0x80, big);
+                put16(&mut bytes, 40, 52, big);
+                put16(&mut bytes, 46, 40, big);
+                put16(&mut bytes, 48, 2, big);
+                let section = 0xa8;
+                let entry_size = if rela { 12 } else { 8 };
+                put32(&mut bytes, section + 4, if rela { 4 } else { 9 }, big);
+                put32(&mut bytes, section + 16, 0x150, big);
+                put32(&mut bytes, section + 20, entry_size, big);
+                put32(&mut bytes, section + 36, entry_size, big);
+                put32(&mut bytes, 0x150, 0x10, big);
+                put32(&mut bytes, 0x154, (2 << 8) | kind, big);
+                if rela {
+                    put32(&mut bytes, 0x158, u32::MAX - 3, big);
+                }
+                fs::write(&file, bytes).unwrap();
+                let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+                    .arg("run")
+                    .arg(&script)
+                    .args(["--engine", "vm", "--allow-read"])
+                    .arg(&s.0)
+                    .output()
+                    .unwrap();
+                let native = Command::new(&executable)
+                    .arg("--allow-read")
+                    .arg(&s.0)
+                    .output()
+                    .unwrap();
+                assert!(
+                    vm.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&vm.stderr)
+                );
+                assert!(
+                    native.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&native.stderr)
+                );
+                assert_eq!(native.stdout, vm.stdout);
+                let output = String::from_utf8_lossy(&native.stdout);
+                assert!(output.starts_with("1\nsection_offset\n"));
+                assert!(output.contains(expected));
+                assert!(output.ends_with(if rela { "false\n-4\n" } else { "true\n0\n" }));
             }
-            fs::write(&file, bytes).unwrap();
-            let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
-                .arg("run")
-                .arg(&script)
-                .args(["--engine", "vm", "--allow-read"])
-                .arg(&s.0)
-                .output()
-                .unwrap();
-            let native = Command::new(&executable)
-                .arg("--allow-read")
-                .arg(&s.0)
-                .output()
-                .unwrap();
-            assert!(
-                vm.status.success(),
-                "{}",
-                String::from_utf8_lossy(&vm.stderr)
-            );
-            assert!(
-                native.status.success(),
-                "{}",
-                String::from_utf8_lossy(&native.stderr)
-            );
-            assert_eq!(native.stdout, vm.stdout);
-            let output = String::from_utf8_lossy(&native.stdout);
-            assert!(output.starts_with("1\nsection_offset\n"));
-            assert!(output.ends_with(if rela { "false\n-4\n" } else { "true\n0\n" }));
         }
     }
 }
@@ -4107,6 +4112,51 @@ fn native_elf_relocations_match_vm_from_sections_and_dynamic_tables() {
         assert!(output.contains("R_X86_64_GLOB_DAT @ va 0x404008\n"));
         assert!(output.contains("\n-1\n"));
         assert!(output.ends_with("true\nrelocation_rva requires a PE image\n"));
+    }
+    for (machine, kinds, labels) in [
+        (
+            183u16,
+            [1027u32, 1025, 1026],
+            [
+                "R_AARCH64_RELATIVE",
+                "R_AARCH64_GLOB_DAT",
+                "R_AARCH64_JUMP_SLOT",
+            ],
+        ),
+        (
+            243u16,
+            [3u32, 4, 5],
+            ["R_RISCV_RELATIVE", "R_RISCV_COPY", "R_RISCV_JUMP_SLOT"],
+        ),
+    ] {
+        let mut variant = bytes.clone();
+        variant[18..20].copy_from_slice(&machine.to_le_bytes());
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let at = 0x200 + index * 24 + 8;
+            let info = ((index as u64) << 32) | u64::from(kind);
+            variant[at..at + 8].copy_from_slice(&info.to_le_bytes());
+        }
+        fs::write(&file, variant).unwrap();
+        let vm = run_vm();
+        let native = run_native();
+        assert!(
+            vm.status.success(),
+            "{}",
+            String::from_utf8_lossy(&vm.stderr)
+        );
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, vm.stdout);
+        let output = String::from_utf8_lossy(&native.stdout);
+        for label in labels {
+            assert!(
+                output.contains(label),
+                "missing {label} for machine {machine}"
+            );
+        }
     }
     for (offset, value, error) in [
         (

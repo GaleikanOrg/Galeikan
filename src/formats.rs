@@ -563,8 +563,20 @@ impl FormatReport {
                 _ => "unknown",
             };
         }
-        if self.machine == 62 {
-            match kind {
+        match (self.machine, kind) {
+            (3, 1) => "R_386_32",
+            (3, 2) => "R_386_PC32",
+            (3, 3) => "R_386_GOT32",
+            (3, 4) => "R_386_PLT32",
+            (3, 5) => "R_386_COPY",
+            (3, 6) => "R_386_GLOB_DAT",
+            (3, 7) => "R_386_JMP_SLOT",
+            (3, 8) => "R_386_RELATIVE",
+            (3, 9) => "R_386_GOTOFF",
+            (3, 10) => "R_386_GOTPC",
+            (3, 11) => "R_386_32PLT",
+            (3, 42) => "R_386_IRELATIVE",
+            (62, kind) => match kind {
                 1 => "R_X86_64_64",
                 2 => "R_X86_64_PC32",
                 3 => "R_X86_64_GOT32",
@@ -576,10 +588,39 @@ impl FormatReport {
                 9 => "R_X86_64_GOTPCREL",
                 10 => "R_X86_64_32",
                 11 => "R_X86_64_32S",
+                37 => "R_X86_64_IRELATIVE",
                 _ => "unknown",
-            }
-        } else {
-            "unknown"
+            },
+            (40, 2) => "R_ARM_ABS32",
+            (40, 3) => "R_ARM_REL32",
+            (40, 20) => "R_ARM_COPY",
+            (40, 21) => "R_ARM_GLOB_DAT",
+            (40, 22) => "R_ARM_JUMP_SLOT",
+            (40, 23) => "R_ARM_RELATIVE",
+            (40, 28) => "R_ARM_CALL",
+            (40, 29) => "R_ARM_JUMP24",
+            (40, 160) => "R_ARM_IRELATIVE",
+            (183, 257) => "R_AARCH64_ABS64",
+            (183, 258) => "R_AARCH64_ABS32",
+            (183, 260) => "R_AARCH64_PREL64",
+            (183, 261) => "R_AARCH64_PREL32",
+            (183, 282) => "R_AARCH64_JUMP26",
+            (183, 283) => "R_AARCH64_CALL26",
+            (183, 1024) => "R_AARCH64_COPY",
+            (183, 1025) => "R_AARCH64_GLOB_DAT",
+            (183, 1026) => "R_AARCH64_JUMP_SLOT",
+            (183, 1027) => "R_AARCH64_RELATIVE",
+            (183, 1032) => "R_AARCH64_IRELATIVE",
+            (243, 1) => "R_RISCV_32",
+            (243, 2) => "R_RISCV_64",
+            (243, 3) => "R_RISCV_RELATIVE",
+            (243, 4) => "R_RISCV_COPY",
+            (243, 5) => "R_RISCV_JUMP_SLOT",
+            (243, 17) => "R_RISCV_JAL",
+            (243, 18) => "R_RISCV_CALL",
+            (243, 19) => "R_RISCV_CALL_PLT",
+            (243, 58) => "R_RISCV_IRELATIVE",
+            _ => "unknown",
         }
     }
 
@@ -3421,6 +3462,26 @@ mod tests {
             assert_eq!(relocations[1].addend, Some(-4));
             assert_eq!(relocations[2].kind, 7);
             assert_eq!(relocations[2].symbol, Some(2));
+        }
+    }
+
+    #[test]
+    fn relocation_labels_follow_elf_machine_and_keep_unknown_codes_unknown() {
+        let mut report = probe(&elf64_with_relocations(false)).unwrap();
+        for (machine, kind, expected) in [
+            (3, 1, "R_386_32"),
+            (3, 42, "R_386_IRELATIVE"),
+            (40, 28, "R_ARM_CALL"),
+            (62, 37, "R_X86_64_IRELATIVE"),
+            (183, 1027, "R_AARCH64_RELATIVE"),
+            (183, 283, "R_AARCH64_CALL26"),
+            (243, 3, "R_RISCV_RELATIVE"),
+            (243, 19, "R_RISCV_CALL_PLT"),
+            (243, 1027, "unknown"),
+            (0xffff, 1, "unknown"),
+        ] {
+            report.machine = machine;
+            assert_eq!(report.relocation_kind(kind), expected);
         }
     }
 

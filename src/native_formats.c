@@ -1819,6 +1819,43 @@ int64_t gak_native_formats_relocation_number(const void *value, int64_t index,
          : part == 2 ? (int64_t)result.symbol : result.addend;
 }
 
+static const char *gak_elf_relocation_label(uint16_t machine, uint64_t kind) {
+    static const struct { uint16_t machine; uint32_t kind; const char *name; } labels[] = {
+        {3, 1, "R_386_32"}, {3, 2, "R_386_PC32"}, {3, 3, "R_386_GOT32"},
+        {3, 4, "R_386_PLT32"}, {3, 5, "R_386_COPY"},
+        {3, 6, "R_386_GLOB_DAT"}, {3, 7, "R_386_JMP_SLOT"},
+        {3, 8, "R_386_RELATIVE"}, {3, 9, "R_386_GOTOFF"},
+        {3, 10, "R_386_GOTPC"}, {3, 11, "R_386_32PLT"},
+        {3, 42, "R_386_IRELATIVE"},
+        {62, 1, "R_X86_64_64"}, {62, 2, "R_X86_64_PC32"},
+        {62, 3, "R_X86_64_GOT32"}, {62, 4, "R_X86_64_PLT32"},
+        {62, 5, "R_X86_64_COPY"}, {62, 6, "R_X86_64_GLOB_DAT"},
+        {62, 7, "R_X86_64_JUMP_SLOT"}, {62, 8, "R_X86_64_RELATIVE"},
+        {62, 9, "R_X86_64_GOTPCREL"}, {62, 10, "R_X86_64_32"},
+        {62, 11, "R_X86_64_32S"}, {62, 37, "R_X86_64_IRELATIVE"},
+        {40, 2, "R_ARM_ABS32"}, {40, 3, "R_ARM_REL32"},
+        {40, 20, "R_ARM_COPY"}, {40, 21, "R_ARM_GLOB_DAT"},
+        {40, 22, "R_ARM_JUMP_SLOT"}, {40, 23, "R_ARM_RELATIVE"},
+        {40, 28, "R_ARM_CALL"}, {40, 29, "R_ARM_JUMP24"},
+        {40, 160, "R_ARM_IRELATIVE"},
+        {183, 257, "R_AARCH64_ABS64"}, {183, 258, "R_AARCH64_ABS32"},
+        {183, 260, "R_AARCH64_PREL64"}, {183, 261, "R_AARCH64_PREL32"},
+        {183, 282, "R_AARCH64_JUMP26"}, {183, 283, "R_AARCH64_CALL26"},
+        {183, 1024, "R_AARCH64_COPY"}, {183, 1025, "R_AARCH64_GLOB_DAT"},
+        {183, 1026, "R_AARCH64_JUMP_SLOT"}, {183, 1027, "R_AARCH64_RELATIVE"},
+        {183, 1032, "R_AARCH64_IRELATIVE"},
+        {243, 1, "R_RISCV_32"}, {243, 2, "R_RISCV_64"},
+        {243, 3, "R_RISCV_RELATIVE"}, {243, 4, "R_RISCV_COPY"},
+        {243, 5, "R_RISCV_JUMP_SLOT"}, {243, 17, "R_RISCV_JAL"},
+        {243, 18, "R_RISCV_CALL"}, {243, 19, "R_RISCV_CALL_PLT"},
+        {243, 58, "R_RISCV_IRELATIVE"}
+    };
+    for (size_t index = 0; index < sizeof(labels) / sizeof(labels[0]); index++)
+        if (labels[index].machine == machine && labels[index].kind == kind)
+            return labels[index].name;
+    return "unknown";
+}
+
 void *gak_native_formats_relocation_text(const void *value, int64_t index,
                                           int part) {
     gak_formats_error = NULL;
@@ -1836,16 +1873,7 @@ void *gak_native_formats_relocation_text(const void *value, int64_t index,
         label = result.kind == 1 ? "HIGH" : result.kind == 2 ? "LOW"
               : result.kind == 3 ? "HIGHLOW" : result.kind == 4 ? "HIGHADJ"
               : result.kind == 10 ? "DIR64" : "unknown";
-    else if (format->machine == 62) {
-        static const char *x86_64_labels[] = {
-            "unknown", "R_X86_64_64", "R_X86_64_PC32", "R_X86_64_GOT32",
-            "R_X86_64_PLT32", "R_X86_64_COPY", "R_X86_64_GLOB_DAT",
-            "R_X86_64_JUMP_SLOT", "R_X86_64_RELATIVE", "R_X86_64_GOTPCREL",
-            "R_X86_64_32", "R_X86_64_32S"
-        };
-        if (result.kind < sizeof(x86_64_labels) / sizeof(x86_64_labels[0]))
-            label = x86_64_labels[result.kind];
-    }
+    else label = gak_elf_relocation_label(format->machine, result.kind);
     const char *location = format->file_type == 1 ? "section_offset"
                            : format->file_type == 2 || format->file_type == 3
                            ? "va" : "unknown";
