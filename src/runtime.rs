@@ -5337,16 +5337,16 @@ impl Runtime {
                 }
                 Ok(Value::Int(i64::from(process::parent_pid(pid)?)))
             }
-            ("regions" | "images", [pid]) => {
+            ("regions" | "images" | "writable_regions", [pid]) => {
                 self.check_effect(module, "process.inspect")?;
                 let pid = u32::try_from(pid.as_int()?).map_err(|_| "pid out of range")?;
                 if !self.allowed_processes.contains(&pid) {
                     return Err(format!("process access not allowed: {pid}"));
                 }
-                let regions = if name == "images" {
-                    process::images(pid)?
-                } else {
-                    process::regions(pid)?
+                let regions = match name {
+                    "images" => process::images(pid)?,
+                    "writable_regions" => process::writable_regions(pid)?,
+                    _ => process::regions(pid)?,
                 }
                 .into_iter()
                 .map(Arc::new)
@@ -7937,7 +7937,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "snapshot") => (&[Int, Int, Int], Source),
         ("process", "self_pid") => (&[], Int),
         ("process", "snapshot_u64") => (&[Int, UInt, Int], Source),
-        ("process", "regions" | "images") => (&[Int], Regions),
+        ("process", "regions" | "images" | "writable_regions") => (&[Int], Regions),
         ("process", "modules") => (&[Int], Type::List(Some(ResultKind::Str))),
         ("process", "thread_ids" | "children") => (&[Int], Type::List(Some(ResultKind::Int))),
         ("process", "executable") => (&[Int], Str),

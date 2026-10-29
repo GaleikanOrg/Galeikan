@@ -1037,7 +1037,7 @@ static const char *gak_windows_access(DWORD protection) {
     }
 }
 
-static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *regions) {
+static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
     HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (!process)
         return gak_failf("cannot open process %u for memory-map query: %lu", pid, GetLastError());
@@ -1062,7 +1062,8 @@ static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *region
         if (information.State == MEM_COMMIT) {
             int image_backed = information.Type == MEM_IMAGE;
             const char *access = gak_windows_access(information.Protect);
-            if (!images_only || (image_backed && access[2] == 'x')) {
+            if (!filter || (filter == 1 && image_backed && access[2] == 'x') ||
+                (filter == 2 && access[1] == 'w')) {
                 char *label_owned = NULL;
                 const char *label = "other";
                 if (image_backed) {
@@ -1094,7 +1095,7 @@ static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *region
     return 0;
 }
 #else
-static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *regions) {
+static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
     char path[64];
     snprintf(path, sizeof(path), "/proc/%u/maps", pid);
     FILE *file = fopen(path, "rb");
@@ -1134,7 +1135,8 @@ static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *region
         char *label = cursor + label_offset;
         while (*label == ' ' || *label == '\t') label++;
         int image_backed = inode != 0 && label[0] == '/';
-        if (!images_only || (image_backed && rights[2] == 'x')) {
+        if (!filter || (filter == 1 && image_backed && rights[2] == 'x') ||
+            (filter == 2 && rights[1] == 'w')) {
             char access[4] = {rights[0], rights[1], rights[2], 0};
             status = gak_regions_append(regions, pid, start, end - start,
                                         access, label, image_backed);
@@ -1148,8 +1150,12 @@ static int gak_collect_regions(uint32_t pid, int images_only, GakRegions *region
 }
 #endif
 
-GakRegions *gak_native_process_regions(uint64_t pid, uint64_t images_only) {
+GakRegions *gak_native_process_regions(uint64_t pid, uint64_t filter) {
     gak_file_error = NULL;
+    if (filter > 2) {
+        gak_failf("invalid process region filter");
+        return NULL;
+    }
     if (!pid || pid > 2147483647u) {
         gak_failf("pid must be between 1 and 2147483647");
         return NULL;
@@ -1167,7 +1173,7 @@ GakRegions *gak_native_process_regions(uint64_t pid, uint64_t images_only) {
         gak_failf("native allocation failed");
         return NULL;
     }
-    if (gak_collect_regions((uint32_t)pid, images_only != 0, regions) != 0) {
+    if (gak_collect_regions((uint32_t)pid, (int)filter, regions) != 0) {
         gak_regions_free(regions);
         return NULL;
     }

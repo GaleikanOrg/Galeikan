@@ -3605,8 +3605,8 @@ impl Codegen {
                 Ok(Scalar::Int)
             }
             (
-                "regions" | "images" | "modules" | "thread_ids" | "children" | "executable"
-                | "parent_pid",
+                "regions" | "images" | "writable_regions" | "modules" | "thread_ids" | "children"
+                | "executable" | "parent_pid",
                 [pid],
             ) => {
                 if self.expr(pid, scope)? != Scalar::Int {
@@ -3635,7 +3635,11 @@ impl Codegen {
                         "    mov {}, rax\n    mov {}, {}\n    call gak_native_process_regions",
                         self.arg0(),
                         self.arg1(),
-                        u8::from(name == "images")
+                        match name {
+                            "images" => 1,
+                            "writable_regions" => 2,
+                            _ => 0,
+                        }
                     )
                     .unwrap();
                 }

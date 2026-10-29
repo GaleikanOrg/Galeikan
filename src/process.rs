@@ -80,6 +80,13 @@ pub fn images(pid: u32) -> Result<Vec<Region>, String> {
         .collect())
 }
 
+pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| region.access.as_bytes().get(1) == Some(&b'w'))
+        .collect())
+}
+
 /// Paths of executable, image-backed mappings in address order, once per path.
 pub fn modules(pid: u32) -> Result<Vec<String>, String> {
     Ok(module_paths(&images(pid)?))
@@ -797,7 +804,9 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 
 #[cfg(test)]
 mod tests {
-    use super::{executable, module_paths, regions, snapshot, thread_ids, Region, MAX_READ};
+    use super::{
+        executable, module_paths, regions, snapshot, thread_ids, writable_regions, Region, MAX_READ,
+    };
 
     #[test]
     fn executable_identifies_the_current_process() {
@@ -857,6 +866,19 @@ mod tests {
         assert!(maps
             .iter()
             .any(|region| { region.contains(address) && region.access.starts_with('r') }));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn writable_regions_include_local_mutable_memory_and_only_writable_maps() {
+        let mut data = Box::new(*b"GALEIKAN");
+        std::hint::black_box(&mut data);
+        let address = data.as_ptr() as usize;
+        let maps = writable_regions(std::process::id()).unwrap();
+        assert!(maps.iter().any(|region| region.contains(address)));
+        assert!(maps
+            .iter()
+            .all(|region| region.access.as_bytes().get(1) == Some(&b'w')));
     }
 
     #[test]
