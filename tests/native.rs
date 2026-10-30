@@ -98,7 +98,7 @@ fn raw_syscall_requires_effect_and_grant_across_engines() {
 
     let script = s.write(
         "syscall.gaks",
-        "requires { syscall.raw }\nfrom std.syscall import call\nfrom std.process import self_pid\nprint call(39, [])\nprint call(121, [u64(self_pid())])\nprint call(999999, [])\n",
+        "requires { syscall.raw }\nfrom std.syscall import call\nfrom std.process import self_pid\nprint call(39, [])\nprint call(121, [u64(self_pid())])\nprint call(121, [0])\nprint call(17, [-1, 0, 0, 0])\nprint call(999999, [])\n",
     );
     let check_output = |output: Output| {
         assert!(
@@ -111,10 +111,12 @@ fn raw_syscall_requires_effect_and_grant_across_engines() {
             .lines()
             .map(|line| line.parse::<i64>().unwrap())
             .collect();
-        assert_eq!(lines.len(), 3);
+        assert_eq!(lines.len(), 5);
         assert!(lines[0] > 0);
         assert!(lines[1] > 0);
-        assert!(lines[2] < 0);
+        assert!(lines[2] > 0);
+        assert!(lines[3] < 0);
+        assert!(lines[4] < 0);
     };
     for engine in ["ast", "vm"] {
         let denied = Command::new(galeikan)

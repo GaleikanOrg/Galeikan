@@ -3702,8 +3702,8 @@ impl Codegen {
         )
         .unwrap();
         let kind = self.expr(arguments, scope)?;
-        if !matches!(kind, Scalar::ListUInt | Scalar::ListEmpty) {
-            return Err("syscall.call arguments must be List<u64>".into());
+        if !matches!(kind, Scalar::ListInt | Scalar::ListUInt | Scalar::ListEmpty) {
+            return Err("syscall.call arguments must be List<i64> or List<u64>".into());
         }
         self.uses_process = true;
         let ready = self.label();

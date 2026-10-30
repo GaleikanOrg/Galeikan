@@ -5363,7 +5363,11 @@ impl Runtime {
         }
         let mut values = [0u64; 6];
         for (index, argument) in arguments.iter().enumerate() {
-            values[index] = argument.as_uint()?;
+            values[index] = match argument {
+                Value::UInt(value) => *value,
+                Value::Int(value) => *value as u64,
+                _ => return Err("syscall.call arguments must be i64 or u64".into()),
+            };
         }
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
@@ -7816,10 +7820,19 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             return Err(format!("unknown standard function {qualified}"));
         }
         let [number, arguments] = args else {
-            return Err(format!("{qualified} expects a number and List<u64>"));
+            return Err(format!(
+                "{qualified} expects a number and List<i64> or List<u64>"
+            ));
         };
         require_type(Int, *number)?;
-        require_type(Type::List(Some(ResultKind::UInt)), *arguments)?;
+        if !matches!(
+            arguments,
+            Type::List(None) | Type::List(Some(ResultKind::Int | ResultKind::UInt)) | Type::Any
+        ) {
+            return Err(format!(
+                "{qualified} expects List<i64> or List<u64>, got {arguments}"
+            ));
+        }
         return Ok(Int);
     }
     if module == "bytes" && name == "pack" {
