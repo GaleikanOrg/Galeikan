@@ -5265,6 +5265,45 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if matches!(name, "find" | "contains") && matches!(args.len(), 2 | 3) {
+            if self.expr(&args[0], scope)? != Scalar::Source {
+                return Err(format!("binary.{name} expects Source"));
+            }
+            let source_slot = self.reserve_slot()?;
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                source_slot * 8
+            )
+            .unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Bytes {
+                return Err(format!("binary.{name} pattern must be bytes"));
+            }
+            let needle_slot = self.reserve_slot()?;
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                needle_slot * 8
+            )
+            .unwrap();
+            if args.len() == 3 {
+                if self.expr(&args[2], scope)? != Scalar::Int {
+                    return Err(format!("binary.{name} offset must be i64"));
+                }
+                self.code
+                    .push_str("    test rax, rax\n    js gak_binary_offset_negative\n");
+            } else {
+                self.code.push_str("    xor eax, eax\n");
+            }
+            self.uses_text = true;
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_source_find\n    cmp rax, -2\n    je gak_text_search_alloc\n    cmp rax, -3\n    je gak_binary_out_of_bounds", self.arg0(), source_slot * 8, self.arg1(), needle_slot * 8, self.arg2()).unwrap();
+            if name == "contains" {
+                self.code
+                    .push_str("    cmp rax, -1\n    setne al\n    movzx eax, al\n");
+                return Ok(Scalar::Bool);
+            }
+            return Ok(Scalar::Int);
+        }
         match (name, args) {
             ("from_hex", _) => self.bytes_call("from_hex", args, scope),
             ("analyze", [path, max_bytes]) => {

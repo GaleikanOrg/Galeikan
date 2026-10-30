@@ -8284,6 +8284,68 @@ fn native_binary_strings_errors_and_hit_limit_match_vm() {
 }
 
 #[test]
+fn binary_find_and_contains_match_across_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-find.gaks",
+        "from std.binary import from_hex, snapshot, view, find, contains\nfrom std.bytes import repeat\nfrom std.result import is_error\nfn outside(source: Source, needle: bytes) -> Result<i64> = find(source, needle, 5)\nfn negative(source: Source, needle: bytes) -> Result<i64> = find(source, needle, -1)\nlet source = snapshot(from_hex(\"41 42 41 42\"))\nlet needle = from_hex(\"41 42\")\nlet long = snapshot(repeat(from_hex(\"41\"), 11000))\nprint find(source, needle)\nprint find(source, needle, 1)\nprint find(source, needle, 3)\nprint find(view(source, 1, 3), needle)\nprint find(source, from_hex(\"\"), 4)\nprint contains(source, needle, 2)\nprint contains(source, from_hex(\"ff\"))\nprint find(long, from_hex(\"41\"), 10999)\nprint is_error(outside(source, needle))\nprint is_error(negative(source, needle))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"0\n2\n-1\n1\n4\ntrue\nfalse\n10999\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_binary_hunt_matches_vm_for_patterns_views_and_overlaps() {
     if !gcc_available() {
         return;

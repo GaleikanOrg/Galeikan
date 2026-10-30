@@ -151,11 +151,8 @@ int64_t gak_native_text_length(const uint8_t *box) {
     return count;
 }
 
-int64_t gak_native_bytes_find(const uint8_t *box, const uint8_t *needle_box) {
-    const uint8_t *data = box + 8;
-    const uint8_t *needle = needle_box + 8;
-    uint64_t size = gak_text_size(box);
-    uint64_t needle_size = gak_text_size(needle_box);
+static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
+                            const uint8_t *needle, uint64_t needle_size) {
     if (needle_size == 0) return 0;
     if (needle_size > size) return -1;
     if (needle_size > SIZE_MAX / sizeof(uint32_t)) return -2;
@@ -182,6 +179,23 @@ int64_t gak_native_bytes_find(const uint8_t *box, const uint8_t *needle_box) {
     }
     free(failure);
     return -1;
+}
+
+int64_t gak_native_bytes_find(const uint8_t *box, const uint8_t *needle_box) {
+    return gak_find_raw(box + 8, gak_text_size(box), needle_box + 8,
+                        gak_text_size(needle_box));
+}
+
+int64_t gak_native_source_find(const uint8_t *source, const uint8_t *needle_box,
+                               uint64_t offset) {
+    const uint8_t *backing = *(const uint8_t *const *)source;
+    uint64_t view_start = *(const uint64_t *)(source + 16);
+    uint64_t view_end = *(const uint64_t *)(source + 24);
+    uint64_t size = view_end - view_start;
+    if (offset > size) return -3;
+    int64_t found = gak_find_raw(backing + 8 + view_start + offset, size - offset,
+                                 needle_box + 8, gak_text_size(needle_box));
+    return found < 0 ? found : found + (int64_t)offset;
 }
 
 int64_t gak_native_text_find(const uint8_t *box, const uint8_t *needle_box) {
