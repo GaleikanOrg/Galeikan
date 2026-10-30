@@ -78,6 +78,9 @@ static size_t gak_root_count;
 static size_t gak_file_metadata_bytes;
 static uint32_t gak_process_grants[GAK_MAX_PROCESS_GRANTS];
 static size_t gak_process_grant_count;
+#ifndef _WIN32
+static int gak_syscall_granted;
+#endif
 static int gak_failf(const char *format, ...);
 static char *gak_connections[GAK_MAX_CONNECTION_GRANTS];
 static size_t gak_connection_count;
@@ -317,6 +320,8 @@ int gak_native_init(void) {
             if (gak_grant_process(arguments[index]) != 0) return -1;
             continue;
         }
+        if (options && wcscmp(argument, L"--allow-syscall") == 0)
+            return gak_failf("--allow-syscall requires Linux x86-64");
         filtered[kept++] = argument;
     }
     gak_argc = (uint64_t)kept;
@@ -465,6 +470,11 @@ int gak_native_init(void) {
         if (options && strcmp(argument, "--allow-process") == 0) {
             if (++index >= count) return gak_failf("--allow-process needs a pid or self");
             if (gak_grant_process(arguments[index]) != 0) return -1;
+            continue;
+        }
+        if (options && strcmp(argument, "--allow-syscall") == 0) {
+            if (gak_syscall_granted) return gak_failf("--allow-syscall may be given only once");
+            gak_syscall_granted = 1;
             continue;
         }
         filtered[kept++] = argument;
@@ -711,6 +721,30 @@ uint64_t gak_native_process_self_pid(void) {
     return (uint64_t)getpid();
 #endif
 }
+
+#ifndef _WIN32
+int64_t gak_native_syscall(int64_t number, const uint64_t *arguments) {
+    gak_file_error = NULL;
+    if (!gak_syscall_granted) {
+        gak_failf("syscall.raw needs --allow-syscall (unrestricted Linux syscalls)");
+        return 0;
+    }
+    if (number < 0) {
+        gak_failf("syscall number must not be negative");
+        return 0;
+    }
+    uint64_t count = arguments[0];
+    if (count > 6) {
+        gak_failf("syscall.call accepts at most 6 arguments");
+        return 0;
+    }
+    uint64_t values[6] = {0};
+    for (uint64_t index = 0; index < count; index++) values[index] = arguments[index + 1];
+    long result = syscall((long)number, values[0], values[1], values[2],
+                          values[3], values[4], values[5]);
+    return result == -1 ? -(int64_t)errno : (int64_t)result;
+}
+#endif
 
 #ifndef _WIN32
 /* 1 = found, 0 = malformed, -1 = I/O error. Child enumeration skips vanished processes. */

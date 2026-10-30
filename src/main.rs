@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 
 fn usage() -> &'static str {
-    "Usage: galeikan lock <project-dir> | galeikan check <file.gak|file.gaks> | galeikan verify-case <file.json> | galeikan build <file.gak|file.gaks> | galeikan compile <file.gak|file.gaks> | galeikan run <file.gak|file.gaks> [--engine ast|vm] [--case <output.json>] [permissions] [-- <script-args>...] | galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...] | galeikan call <file.gak|file.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON request on stdin) | galeikan serve <file.gak|file.gaks|file.gakb> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON lines on stdin/stdout)\nPermissions: [--allow-read <directory>]... [--allow-connect <host:port>]... [--allow-process <pid|self>]... [--allow-python <python-executable>]"
+    "Usage: galeikan lock <project-dir> | galeikan check <file.gak|file.gaks> | galeikan verify-case <file.json> | galeikan build <file.gak|file.gaks> | galeikan compile <file.gak|file.gaks> | galeikan run <file.gak|file.gaks> [--engine ast|vm] [--case <output.json>] [permissions] [-- <script-args>...] | galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...] | galeikan call <file.gak|file.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON request on stdin) | galeikan serve <file.gak|file.gaks|file.gakb> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON lines on stdin/stdout)\nPermissions: [--allow-read <directory>]... [--allow-connect <host:port>]... [--allow-process <pid|self>]... [--allow-python <python-executable>] [--allow-syscall] (unrestricted Linux syscalls)"
 }
 
 fn serve(mut session: runtime::CallSession) -> Result<(), String> {
@@ -110,6 +110,7 @@ fn main() {
     let mut roots = Vec::new();
     let mut allowed_connections = Vec::new();
     let mut allowed_processes = Vec::new();
+    let mut allow_syscall = false;
     let mut python_executable = None;
     let mut case_output = None;
     let mut script_args = Vec::new();
@@ -156,6 +157,11 @@ fn main() {
         if args[i] == "--allow-python" && i + 1 < args.len() && python_executable.is_none() {
             python_executable = Some(PathBuf::from(&args[i + 1]));
             i += 2;
+            continue;
+        }
+        if args[i] == "--allow-syscall" && !allow_syscall {
+            allow_syscall = true;
+            i += 1;
             continue;
         }
         if args[i] == "--allow-connect" && i + 1 < args.len() && !args[i + 1].is_empty() {
@@ -211,6 +217,7 @@ fn main() {
                 read_roots: roots,
                 allowed_connections,
                 allowed_processes,
+                allow_syscall,
                 python_executable,
                 script_args,
                 engine,
@@ -231,6 +238,7 @@ fn main() {
                 read_roots: roots,
                 allowed_connections,
                 allowed_processes,
+                allow_syscall,
                 python_executable,
                 script_args,
                 engine,
@@ -247,6 +255,7 @@ fn main() {
         read_roots: roots,
         allowed_connections,
         allowed_processes,
+        allow_syscall,
         python_executable,
         script_args,
         engine,

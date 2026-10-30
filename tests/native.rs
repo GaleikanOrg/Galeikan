@@ -9,6 +9,131 @@ use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_os = "linux")]
+#[test]
+fn raw_syscall_requires_effect_and_grant_across_engines() {
+    let s = Sandbox::new();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let undeclared = s.write(
+        "syscall-undeclared.gak",
+        "from std.syscall import call\nprint call(39, [])\n",
+    );
+    let checked = Command::new(galeikan)
+        .arg("check")
+        .arg(&undeclared)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("syscall.raw"));
+
+    let script = s.write(
+        "syscall.gaks",
+        "requires { syscall.raw }\nfrom std.syscall import call\nprint call(39, [])\nprint call(121, [0u64])\nprint call(999999, [])\n",
+    );
+    let check_output = |output: Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lines: Vec<i64> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| line.parse::<i64>().unwrap())
+            .collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0] > 0);
+        assert!(lines[1] > 0);
+        assert!(lines[2] < 0);
+    };
+    for engine in ["ast", "vm"] {
+        let denied = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("--allow-syscall"));
+        check_output(
+            Command::new(galeikan)
+                .arg("run")
+                .arg(&script)
+                .args(["--engine", engine, "--allow-syscall"])
+                .output()
+                .unwrap(),
+        );
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = script.with_extension("gakb");
+    let denied = Command::new(galeikan)
+        .arg("exec")
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("--allow-syscall"));
+    check_output(
+        Command::new(galeikan)
+            .arg("exec")
+            .arg(bundle)
+            .arg("--allow-syscall")
+            .output()
+            .unwrap(),
+    );
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("--allow-syscall"));
+        check_output(
+            Command::new(&executable)
+                .arg("--allow-syscall")
+                .output()
+                .unwrap(),
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn linux_syscall_numbers_are_rejected_on_windows() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "linux-syscall.gak",
+        "requires { syscall.raw }\nfrom std.syscall import call\nprint call(39, [])\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let run = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-syscall"])
+            .output()
+            .unwrap();
+        assert!(!run.status.success());
+        assert!(String::from_utf8_lossy(&run.stderr).contains("requires Linux x86-64"));
+    }
+    let compiled = s.compile(&script);
+    assert!(!compiled.status.success());
+    assert!(String::from_utf8_lossy(&compiled.stderr).contains("requires Linux x86-64"));
+}
+
 #[test]
 fn byte_search_matches_ast_vm_bundle_and_native() {
     let s = Sandbox::new();

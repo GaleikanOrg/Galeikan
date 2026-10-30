@@ -630,6 +630,7 @@ enum NativeImport {
     Local(PathBuf),
     Python(PathBuf, String),
     Process,
+    Syscall,
     Net,
     Iter,
     Cli,
@@ -886,6 +887,10 @@ fn collect_module(
                 imports.insert(alias.clone(), NativeImport::Process);
                 continue;
             }
+            if target == "std.syscall" {
+                imports.insert(alias.clone(), NativeImport::Syscall);
+                continue;
+            }
             if target == "std.net" {
                 imports.insert(alias.clone(), NativeImport::Net);
                 continue;
@@ -1107,6 +1112,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
                             || effect == "python.exec"
                             || effect == "process.inspect"
                             || effect == "net.connect"
+                            || effect == "syscall.raw"
                     }) =>
                 {
                     Ok(())
@@ -1617,6 +1623,9 @@ impl Codegen {
             }
             Some(NativeImport::Process) => {
                 Err("std.process functions must be called directly".into())
+            }
+            Some(NativeImport::Syscall) => {
+                Err("std.syscall functions must be called directly".into())
             }
             Some(NativeImport::Net) => Err("std.net functions must be called directly".into()),
             Some(NativeImport::Iter) => {
@@ -3498,6 +3507,9 @@ impl Codegen {
                 Some(NativeImport::Process) => {
                     return self.process_call(function, args, caller_scope)
                 }
+                Some(NativeImport::Syscall) => {
+                    return self.syscall_call(function, args, caller_scope)
+                }
                 Some(NativeImport::Net) => return self.net_call(function, args, caller_scope),
                 Some(NativeImport::Cli) => return self.cli_call(function, args, caller_scope),
                 Some(NativeImport::List) => return self.list_call(function, args, caller_scope),
@@ -3645,6 +3657,38 @@ impl Codegen {
                 "unknown native result function or wrong arguments: {name}"
             )),
         }
+    }
+
+    fn syscall_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        if self.windows {
+            return Err("syscall.call requires Linux x86-64".into());
+        }
+        let ("call", [number, arguments]) = (name, args) else {
+            return Err(format!("unknown native syscall function {name}"));
+        };
+        if self.expr(number, scope)? != Scalar::Int {
+            return Err("syscall.call number must be i64".into());
+        }
+        let number_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            number_slot * 8
+        )
+        .unwrap();
+        let kind = self.expr(arguments, scope)?;
+        if !matches!(kind, Scalar::ListUInt | Scalar::ListEmpty) {
+            return Err("syscall.call arguments must be List<u64>".into());
+        }
+        self.uses_process = true;
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_syscall\n    mov r10, QWORD PTR [rip+gak_file_error]\n    test r10, r10\n    jz {ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), number_slot * 8, self.arg1()).unwrap();
+        Ok(Scalar::Int)
     }
 
     fn process_call(

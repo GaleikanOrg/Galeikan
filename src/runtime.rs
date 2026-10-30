@@ -690,6 +690,7 @@ enum Import {
     Cli,
     Net,
     Process,
+    Syscall,
     ResultOps,
     Audit,
     Iter,
@@ -709,6 +710,7 @@ fn import_has_symbol(import: &Import, symbol: &str) -> bool {
         Import::Cli => "cli",
         Import::Net => "net",
         Import::Process => "process",
+        Import::Syscall => "syscall",
         Import::ResultOps => "result",
         Import::Audit => "audit",
         Import::Iter => "iter",
@@ -1079,6 +1081,7 @@ enum BundleTarget {
     Cli,
     Net,
     Process,
+    Syscall,
     ResultOps,
     Audit,
     Iter,
@@ -1155,6 +1158,7 @@ struct Runtime {
     read_roots: Vec<PathBuf>,
     allowed_connections: HashSet<String>,
     allowed_processes: HashSet<u32>,
+    allow_syscall: bool,
     python_executable: Option<PathBuf>,
     python_session: RefCell<Option<python_bridge::Session>>,
     script_args: Vec<String>,
@@ -1182,6 +1186,7 @@ struct Permissions {
     read_roots: Vec<PathBuf>,
     allowed_connections: Vec<String>,
     allowed_processes: Vec<u32>,
+    allow_syscall: bool,
     python_executable: Option<PathBuf>,
     case_output: Option<PathBuf>,
 }
@@ -1468,6 +1473,7 @@ pub struct RunOptions {
     pub read_roots: Vec<PathBuf>,
     pub allowed_connections: Vec<String>,
     pub allowed_processes: Vec<u32>,
+    pub allow_syscall: bool,
     pub python_executable: Option<PathBuf>,
     pub script_args: Vec<String>,
     pub engine: Engine,
@@ -1481,6 +1487,7 @@ pub fn run(script: &Path, options: RunOptions) -> Result<(), String> {
             read_roots: options.read_roots,
             allowed_connections: options.allowed_connections,
             allowed_processes: options.allowed_processes,
+            allow_syscall: options.allow_syscall,
             python_executable: options.python_executable,
             case_output: options.case_output,
         },
@@ -1723,6 +1730,7 @@ pub struct CallOptions {
     pub read_roots: Vec<PathBuf>,
     pub allowed_connections: Vec<String>,
     pub allowed_processes: Vec<u32>,
+    pub allow_syscall: bool,
     pub python_executable: Option<PathBuf>,
     pub script_args: Vec<String>,
     pub engine: Engine,
@@ -1762,6 +1770,7 @@ impl CallSession {
                     read_roots: options.read_roots,
                     allowed_connections: options.allowed_connections,
                     allowed_processes: options.allowed_processes,
+                    allow_syscall: options.allow_syscall,
                     python_executable: options.python_executable,
                     case_output: None,
                 },
@@ -1780,6 +1789,7 @@ impl CallSession {
                     read_roots: options.read_roots,
                     allowed_connections: options.allowed_connections,
                     allowed_processes: options.allowed_processes,
+                    allow_syscall: options.allow_syscall,
                     python_executable: options.python_executable,
                     case_output: None,
                 },
@@ -1934,6 +1944,7 @@ pub fn exec(artifact: &Path, options: RunOptions) -> Result<(), String> {
             read_roots: options.read_roots,
             allowed_connections: options.allowed_connections,
             allowed_processes: options.allowed_processes,
+            allow_syscall: options.allow_syscall,
             python_executable: options.python_executable,
             case_output: options.case_output,
         },
@@ -2026,6 +2037,7 @@ impl Runtime {
             read_roots: permissions.read_roots,
             allowed_connections: permissions.allowed_connections.into_iter().collect(),
             allowed_processes: permissions.allowed_processes.into_iter().collect(),
+            allow_syscall: permissions.allow_syscall,
             python_executable: permissions.python_executable,
             python_session: RefCell::new(None),
             script_args,
@@ -2739,6 +2751,7 @@ impl Runtime {
                         Import::Cli => BundleTarget::Cli,
                         Import::Net => BundleTarget::Net,
                         Import::Process => BundleTarget::Process,
+                        Import::Syscall => BundleTarget::Syscall,
                         Import::ResultOps => BundleTarget::ResultOps,
                         Import::Audit => BundleTarget::Audit,
                         Import::Iter => BundleTarget::Iter,
@@ -2826,7 +2839,12 @@ impl Runtime {
         for effect in bundle.effects {
             if !matches!(
                 effect.as_str(),
-                "file.read" | "net.connect" | "python.exec" | "process.inspect" | "case.write"
+                "file.read"
+                    | "net.connect"
+                    | "python.exec"
+                    | "process.inspect"
+                    | "case.write"
+                    | "syscall.raw"
             ) || !self.declared_effects.insert(effect)
             {
                 return Err("invalid or duplicate bundle effect".into());
@@ -2850,7 +2868,12 @@ impl Runtime {
             for effect in raw.effects {
                 if !matches!(
                     effect.as_str(),
-                    "file.read" | "net.connect" | "python.exec" | "process.inspect" | "case.write"
+                    "file.read"
+                        | "net.connect"
+                        | "python.exec"
+                        | "process.inspect"
+                        | "case.write"
+                        | "syscall.raw"
                 ) || !effects.insert(effect.clone())
                     || !self.declared_effects.contains(&effect)
                 {
@@ -2877,6 +2900,7 @@ impl Runtime {
                     BundleTarget::Cli => Import::Cli,
                     BundleTarget::Net => Import::Net,
                     BundleTarget::Process => Import::Process,
+                    BundleTarget::Syscall => Import::Syscall,
                     BundleTarget::ResultOps => Import::ResultOps,
                     BundleTarget::Audit => Import::Audit,
                     BundleTarget::Iter => Import::Iter,
@@ -3094,6 +3118,7 @@ impl Runtime {
                             && effect != "net.connect"
                             && effect != "process.inspect"
                             && effect != "case.write"
+                            && effect != "syscall.raw"
                         {
                             return Err(format!(
                                 "{}:{}: unknown effect {effect}",
@@ -3411,6 +3436,8 @@ impl Runtime {
             Import::Net
         } else if target == "std.process" {
             Import::Process
+        } else if target == "std.syscall" {
+            Import::Syscall
         } else if target == "std.result" {
             Import::ResultOps
         } else if target == "std.audit" {
@@ -4188,6 +4215,10 @@ impl Runtime {
                     }
                     standard_call("process", function, args)
                 }
+                Some(Import::Syscall) => {
+                    self.check_effect(module, "syscall.raw")?;
+                    standard_call("syscall", function, args)
+                }
                 Some(Import::ResultOps) => standard_call("result", function, args),
                 Some(Import::Audit) => standard_call("audit", function, args),
                 Some(Import::Iter) => standard_call("iter", function, args),
@@ -4557,6 +4588,7 @@ impl Runtime {
                 Some(Import::Cli) => self.cli(function, &args),
                 Some(Import::Net) => self.net(module, function, &args),
                 Some(Import::Process) => self.process(module, function, &args),
+                Some(Import::Syscall) => self.syscall(module, function, &args),
                 Some(Import::ResultOps) => self.result_ops(function, &args),
                 Some(Import::Audit) => self.audit(function, &args),
                 Some(Import::Iter) => self.iter(function, &args),
@@ -5293,6 +5325,55 @@ impl Runtime {
             _ => Err(format!(
                 "unknown binary function or wrong argument count: {name}"
             )),
+        }
+    }
+
+    fn syscall(&self, module: &Rc<Module>, name: &str, args: &[Value]) -> Result<Value, String> {
+        self.check_effect(module, "syscall.raw")?;
+        if !self.allow_syscall {
+            return Err("syscall.raw needs --allow-syscall (unrestricted Linux syscalls)".into());
+        }
+        let ("call", [number, Value::List(arguments, _)]) = (name, args) else {
+            return Err(format!(
+                "unknown syscall function or wrong argument types: {name}"
+            ));
+        };
+        let number = number.as_int()?;
+        if number < 0 {
+            return Err("syscall number must not be negative".into());
+        }
+        if arguments.len() > 6 {
+            return Err("syscall.call accepts at most 6 arguments".into());
+        }
+        let mut values = [0u64; 6];
+        for (index, argument) in arguments.iter().enumerate() {
+            values[index] = argument.as_uint()?;
+        }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            let result = unsafe {
+                libc::syscall(
+                    number as libc::c_long,
+                    values[0],
+                    values[1],
+                    values[2],
+                    values[3],
+                    values[4],
+                    values[5],
+                )
+            };
+            if result == -1 {
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .ok_or("syscall failed without an error number")?;
+                return Ok(Value::Int(-i64::from(errno)));
+            }
+            Ok(Value::Int(result as i64))
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            let _ = (number, values);
+            Err("syscall.call requires Linux x86-64".into())
         }
     }
 
@@ -7705,6 +7786,17 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         Region, Regions, Source, Str, UInt,
     };
     let qualified = format!("{module}.{name}");
+    if module == "syscall" {
+        if name != "call" {
+            return Err(format!("unknown standard function {qualified}"));
+        }
+        let [number, arguments] = args else {
+            return Err(format!("{qualified} expects a number and List<u64>"));
+        };
+        require_type(Int, *number)?;
+        require_type(Type::List(Some(ResultKind::UInt)), *arguments)?;
+        return Ok(Int);
+    }
     if module == "bytes" && name == "pack" {
         match args {
             [Int | UInt | Type::Any, Str | Type::Any] => return Ok(Bytes),
