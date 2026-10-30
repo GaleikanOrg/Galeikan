@@ -17,7 +17,39 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 
 fn usage() -> &'static str {
-    "Usage: galeikan lock <project-dir> | galeikan check <file.gak|file.gaks> | galeikan verify-case <file.json> | galeikan build <file.gak|file.gaks> | galeikan compile <file.gak|file.gaks> | galeikan run <file.gak|file.gaks> [--engine ast|vm] [--case <output.json>] [permissions] [-- <script-args>...] | galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...] | galeikan call <file.gak|file.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON request on stdin) | galeikan serve <file.gak|file.gaks|file.gakb> [--engine ast|vm] [permissions] [-- <script-args>...] (JSON lines on stdin/stdout)\nPermissions: [--allow-read <directory>]... [--allow-connect <host:port>]... [--allow-process <pid|self>]... [--allow-python <python-executable>] [--allow-syscall] (unrestricted Linux syscalls)"
+    concat!(
+        "Usage:\n",
+        "  galeikan check <source.gak|source.gaks>\n",
+        "  galeikan run <source.gak|source.gaks> [--engine ast|vm] [--case <output.json>] [permissions] [-- <script-args>...]\n",
+        "  galeikan build <source.gak|source.gaks>\n",
+        "  galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...]\n",
+        "  galeikan compile <source.gak|source.gaks>\n",
+        "  galeikan call <source.gak|source.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...]\n",
+        "  galeikan serve <source.gak|source.gaks|file.gakb> [--engine ast|vm] [permissions] [-- <script-args>...]\n",
+        "  galeikan lock <project-dir>\n",
+        "  galeikan verify-case <file.json>\n",
+        "  galeikan --help | --version\n",
+        "\n",
+        "Permissions:\n",
+        "  --allow-read <directory>       Allow file reads from this directory (repeatable)\n",
+        "  --allow-connect <host:port>    Allow a network destination (repeatable)\n",
+        "  --allow-process <pid|self>     Allow process inspection (repeatable)\n",
+        "  --allow-python <executable>    Allow Python interop\n",
+        "  --allow-syscall               Allow unrestricted Linux x86-64 syscalls\n",
+        "\n",
+        "call reads one JSON request from stdin; serve exchanges JSON lines on stdin/stdout."
+    )
+}
+
+fn print_cli_info(value: &str) {
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    if let Err(error) = writeln!(output, "{value}") {
+        if error.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("cannot write CLI output: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn serve(mut session: runtime::CallSession) -> Result<(), String> {
@@ -52,6 +84,14 @@ fn serve(mut session: runtime::CallSession) -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() == 1 && matches!(args[0].as_str(), "--help" | "-h") {
+        print_cli_info(usage());
+        return;
+    }
+    if args.len() == 1 && matches!(args[0].as_str(), "--version" | "-V") {
+        print_cli_info(concat!("Galeikan ", env!("CARGO_PKG_VERSION")));
+        return;
+    }
     if args.len() == 2 && args[0] == "lock" {
         match project::lock(&PathBuf::from(&args[1])) {
             Ok(path) => println!("{}", path.display()),

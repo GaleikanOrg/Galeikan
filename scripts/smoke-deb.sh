@@ -19,6 +19,8 @@ staging="$(mktemp -d)"
 trap 'rm -rf -- "$staging"' EXIT
 dpkg-deb --extract "$package" "$staging"
 binary="$staging/usr/bin/galeikan"
+"$binary" --help >/dev/null
+[[ "$("$binary" --version)" == "Galeikan 0.1.0" ]]
 example="$staging/usr/share/doc/galeikan/examples/hello.gak"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan.png"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"

@@ -63,6 +63,10 @@ if (-not $installedUserPath.EndsWith(";$smokeRoot") -and $installedUserPath -ne 
 $appPath = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe').GetValue('')
 if ($appPath -ne (Join-Path $smokeRoot 'galeikan.exe')) { throw 'Installer did not register the CLI App Path' }
 $binary = Join-Path $smokeRoot 'galeikan.exe'
+& $binary --help | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Installed Galeikan --help failed' }
+& $binary --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Installed Galeikan --version failed' }
 $example = Join-Path $smokeRoot 'examples\hello.gak'
 if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $example)) {
     throw 'Installer did not produce the expected binary and example.'
