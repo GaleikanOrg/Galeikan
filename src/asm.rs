@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
-use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, IntelFormatter, OpKind};
+use iced_x86::{
+    Decoder, DecoderOptions, FlowControl, Formatter, InstructionInfoFactory,
+    InstructionInfoOptions, IntelFormatter, OpAccess, OpKind, RflagsBits,
+};
 
 #[derive(Debug)]
 pub struct Decoded {
@@ -11,6 +14,11 @@ pub struct Decoded {
     pub flow: &'static str,
     pub target: Option<u64>,
     pub data_target: Option<u64>,
+    pub register_reads: Vec<String>,
+    pub register_writes: Vec<String>,
+    pub flags_read: Vec<String>,
+    pub flags_modified: Vec<String>,
+    pub register_usage_complete: bool,
 }
 
 #[derive(Debug)]
@@ -47,55 +55,130 @@ impl Decoded {
     }
 }
 
-pub fn decode(bytes: &[u8], offset: usize, ip: u64, bitness: u32) -> Result<Decoded, String> {
-    if !matches!(bitness, 16 | 32 | 64) {
-        return Err("x86 bitness must be 16, 32, or 64".into());
-    }
-    if offset >= bytes.len() {
-        return Err("instruction offset out of bounds".into());
-    }
-    let end = offset.saturating_add(15).min(bytes.len());
-    let mut decoder = Decoder::with_ip(bitness, &bytes[offset..end], ip, DecoderOptions::NONE);
-    let instruction = decoder.decode();
-    if instruction.is_invalid() || instruction.len() == 0 {
-        return Err("invalid or truncated x86 instruction".into());
-    }
-    let mut text = String::new();
-    IntelFormatter::new().format(&instruction, &mut text);
-    let flow = match instruction.flow_control() {
-        FlowControl::Next => "next",
-        FlowControl::UnconditionalBranch => "jump",
-        FlowControl::IndirectBranch => "indirect_jump",
-        FlowControl::ConditionalBranch => "conditional_branch",
-        FlowControl::Return => "return",
-        FlowControl::Call => "call",
-        FlowControl::IndirectCall => "indirect_call",
-        FlowControl::Interrupt => "interrupt",
-        FlowControl::XbeginXabortXend => "transaction",
-        FlowControl::Exception => "exception",
-    };
-    let target = if instruction.op_count() > 0 {
-        match instruction.op0_kind() {
-            OpKind::NearBranch16 => Some(u64::from(instruction.near_branch16())),
-            OpKind::NearBranch32 => Some(u64::from(instruction.near_branch32())),
-            OpKind::NearBranch64 => Some(instruction.near_branch64()),
-            _ => None,
+pub struct DecodeContext {
+    info_factory: InstructionInfoFactory,
+    formatter: IntelFormatter,
+}
+
+impl DecodeContext {
+    pub fn new() -> Self {
+        Self {
+            info_factory: InstructionInfoFactory::new(),
+            formatter: IntelFormatter::new(),
         }
-    } else {
-        None
-    };
-    let data_target = instruction
-        .is_ip_rel_memory_operand()
-        .then(|| instruction.ip_rel_memory_address());
-    Ok(Decoded {
-        size: instruction.len(),
-        ip,
-        text,
-        mnemonic: format!("{:?}", instruction.mnemonic()).to_ascii_lowercase(),
-        flow,
-        target,
-        data_target,
-    })
+    }
+
+    pub fn decode(
+        &mut self,
+        bytes: &[u8],
+        offset: usize,
+        ip: u64,
+        bitness: u32,
+    ) -> Result<Decoded, String> {
+        if !matches!(bitness, 16 | 32 | 64) {
+            return Err("x86 bitness must be 16, 32, or 64".into());
+        }
+        if offset >= bytes.len() {
+            return Err("instruction offset out of bounds".into());
+        }
+        let end = offset.saturating_add(15).min(bytes.len());
+        let mut decoder = Decoder::with_ip(bitness, &bytes[offset..end], ip, DecoderOptions::NONE);
+        let instruction = decoder.decode();
+        if instruction.is_invalid() || instruction.len() == 0 {
+            return Err("invalid or truncated x86 instruction".into());
+        }
+        let mut text = String::new();
+        self.formatter.format(&instruction, &mut text);
+        let flow = match instruction.flow_control() {
+            FlowControl::Next => "next",
+            FlowControl::UnconditionalBranch => "jump",
+            FlowControl::IndirectBranch => "indirect_jump",
+            FlowControl::ConditionalBranch => "conditional_branch",
+            FlowControl::Return => "return",
+            FlowControl::Call => "call",
+            FlowControl::IndirectCall => "indirect_call",
+            FlowControl::Interrupt => "interrupt",
+            FlowControl::XbeginXabortXend => "transaction",
+            FlowControl::Exception => "exception",
+        };
+        let target = if instruction.op_count() > 0 {
+            match instruction.op0_kind() {
+                OpKind::NearBranch16 => Some(u64::from(instruction.near_branch16())),
+                OpKind::NearBranch32 => Some(u64::from(instruction.near_branch32())),
+                OpKind::NearBranch64 => Some(instruction.near_branch64()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let data_target = instruction
+            .is_ip_rel_memory_operand()
+            .then(|| instruction.ip_rel_memory_address());
+        let info = self
+            .info_factory
+            .info_options(&instruction, InstructionInfoOptions::NO_MEMORY_USAGE);
+        let mut register_reads = Vec::new();
+        let mut register_writes = Vec::new();
+        for register in info.used_registers() {
+            let name = format!("{:?}", register.register()).to_ascii_lowercase();
+            match register.access() {
+                OpAccess::Read | OpAccess::CondRead => register_reads.push(name),
+                OpAccess::Write | OpAccess::CondWrite => register_writes.push(name),
+                OpAccess::ReadWrite | OpAccess::ReadCondWrite => {
+                    register_reads.push(name.clone());
+                    register_writes.push(name);
+                }
+                _ => {}
+            }
+        }
+        register_reads.sort_unstable();
+        register_reads.dedup();
+        register_writes.sort_unstable();
+        register_writes.dedup();
+        let flags_read = flag_names(instruction.rflags_read());
+        let flags_modified = flag_names(instruction.rflags_modified());
+        Ok(Decoded {
+            size: instruction.len(),
+            ip,
+            text,
+            mnemonic: format!("{:?}", instruction.mnemonic()).to_ascii_lowercase(),
+            flow,
+            target,
+            data_target,
+            register_reads,
+            register_writes,
+            flags_read,
+            flags_modified,
+            register_usage_complete: !instruction.is_save_restore_instruction(),
+        })
+    }
+}
+
+pub fn decode(bytes: &[u8], offset: usize, ip: u64, bitness: u32) -> Result<Decoded, String> {
+    DecodeContext::new().decode(bytes, offset, ip, bitness)
+}
+
+fn flag_names(mask: u32) -> Vec<String> {
+    [
+        ("cf", RflagsBits::CF),
+        ("pf", RflagsBits::PF),
+        ("af", RflagsBits::AF),
+        ("zf", RflagsBits::ZF),
+        ("sf", RflagsBits::SF),
+        ("of", RflagsBits::OF),
+        ("df", RflagsBits::DF),
+        ("if", RflagsBits::IF),
+        ("ac", RflagsBits::AC),
+        ("uif", RflagsBits::UIF),
+        ("c0", RflagsBits::C0),
+        ("c1", RflagsBits::C1),
+        ("c2", RflagsBits::C2),
+        ("c3", RflagsBits::C3),
+    ]
+    .into_iter()
+    .filter(|(_, bit)| mask & bit != 0)
+    .map(|(name, _)| name.to_string())
+    .collect()
 }
 
 pub fn reachable(
@@ -114,6 +197,7 @@ pub fn reachable(
     let mut pending = VecDeque::from([start_offset]);
     let mut queued = HashSet::from([start_offset]);
     let mut found = BTreeMap::new();
+    let mut decoder = DecodeContext::new();
     while let Some(offset) = pending.pop_front() {
         if found.len() >= max_instructions {
             return Err("reachable disassembly exceeds max instruction count".into());
@@ -121,7 +205,7 @@ pub fn reachable(
         let ip = base_ip
             .checked_add(u64::try_from(offset).map_err(|_| "instruction offset out of range")?)
             .ok_or("instruction address overflow")?;
-        let instruction = decode(bytes, offset, ip, bitness)?;
+        let instruction = decoder.decode(bytes, offset, ip, bitness)?;
         let next = offset + instruction.size;
         let mut enqueue = |candidate: usize| {
             if candidate < bytes.len() && queued.insert(candidate) {
@@ -261,6 +345,31 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 #[cfg(test)]
 mod tests {
     use super::{blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs};
+
+    #[test]
+    fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
+        let mov = decode(b"\x48\x89\xd8", 0, 0x1000, 64).unwrap();
+        assert_eq!(mov.register_reads, ["rbx"]);
+        assert_eq!(mov.register_writes, ["rax"]);
+        assert!(mov.flags_read.is_empty());
+        assert!(mov.flags_modified.is_empty());
+
+        let add = decode(b"\x48\x01\xd8", 0, 0x1000, 64).unwrap();
+        assert_eq!(add.register_reads, ["rax", "rbx"]);
+        assert_eq!(add.register_writes, ["rax"]);
+        assert_eq!(add.flags_modified, ["cf", "pf", "af", "zf", "sf", "of"]);
+
+        let branch = decode(b"\x75\x01", 0, 0x1000, 64).unwrap();
+        assert_eq!(branch.flags_read, ["zf"]);
+        assert!(branch.register_reads.is_empty());
+
+        let push = decode(b"\x50", 0, 0x1000, 64).unwrap();
+        assert_eq!(push.register_reads, ["rax", "rsp"]);
+        assert_eq!(push.register_writes, ["rsp"]);
+
+        let fxsave = decode(b"\x0f\xae\x00", 0, 0x1000, 64).unwrap();
+        assert!(!fxsave.register_usage_complete);
+    }
 
     #[test]
     fn ip_relative_data_references_are_separate_from_branch_targets() {

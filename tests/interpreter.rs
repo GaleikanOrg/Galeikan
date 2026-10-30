@@ -9,6 +9,38 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn register_and_flag_access_match_ast_vm_and_bundle() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "registers.gak",
+        "import std.binary\nimport std.asm\nimport std.list\nlet source = binary.snapshot(binary.from_hex(\"48 89 d8 48 01 d8 75 01 90 c3\"))\nlet mov = asm.decode(source, 0, 0x1000, 64)\nlet add = asm.decode(source, 3, 0x1003, 64)\nlet branch = asm.decode(source, 6, 0x1006, 64)\nlet fxsave = asm.decode(binary.snapshot(binary.from_hex(\"0f ae 00\")), 0, 64)\nlet reads: List<str> = asm.register_reads(add)\nlet writes: List<str> = asm.register_writes(add)\nlet modified: List<str> = asm.flags_modified(add)\nprint asm.register_reads(mov)[0]\nprint asm.register_writes(mov)[0]\nprint list.count(reads)\nprint reads[0]\nprint reads[1]\nprint writes[0]\nprint list.count(modified)\nprint modified[0]\nprint asm.flags_read(branch)[0]\nprint list.count(asm.flags_modified(mov))\nprint asm.register_usage_complete(mov)\nprint asm.register_usage_complete(fxsave)\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(
+            stdout(&output),
+            "rbx\nrax\n2\nrax\nrbx\nrax\n6\ncf\nzf\n0\ntrue\nfalse\n"
+        );
+    }
+}
+
+#[test]
 fn ip_relative_data_references_match_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(

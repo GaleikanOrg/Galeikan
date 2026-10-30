@@ -1683,6 +1683,11 @@ fn encode_call_value(value: Value) -> Result<JsonValue, String> {
             "address": format!("0x{:x}", instruction.decoded.ip),
             "target": instruction.decoded.target.map(|target| format!("0x{target:x}")),
             "data_target": instruction.decoded.data_target.map(|target| format!("0x{target:x}")),
+            "register_reads": instruction.decoded.register_reads,
+            "register_writes": instruction.decoded.register_writes,
+            "flags_read": instruction.decoded.flags_read,
+            "flags_modified": instruction.decoded.flags_modified,
+            "register_usage_complete": instruction.decoded.register_usage_complete,
             "source": instruction.source.label, "origin": instruction.source.provenance(),
             "sha256": instruction.source.sha256,
             "source_lineage": instruction.source.lineage()
@@ -5722,11 +5727,12 @@ impl Runtime {
                 let mut cursor = start;
                 let mut ip = report.entry;
                 let mut instructions = Vec::with_capacity(count);
+                let mut decoder = asm::DecodeContext::new();
                 for _ in 0..count {
                     if cursor >= end {
                         return Err("linear disassembly exceeds executable entry region".into());
                     }
-                    let decoded = asm::decode(&source.bytes()[cursor..end], 0, ip, bitness)?;
+                    let decoded = decoder.decode(&source.bytes()[cursor..end], 0, ip, bitness)?;
                     let next = cursor + decoded.size;
                     let mapped = if is_pe {
                         report.pe_rva_range(source.bytes().len(), ip, decoded.size)?
@@ -5901,6 +5907,24 @@ impl Runtime {
                 .data_target
                 .map(Value::UInt)
                 .ok_or_else(|| "instruction has no IP-relative data target".into()),
+            ("register_usage_complete", [Value::Instruction(i)]) => {
+                Ok(Value::Bool(i.decoded.register_usage_complete))
+            }
+            (
+                "register_reads" | "register_writes" | "flags_read" | "flags_modified",
+                [Value::Instruction(i)],
+            ) => {
+                let names = match name {
+                    "register_reads" => &i.decoded.register_reads,
+                    "register_writes" => &i.decoded.register_writes,
+                    "flags_read" => &i.decoded.flags_read,
+                    _ => &i.decoded.flags_modified,
+                };
+                Ok(Value::List(
+                    Arc::new(names.iter().cloned().map(Value::Str).collect()),
+                    Some(ResultKind::Str),
+                ))
+            }
             ("successors", [Value::Instruction(i)]) => Ok(Value::List(
                 Arc::new(
                     i.decoded
@@ -7873,6 +7897,17 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         if name == "successors" {
             check_arguments(&qualified, args, &[Instruction])?;
             return Ok(Type::List(Some(ResultKind::UInt)));
+        }
+        if matches!(
+            name,
+            "register_reads" | "register_writes" | "flags_read" | "flags_modified"
+        ) {
+            check_arguments(&qualified, args, &[Instruction])?;
+            return Ok(Type::List(Some(ResultKind::Str)));
+        }
+        if name == "register_usage_complete" {
+            check_arguments(&qualified, args, &[Instruction])?;
+            return Ok(Bool);
         }
         let result = match name {
             "text" | "mnemonic" | "flow" | "address" | "target" => Str,
