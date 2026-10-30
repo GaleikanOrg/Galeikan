@@ -4724,6 +4724,12 @@ impl Runtime {
             ("xor", [Value::Bytes(data), Value::Bytes(key)]) => {
                 Ok(Value::Bytes(Arc::new(bytes::xor(data, key)?)))
             }
+            ("find", [Value::Bytes(data), Value::Bytes(needle)]) => {
+                Ok(Value::Int(bytes::find(data, needle)?))
+            }
+            ("contains", [Value::Bytes(data), Value::Bytes(needle)]) => {
+                Ok(Value::Bool(bytes::find(data, needle)? >= 0))
+            }
             ("at", [Value::Bytes(data), index]) => {
                 let index =
                     usize::try_from(index.as_int()?).map_err(|_| "byte index out of range")?;
@@ -7927,6 +7933,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "concat" | "xor") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
         ("bytes", "at") => (&[Bytes, Int], Int),
+        ("bytes", "find") => (&[Bytes, Bytes], Int),
+        ("bytes", "contains") => (&[Bytes, Bytes], Bool),
         ("text", "length" | "byte_length") => (&[Str], Int),
         ("text", "find") => (&[Str, Str], Int),
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),

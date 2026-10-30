@@ -88,6 +88,43 @@ pub fn xor(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
         .collect())
 }
 
+pub fn find(data: &[u8], needle: &[u8]) -> Result<i64, String> {
+    if needle.is_empty() {
+        return Ok(0);
+    }
+    if needle.len() > data.len() {
+        return Ok(-1);
+    }
+    let mut failure = Vec::new();
+    failure
+        .try_reserve_exact(needle.len())
+        .map_err(|_| "bytes search allocation failed")?;
+    failure.push(0usize);
+    let mut matched = 0usize;
+    for index in 1..needle.len() {
+        while matched > 0 && needle[index] != needle[matched] {
+            matched = failure[matched - 1];
+        }
+        if needle[index] == needle[matched] {
+            matched += 1;
+        }
+        failure.push(matched);
+    }
+    matched = 0;
+    for (index, byte) in data.iter().enumerate() {
+        while matched > 0 && *byte != needle[matched] {
+            matched = failure[matched - 1];
+        }
+        if *byte == needle[matched] {
+            matched += 1;
+        }
+        if matched == needle.len() {
+            return Ok((index + 1 - needle.len()) as i64);
+        }
+    }
+    Ok(-1)
+}
+
 pub fn hex_bytes(data: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut result = String::with_capacity(data.len() * 2);

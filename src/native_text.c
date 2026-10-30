@@ -151,7 +151,7 @@ int64_t gak_native_text_length(const uint8_t *box) {
     return count;
 }
 
-int64_t gak_native_text_find(const uint8_t *box, const uint8_t *needle_box) {
+int64_t gak_native_bytes_find(const uint8_t *box, const uint8_t *needle_box) {
     const uint8_t *data = box + 8;
     const uint8_t *needle = needle_box + 8;
     uint64_t size = gak_text_size(box);
@@ -177,15 +177,21 @@ int64_t gak_native_text_find(const uint8_t *box, const uint8_t *needle_box) {
         if (matched == needle_size) {
             uint64_t offset = index + 1 - needle_size;
             free(failure);
-            int64_t character = 0;
-            for (uint64_t prefix = 0; prefix < offset; ++prefix) {
-                if (gak_text_boundary(data, prefix)) ++character;
-            }
-            return character;
+            return (int64_t)offset;
         }
     }
     free(failure);
     return -1;
+}
+
+int64_t gak_native_text_find(const uint8_t *box, const uint8_t *needle_box) {
+    int64_t offset = gak_native_bytes_find(box, needle_box);
+    if (offset < 0) return offset;
+    int64_t character = 0;
+    for (int64_t prefix = 0; prefix < offset; ++prefix) {
+        if (gak_text_boundary(box + 8, (uint64_t)prefix)) ++character;
+    }
+    return character;
 }
 
 int gak_native_text_starts_with(const uint8_t *box, const uint8_t *prefix_box) {

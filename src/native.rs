@@ -5942,6 +5942,25 @@ impl Codegen {
                 .unwrap();
                 Ok(Scalar::Int)
             }
+            ("find" | "contains", [data, needle]) => {
+                if self.expr(data, scope)? != Scalar::Bytes {
+                    return Err(format!("bytes.{name} expects bytes arguments"));
+                }
+                let data_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", data_slot * 8).unwrap();
+                if self.expr(needle, scope)? != Scalar::Bytes {
+                    return Err(format!("bytes.{name} expects bytes arguments"));
+                }
+                self.uses_text = true;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_bytes_find\n    cmp rax, -2\n    je gak_text_search_alloc", self.arg0(), data_slot * 8, self.arg1()).unwrap();
+                if name == "contains" {
+                    self.code
+                        .push_str("    cmp rax, -1\n    setne al\n    movzx eax, al\n");
+                    Ok(Scalar::Bool)
+                } else {
+                    Ok(Scalar::Int)
+                }
+            }
             ("concat" | "xor", [left, right]) => {
                 if self.expr(left, scope)? != Scalar::Bytes {
                     return Err(format!("bytes.{name} expects bytes arguments"));
