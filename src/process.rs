@@ -43,6 +43,24 @@ impl Region {
         self.address_of(offset)
     }
 
+    pub fn advance_reference(&self, reference: &str, delta: i64) -> Result<String, String> {
+        let address = self.resolve_reference(reference)?;
+        let offset = self.offset_of(address)?;
+        let next = if delta >= 0 {
+            offset.checked_add(usize::try_from(delta).map_err(|_| "reference offset out of range")?)
+        } else {
+            offset.checked_sub(
+                usize::try_from(delta.unsigned_abs())
+                    .map_err(|_| "reference offset out of range")?,
+            )
+        }
+        .ok_or("reference offset out of range")?;
+        if next >= self.size {
+            return Err("reference offset out of range".into());
+        }
+        self.reference(self.address_of(next)?)
+    }
+
     pub fn contains(&self, address: usize) -> bool {
         self.start
             .checked_add(self.size)
@@ -914,6 +932,18 @@ mod tests {
         let reference = region.reference(0x1042).unwrap();
         assert_eq!(reference, "sample.bin@7:0x1000+0x42");
         assert_eq!(region.resolve_reference(&reference).unwrap(), 0x1042);
+        assert_eq!(
+            region
+                .resolve_reference("sample.bin@7:0x1000+0x00000000000000000042")
+                .unwrap(),
+            0x1042
+        );
+        let last = region.advance_reference(&reference, 0xbd).unwrap();
+        assert_eq!(region.resolve_reference(&last).unwrap(), 0x10ff);
+        assert_eq!(region.advance_reference(&last, -0xbd).unwrap(), reference);
+        assert!(region.advance_reference(&last, 1).is_err());
+        assert!(region.advance_reference(&reference, -0x43).is_err());
+        assert!(region.advance_reference(&reference, i64::MIN).is_err());
         let mut other = region.clone();
         other.start = 0x2000;
         assert!(other.resolve_reference(&reference).is_err());

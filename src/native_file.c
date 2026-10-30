@@ -1609,7 +1609,6 @@ uint64_t gak_native_region_resolve(GakRegion *region, const uint8_t *reference) 
     memcpy(&reference_length, reference, 8);
     if (prefix_length < 0 || (size_t)prefix_length >= sizeof(prefix) ||
         reference_length <= (uint64_t)prefix_length ||
-        reference_length - (uint64_t)prefix_length > 16 ||
         memcmp(reference + 8, prefix, (size_t)prefix_length) != 0) {
         gak_failf("address reference does not match process region");
         return UINT64_MAX;
@@ -1624,9 +1623,39 @@ uint64_t gak_native_region_resolve(GakRegion *region, const uint8_t *reference) 
             gak_failf("address reference does not match process region");
             return UINT64_MAX;
         }
-        offset = (offset << 4) | digit;
+        if (offset > (UINT64_MAX - digit) / 16) {
+            gak_failf("address reference offset out of range");
+            return UINT64_MAX;
+        }
+        offset = offset * 16 + digit;
     }
     return gak_native_region_address(region, offset);
+}
+
+uint8_t *gak_native_region_advance_ref(GakRegion *region,
+                                       const uint8_t *reference, int64_t delta) {
+    uint64_t address = gak_native_region_resolve(region, reference);
+    if (gak_file_error) return NULL;
+    uint64_t offset = address - region->start;
+    uint64_t next;
+    if (delta >= 0) {
+        uint64_t step = (uint64_t)delta;
+        if (step >= region->size - offset) {
+            gak_failf("reference offset out of range");
+            return NULL;
+        }
+        next = offset + step;
+    } else {
+        uint64_t step = (uint64_t)(-(delta + 1)) + 1;
+        if (step > offset) {
+            gak_failf("reference offset out of range");
+            return NULL;
+        }
+        next = offset - step;
+    }
+    uint64_t next_address = gak_native_region_address(region, next);
+    if (gak_file_error) return NULL;
+    return gak_native_region_reference(region, next_address);
 }
 
 GakFileResult *gak_native_process_snapshot_region(GakRegion *region,

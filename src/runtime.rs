@@ -5526,6 +5526,9 @@ impl Runtime {
                 u64::try_from(region.resolve_reference(reference.as_str()?)?)
                     .map_err(|_| "process address outside u64 range")?,
             )),
+            ("advance_ref", [Value::Region(region), reference, delta]) => Ok(Value::Str(
+                region.advance_reference(reference.as_str()?, delta.as_int()?)?,
+            )),
             ("image_backed", [Value::Region(region)]) => Ok(Value::Bool(region.image_backed)),
             ("offset" | "offset_u64", [Value::Region(region), address]) => {
                 let address = if name == "offset_u64" {
@@ -8249,6 +8252,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "address_u64") => (&[Region, Int], UInt),
         ("process", "reference") => (&[Region, UInt], Str),
         ("process", "resolve") => (&[Region, Str], UInt),
+        ("process", "advance_ref") => (&[Region, Str, Int], Str),
         ("process", "access" | "label") => (&[Region], Str),
         ("process", "image_backed") => (&[Region], Type::Bool),
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),

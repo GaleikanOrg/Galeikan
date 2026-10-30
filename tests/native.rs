@@ -10,6 +10,72 @@ use std::time::{Duration, Instant};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn process_references_advance_within_region_across_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "process-reference.gak",
+        "requires { process.inspect }\nimport std.process\nfrom std.result import is_error\nlet region = process.at(process.images(process.self_pid()), 0)\nlet first = process.reference(region, process.address_u64(region, 0))\nlet next = process.advance_ref(region, first, 1)\nfn before_start() -> Result<str> = process.advance_ref(region, first, -1)\nfn past_end() -> Result<str> = process.advance_ref(region, first, 9223372036854775807)\nfn foreign() -> Result<str> = process.advance_ref(region, \"wrong\", 1)\nprint process.resolve(region, next) == process.address_u64(region, 1)\nprint process.advance_ref(region, next, -1) == first\nprint process.advance_ref(region, first + \"00000000000000000\", 0) == first\nprint is_error(before_start())\nprint is_error(past_end())\nprint is_error(foreign())\n",
+    );
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-process", "self"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .args(["--allow-process", "self"])
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable)
+            .args(["--allow-process", "self"])
+            .output()
+            .unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn checked_integer_conversions_match_all_engines() {
     let s = Sandbox::new();
     let script = s.write(

@@ -3944,6 +3944,35 @@ impl Codegen {
                     Scalar::UInt
                 })
             }
+            ("advance_ref", [region, reference, delta]) => {
+                if self.expr(region, scope)? != Scalar::Region {
+                    return Err("process.advance_ref expects Region, str, i64".into());
+                }
+                let region_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    region_slot * 8
+                )
+                .unwrap();
+                if self.expr(reference, scope)? != Scalar::Str {
+                    return Err("process.advance_ref expects Region, str, i64".into());
+                }
+                let reference_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    reference_slot * 8
+                )
+                .unwrap();
+                if self.expr(delta, scope)? != Scalar::Int {
+                    return Err("process.advance_ref expects Region, str, i64".into());
+                }
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_region_advance_ref", self.arg0(), region_slot * 8, self.arg1(), reference_slot * 8, self.arg2()).unwrap();
+                self.process_checked_result();
+                self.uses_process = true;
+                Ok(Scalar::Str)
+            }
             (
                 "snapshot_region" | "snapshot_ref" | "snapshot_at" | "snapshot_at_u64",
                 [owner, address, length],
