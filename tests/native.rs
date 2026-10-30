@@ -8284,6 +8284,135 @@ fn native_binary_strings_errors_and_hit_limit_match_vm() {
 }
 
 #[test]
+fn native_lab_rejects_invalid_mutation_requests() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for (name, source, expression, error) in [
+        (
+            "mode",
+            "00 00",
+            "lab.mutate(source, \"unknown\", 1)",
+            "unknown mutation strategy",
+        ),
+        (
+            "negative",
+            "00 00",
+            "lab.mutate(source, \"bitflip\", -1)",
+            "mutation count must not be negative",
+        ),
+        (
+            "count",
+            "00 00",
+            "lab.mutate(source, \"bitflip\", 257)",
+            "mutation count exceeds 256",
+        ),
+        (
+            "span",
+            "00 00",
+            "lab.mutate(source, 2, 1, \"bitflip\", 1)",
+            "out of bounds",
+        ),
+        (
+            "truncate",
+            "00 00",
+            "lab.mutate(source, 1, 1, \"truncate\", 1)",
+            "truncate strategy requires the whole Source",
+        ),
+        (
+            "width",
+            "00 00",
+            "lab.mutate(source, 0, 1, \"integer-boundary:u16le\", 1)",
+            "integer-boundary strategy needs",
+        ),
+    ] {
+        let script = s.write(
+            &format!("lab-invalid-{name}.gak"),
+            &format!("import std.binary\nimport std.lab\nlet source = binary.snapshot(binary.from_hex(\"{source}\"))\nprint {expression}\n"),
+        );
+        let vm = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", "vm"])
+            .output()
+            .unwrap();
+        assert!(!vm.status.success(), "{name}");
+        assert!(
+            String::from_utf8_lossy(&vm.stderr).contains(error),
+            "{name}"
+        );
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success(), "{name}");
+        assert!(
+            String::from_utf8_lossy(&native.stderr).contains(error),
+            "{name}: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    let script = s.write(
+        "lab-corpus-limit.gaks",
+        "import std.binary\nimport std.bytes\nimport std.lab\nlet source = binary.snapshot(bytes.repeat(bytes.from_hex(\"00\"), 1048576))\nprint lab.mutate(source, \"bitflip\", 65)\n",
+    );
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(!native.status.success());
+    assert!(String::from_utf8_lossy(&native.stderr).contains("mutation corpus exceeds"));
+}
+
+#[test]
+fn native_lab_mutations_match_interpreter_for_all_strategies() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "lab-mutations.gaks",
+        "from std.binary import from_hex, snapshot, extract, size\nfrom std.bytes import to_hex\nfrom std.lab import mutate\nfrom std.list import count\nlet source = snapshot(from_hex(\"00 7f 80 ff 00 00 00 00\"))\nlet bitflip = mutate(source, 0, 1, \"bitflip\", 3)\nlet boundaries = mutate(source, 0, 2, \"byte-boundary\", 5)\nlet truncated = mutate(source, \"truncate\", 3)\nlet inserted = mutate(source, 1, 1, \"insert-boundary\", 5)\nlet deleted = mutate(source, 1, 2, \"delete-byte\", 2)\nlet le16 = mutate(source, 4, 2, \"integer-boundary:u16le\", 5)\nlet be16 = mutate(source, 4, 2, \"integer-boundary:u16be\", 5)\nlet le32 = mutate(source, 4, 4, \"integer-boundary:u32le\", 5)\nlet be64 = mutate(source, 0, 8, \"integer-boundary:u64be\", 5)\nlet empty = mutate(source, \"bitflip\", 0)\nprint count(empty)\nprint bitflip[0]\nprint truncated[0]\nprint inserted[0]\nprint le16[0]\nfor variant in bitflip {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in boundaries {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in truncated {\n    print size(variant)\n}\nfor variant in inserted {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in deleted {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in le16 {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in be16 {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in le32 {\n    print to_hex(extract(variant, 0, size(variant)))\n}\nfor variant in be64 {\n    print to_hex(extract(variant, 0, size(variant)))\n}\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let vm = Command::new(galeikan)
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn binary_find_and_contains_match_across_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(

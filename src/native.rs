@@ -639,6 +639,7 @@ enum NativeImport {
     Bytes,
     Text,
     Binary,
+    Lab,
     Audit,
     Formats,
 }
@@ -682,6 +683,7 @@ struct Codegen {
     uses_text: bool,
     uses_formats: bool,
     uses_bits: bool,
+    uses_lab: bool,
 }
 
 struct NativeHunt {
@@ -875,6 +877,10 @@ fn collect_module(
                 imports.insert(alias.clone(), NativeImport::Binary);
                 continue;
             }
+            if target == "std.lab" {
+                imports.insert(alias.clone(), NativeImport::Lab);
+                continue;
+            }
             if target == "std.audit" {
                 imports.insert(alias.clone(), NativeImport::Audit);
                 continue;
@@ -1066,6 +1072,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
         uses_text: false,
         uses_formats: false,
         uses_bits: false,
+        uses_lab: false,
     };
     for module_path in &order {
         let module = &modules[module_path];
@@ -1187,6 +1194,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     let uses_net = generator.uses_net;
     let uses_text = generator.uses_text;
     let uses_formats = generator.uses_formats;
+    let uses_lab = generator.uses_lab;
     let assembly = generator.finish()?;
     let source_extension = path
         .extension()
@@ -1237,6 +1245,11 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     };
     let formats_runtime_path = if uses_formats {
         Some(scratch.write("native_formats.c", include_str!("native_formats.c"))?)
+    } else {
+        None
+    };
+    let lab_runtime_path = if uses_lab {
+        Some(scratch.write("native_lab.c", include_str!("native_lab.c"))?)
     } else {
         None
     };
@@ -1299,6 +1312,16 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
             .arg(gcc_path(helper_path));
     }
     if let Some(helper_path) = &formats_runtime_path {
+        compiler
+            .arg("-x")
+            .arg("c")
+            .arg("-std=c11")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg("-Werror")
+            .arg(gcc_path(helper_path));
+    }
+    if let Some(helper_path) = &lab_runtime_path {
         compiler
             .arg("-x")
             .arg("c")
@@ -1496,6 +1519,7 @@ impl Codegen {
                     self.uses_text,
                     self.uses_formats,
                     self.uses_bits,
+                    self.uses_lab,
                 );
                 let compiled = (|| -> Result<(), String> {
                     let next = self.label();
@@ -1578,6 +1602,7 @@ impl Codegen {
                     self.uses_text = checkpoint.14;
                     self.uses_formats = checkpoint.15;
                     self.uses_bits = checkpoint.16;
+                    self.uses_lab = checkpoint.17;
                 }
             }
         }
@@ -1641,6 +1666,7 @@ impl Codegen {
             Some(NativeImport::Binary) => {
                 Err("std.binary functions must be called directly".into())
             }
+            Some(NativeImport::Lab) => Err("std.lab functions must be called directly".into()),
             Some(NativeImport::Audit) => Err("std.audit functions must be called directly".into()),
             Some(NativeImport::Formats) => {
                 Err("std.formats functions must be called directly".into())
@@ -2699,9 +2725,12 @@ impl Codegen {
         let patch = self.label();
         let splice = self.label();
         let suffix_done = self.label();
+        let default_suffix = self.label();
         writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    xor ecx, ecx\n    lea r11, [rbp-{}]\n{walk}:\n    cmp ecx, 65\n    jae gak_source_depth\n    mov QWORD PTR [r11+rcx*8], r10\n    inc ecx\n    mov r10, QWORD PTR [r10+8]\n    test r10, r10\n    jnz {walk}\n    sub ecx, 2\n    movsxd rcx, ecx\n    mov QWORD PTR [rbp-{}], rcx\n    mov rax, QWORD PTR [r11+rcx*8+8]\n    mov rax, QWORD PTR [rax+80]", source_slot * 8, chain_base * 8, index_slot * 8).unwrap();
         self.print_value(Scalar::Str, depth)?;
-        writeln!(self.code, "{suffix}:\n    mov rcx, QWORD PTR [rbp-{}]\n    test rcx, rcx\n    js {label_done}\n    lea r11, [rbp-{}]\n    mov r10, QWORD PTR [r11+rcx*8]\n    mov QWORD PTR [rbp-{}], r10\n    cmp QWORD PTR [r10+48], 2\n    je {patch}\n    cmp QWORD PTR [r10+48], 3\n    je {splice}\n    jmp {range}\n{patch}:", index_slot * 8, chain_base * 8, child_slot * 8).unwrap();
+        writeln!(self.code, "{suffix}:\n    mov rcx, QWORD PTR [rbp-{}]\n    test rcx, rcx\n    js {label_done}\n    lea r11, [rbp-{}]\n    mov r10, QWORD PTR [r11+rcx*8]\n    mov QWORD PTR [rbp-{}], r10\n    cmp QWORD PTR [r10+96], 0\n    jne {default_suffix}\n    mov rax, QWORD PTR [r10+104]\n    test rax, rax\n    jz {default_suffix}", index_slot * 8, chain_base * 8, child_slot * 8).unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        writeln!(self.code, "    jmp {suffix_done}\n{default_suffix}:\n    cmp QWORD PTR [r10+48], 2\n    je {patch}\n    cmp QWORD PTR [r10+48], 3\n    je {splice}\n    jmp {range}\n{patch}:").unwrap();
         self.write_const(" patched")?;
         writeln!(self.code, "    jmp {range}\n{splice}:").unwrap();
         self.write_const(" spliced")?;
@@ -3541,6 +3570,7 @@ impl Codegen {
                 Some(NativeImport::Binary) => {
                     return self.binary_call(function, args, caller_scope)
                 }
+                Some(NativeImport::Lab) => return self.lab_call(function, args, caller_scope),
                 Some(NativeImport::Audit) => return self.audit_call(function, args, caller_scope),
                 Some(NativeImport::Formats) => {
                     return self.formats_call(function, args, caller_scope)
@@ -5257,6 +5287,95 @@ impl Codegen {
             offsets: offsets_slot,
             rule: rule_slot,
         })
+    }
+
+    fn lab_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        if name != "mutate" || !matches!(args.len(), 3 | 5) {
+            return Err(format!(
+                "unknown native lab function or wrong arguments: {name}"
+            ));
+        }
+        if self.expr(&args[0], scope)? != Scalar::Source {
+            return Err("lab.mutate expects Source".into());
+        }
+        let source_slot = self.reserve_slot()?;
+        writeln!(
+            self.code,
+            "    mov QWORD PTR [rbp-{}], rax",
+            source_slot * 8
+        )
+        .unwrap();
+        let offset_slot = self.reserve_slot()?;
+        let length_slot = self.reserve_slot()?;
+        if args.len() == 5 {
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("lab.mutate offset must be i64".into());
+            }
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                offset_slot * 8
+            )
+            .unwrap();
+            if self.expr(&args[2], scope)? != Scalar::Int {
+                return Err("lab.mutate length must be i64".into());
+            }
+            writeln!(
+                self.code,
+                "    mov QWORD PTR [rbp-{}], rax",
+                length_slot * 8
+            )
+            .unwrap();
+        } else {
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], 0\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]\n    sub rax, QWORD PTR [r10+16]\n    mov QWORD PTR [rbp-{}], rax", offset_slot * 8, source_slot * 8, length_slot * 8).unwrap();
+        }
+        let mode_index = if args.len() == 5 { 3 } else { 1 };
+        if self.expr(&args[mode_index], scope)? != Scalar::Str {
+            return Err("lab.mutate strategy must be str".into());
+        }
+        let mode_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", mode_slot * 8).unwrap();
+        if self.expr(&args[mode_index + 1], scope)? != Scalar::Int {
+            return Err("lab.mutate count must be i64".into());
+        }
+        let count_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
+
+        self.uses_lab = true;
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), length_slot * 8, self.arg3(), mode_slot * 8).unwrap();
+        if self.windows {
+            writeln!(self.code, "    sub rsp, 48\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rsp+32], r10\n    call gak_native_lab_plan\n    add rsp, 48", count_slot * 8).unwrap();
+        } else {
+            writeln!(
+                self.code,
+                "    mov r8, QWORD PTR [rbp-{}]\n    call gak_native_lab_plan",
+                count_slot * 8
+            )
+            .unwrap();
+        }
+        let planned = self.label();
+        writeln!(self.code, "    test rax, rax\n    jnz {planned}\n    mov rax, QWORD PTR [rip+gak_lab_error]\n    jmp gak_analyze_error_dynamic\n{planned}:").unwrap();
+        let plan_slot = self.reserve_slot()?;
+        let list_slot = self.reserve_slot()?;
+        let index_slot = self.reserve_slot()?;
+        let case_slot = self.reserve_slot()?;
+        let replacement_slot = self.reserve_slot()?;
+        let produced_slot = self.reserve_slot()?;
+        let label_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov rax, QWORD PTR [rax]\n    call gak_alloc_list\n    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0", plan_slot * 8, list_slot * 8, index_slot * 8).unwrap();
+        let loop_start = self.label();
+        let loop_done = self.label();
+        let splice = self.label();
+        let produced = self.label();
+        writeln!(self.code, "{loop_start}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    cmp r10, QWORD PTR [r11]\n    jae {loop_done}\n    shl r10, 7\n    lea r11, [r11+r10+8]\n    mov QWORD PTR [rbp-{}], r11\n    mov r10, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r10+32], 64\n    jae gak_source_depth\n    cmp QWORD PTR [r11], 0\n    jne {splice}\n    mov rax, QWORD PTR [r10]\n    mov rdx, r10\n    mov r11, QWORD PTR [r10+24]\n    mov r8, QWORD PTR [rbp-{}]\n    sub r11, QWORD PTR [r8+16]\n    mov r8, QWORD PTR [r10+32]\n    inc r8\n    mov r10, QWORD PTR [r10+16]\n    call gak_alloc_source\n    jmp {produced}\n{splice}:\n    mov rax, 8\n    call gak_alloc_bytes\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    mov QWORD PTR [rax], r11\n    mov r11, QWORD PTR [r10+32]\n    mov QWORD PTR [rax+8], r11\n    mov QWORD PTR [rbp-{}], rax", index_slot * 8, plan_slot * 8, case_slot * 8, source_slot * 8, case_slot * 8, case_slot * 8, replacement_slot * 8).unwrap();
+        let patch = self.label();
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r10], 1\n    je {patch}\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r10+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+16]\n    call gak_splice_source\n    jmp {produced}\n{patch}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_patch_source\n{produced}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r10+48]\n    mov {}, QWORD PTR [r10+40]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rax+104], r10\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov QWORD PTR [r10+r11*8+8], rax\n    inc QWORD PTR [rbp-{}]\n    jmp {loop_start}\n{loop_done}:\n    mov {}, QWORD PTR [rbp-{}]\n    call free\n    mov rax, QWORD PTR [rbp-{}]", case_slot * 8, source_slot * 8, replacement_slot * 8, source_slot * 8, replacement_slot * 8, produced_slot * 8, case_slot * 8, label_slot * 8, self.arg0(), case_slot * 8, self.arg1(), self.arg2(), produced_slot * 8, label_slot * 8, list_slot * 8, index_slot * 8, index_slot * 8, self.arg0(), plan_slot * 8, list_slot * 8).unwrap();
+        Ok(Scalar::ListSource)
     }
 
     fn binary_call(
