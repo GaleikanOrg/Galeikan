@@ -4656,6 +4656,22 @@ impl Runtime {
         if depth > MAX_CALL_DEPTH {
             return Err("call depth exceeded".into());
         }
+        if matches!(name, "i64" | "u64") {
+            let [value] = args.as_slice() else {
+                return Err(format!("{name} expects 1 argument"));
+            };
+            return match (name, value) {
+                ("i64", Value::Int(value)) => Ok(Value::Int(*value)),
+                ("i64", Value::UInt(value)) => i64::try_from(*value)
+                    .map(Value::Int)
+                    .map_err(|_| "i64 conversion out of range".into()),
+                ("u64", Value::UInt(value)) => Ok(Value::UInt(*value)),
+                ("u64", Value::Int(value)) => u64::try_from(*value)
+                    .map(Value::UInt)
+                    .map_err(|_| "u64 conversion out of range".into()),
+                _ => Err(format!("{name} expects i64 or u64")),
+            };
+        }
         if let Some(record) = module.records.get(name) {
             if args.len() != record.fields.len() {
                 return Err(format!("{name} expects {} arguments", record.fields.len()));
@@ -7734,6 +7750,15 @@ fn is_value_method_receiver(module: &Module, receiver: &str) -> bool {
 }
 
 fn check_function_call(module: &Module, name: &str, args: &[Type]) -> Result<Type, String> {
+    if matches!(name, "i64" | "u64") {
+        let [value] = args else {
+            return Err(format!("{name} expects 1 argument"));
+        };
+        if !matches!(value, Type::Int | Type::UInt | Type::Any) {
+            return Err(format!("{name} expects i64 or u64, got {value}"));
+        }
+        return Ok(if name == "i64" { Type::Int } else { Type::UInt });
+    }
     if let Some(record) = module.records.get(name) {
         check_arguments(
             name,

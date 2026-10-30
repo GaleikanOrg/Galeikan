@@ -1708,6 +1708,8 @@ fn valid_binding_name(name: &str) -> bool {
                 | "false"
                 | "print"
                 | "impact"
+                | "i64"
+                | "u64"
         )
 }
 

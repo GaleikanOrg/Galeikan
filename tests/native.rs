@@ -9,6 +9,76 @@ use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn checked_integer_conversions_match_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "integer-conversions.gak",
+        "from std.result import is_error\nfn negative() -> Result<u64> = u64(-1)\nfn overflow() -> Result<i64> = i64(9223372036854775808u64)\nprint u64(42)\nprint i64(42u64)\nprint u64(18446744073709551615u64)\nprint i64(-7)\nprint is_error(negative())\nprint is_error(overflow())\n",
+    );
+    let expected = b"42\n42\n18446744073709551615\n-7\ntrue\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+    let wrong_type = s.write("integer-conversion-type.gak", "print u64(\"42\")\n");
+    let checked = Command::new(galeikan)
+        .arg("check")
+        .arg(wrong_type)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("u64 expects i64 or u64"));
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn raw_syscall_requires_effect_and_grant_across_engines() {
@@ -28,7 +98,7 @@ fn raw_syscall_requires_effect_and_grant_across_engines() {
 
     let script = s.write(
         "syscall.gaks",
-        "requires { syscall.raw }\nfrom std.syscall import call\nprint call(39, [])\nprint call(121, [0u64])\nprint call(999999, [])\n",
+        "requires { syscall.raw }\nfrom std.syscall import call\nfrom std.process import self_pid\nprint call(39, [])\nprint call(121, [u64(self_pid())])\nprint call(999999, [])\n",
     );
     let check_output = |output: Output| {
         assert!(

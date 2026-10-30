@@ -3495,6 +3495,26 @@ impl Codegen {
         args: &[Expr],
         caller_scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if matches!(name, "i64" | "u64") {
+            let [value] = args else {
+                return Err(format!("{name} expects 1 argument"));
+            };
+            let source = self.expr(value, caller_scope)?;
+            if !matches!(source, Scalar::Int | Scalar::UInt) {
+                return Err(format!("{name} expects i64 or u64"));
+            }
+            if (name == "i64" && source == Scalar::UInt) || (name == "u64" && source == Scalar::Int)
+            {
+                let ready = self.label();
+                let message = self.literal(&format!("{name} conversion out of range"))?;
+                writeln!(self.code, "    test rax, rax\n    jns {ready}\n    lea rax, [rip+{message}]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+            }
+            return Ok(if name == "i64" {
+                Scalar::Int
+            } else {
+                Scalar::UInt
+            });
+        }
         if let Some((alias, function)) = name.split_once('.') {
             match self
                 .module_imports
