@@ -10,6 +10,61 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+struct NativeScratch {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl NativeScratch {
+    fn new() -> Result<Self, String> {
+        let root = fs::canonicalize(std::env::temp_dir())
+            .map_err(|e| format!("cannot locate native build temporary directory: {e}"))?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        for _ in 0..32 {
+            let serial = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+            let path = root.join(format!(
+                "galeikan-native-{}-{timestamp}-{serial}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { root, path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("cannot create native build directory: {error}")),
+            }
+        }
+        Err("cannot create a unique native build directory".into())
+    }
+
+    fn write(&self, name: &str, contents: impl AsRef<[u8]>) -> Result<PathBuf, String> {
+        let path = self.path.join(name);
+        fs::write(&path, contents).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        Ok(path)
+    }
+}
+
+impl Drop for NativeScratch {
+    fn drop(&mut self) {
+        let Ok(path) = fs::canonicalize(&self.path) else {
+            return;
+        };
+        if path.parent() == Some(self.root.as_path())
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("galeikan-native-"))
+        {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
 
 const MAX_SOURCE: u64 = 8 * 1024 * 1024;
 const MAX_SLOTS: usize = 4096;
@@ -1144,56 +1199,42 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     };
     fs::write(&assembly_path, assembly)
         .map_err(|e| format!("cannot write {}: {e}", assembly_path.display()))?;
+    let scratch = NativeScratch::new()?;
     let file_runtime_path = if uses_file_read || uses_python || uses_process || uses_net {
-        let helper_path = path.with_extension(format!("{source_extension}.native_file.c"));
-        fs::write(&helper_path, include_str!("native_file.c"))
-            .map_err(|e| format!("cannot write {}: {e}", helper_path.display()))?;
-        Some(helper_path)
+        Some(scratch.write("native_file.c", include_str!("native_file.c"))?)
     } else {
         None
     };
     let python_runtime_path = if uses_python {
-        let helper_path = path.with_extension(format!("{source_extension}.native_python.c"));
-        let runner = include_bytes!("native_python_runner.py")
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let mut runner = String::with_capacity(include_bytes!("native_python_runner.py").len() * 5);
+        for (index, byte) in include_bytes!("native_python_runner.py").iter().enumerate() {
+            if index != 0 {
+                runner.push_str(", ");
+            }
+            write!(runner, "{byte}").unwrap();
+        }
         let helper =
             include_str!("native_python.c").replace("__GAK_PYTHON_RUNNER_BYTES__", &runner);
-        fs::write(&helper_path, helper)
-            .map_err(|e| format!("cannot write {}: {e}", helper_path.display()))?;
-        Some(helper_path)
+        Some(scratch.write("native_python.c", helper)?)
     } else {
         None
     };
     let net_runtime_path = if uses_net {
-        let helper_path = path.with_extension(format!("{source_extension}.native_net.c"));
-        fs::write(&helper_path, include_str!("native_net.c"))
-            .map_err(|e| format!("cannot write {}: {e}", helper_path.display()))?;
-        Some(helper_path)
+        Some(scratch.write("native_net.c", include_str!("native_net.c"))?)
     } else {
         None
     };
     let text_runtime_path = if uses_text {
-        let helper_path = path.with_extension(format!("{source_extension}.native_text.c"));
-        fs::write(&helper_path, include_str!("native_text.c"))
-            .map_err(|e| format!("cannot write {}: {e}", helper_path.display()))?;
-        Some(helper_path)
+        Some(scratch.write("native_text.c", include_str!("native_text.c"))?)
     } else {
         None
     };
     let formats_runtime_path = if uses_formats {
-        let helper_path = path.with_extension(format!("{source_extension}.native_formats.c"));
-        fs::write(&helper_path, include_str!("native_formats.c"))
-            .map_err(|e| format!("cannot write {}: {e}", helper_path.display()))?;
-        Some(helper_path)
+        Some(scratch.write("native_formats.c", include_str!("native_formats.c"))?)
     } else {
         None
     };
-    let call_runtime_path = path.with_extension(format!("{source_extension}.native_call.c"));
-    fs::write(&call_runtime_path, include_str!("native_call.c"))
-        .map_err(|e| format!("cannot write {}: {e}", call_runtime_path.display()))?;
+    let call_runtime_path = scratch.write("native_call.c", include_str!("native_call.c"))?;
     let mut compiler = Command::new("gcc");
     if cfg!(windows) {
         compiler.arg("-Wl,--dynamicbase,--nxcompat,--high-entropy-va");

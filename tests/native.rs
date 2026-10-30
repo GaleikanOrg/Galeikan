@@ -3621,6 +3621,62 @@ fn native_compiler_rejects_unsupported_modules() {
 }
 
 #[test]
+fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "scratch.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, kind\nfrom std.text import length\nprint length(kind(probe(analyze(\"unused.bin\", 64))))\n",
+    );
+    let temp_key = if cfg!(windows) { "TMP" } else { "TMPDIR" };
+    let compile = |path: &str| {
+        Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("compile")
+            .arg(&script)
+            .env(temp_key, &s.0)
+            .env("PATH", path)
+            .output()
+            .unwrap()
+    };
+    let current_path = std::env::var("PATH").unwrap();
+    let built = compile(&current_path);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    assert!(executable.is_file());
+    let stale = || {
+        fs::read_dir(&s.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| {
+                name.starts_with("galeikan-native-")
+                    || name.contains(".native_") && name.ends_with(".c")
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        stale().is_empty(),
+        "temporary build files remain: {:?}",
+        stale()
+    );
+
+    let failed = compile("");
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("cannot start gcc"));
+    assert!(
+        stale().is_empty(),
+        "temporary build files remain: {:?}",
+        stale()
+    );
+    assert!(executable.is_file());
+}
+
+#[test]
 fn native_elf32_rel_and_rela_match_vm_in_both_byte_orders() {
     if !gcc_available() {
         return;

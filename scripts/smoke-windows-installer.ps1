@@ -160,7 +160,7 @@ if ($nativeReadDenied.ExitCode -eq 0 -or
     -not (Get-Content -LiteralPath $nativeReadError -Raw).Contains('file access not allowed')) {
     throw 'Installed native file-read permission check failed'
 }
-Remove-Item -LiteralPath $nativeReadSource, $nativeReadSample, $nativeReadExecutable, $nativeReadError, "$nativeReadSource.win64.S", "$nativeReadSource.native_file.c"
+Remove-Item -LiteralPath $nativeReadSource, $nativeReadSample, $nativeReadExecutable, $nativeReadError, "$nativeReadSource.win64.S"
 $recordSource = Join-Path $smokeRoot 'struct-smoke.gak'
 [System.IO.File]::WriteAllText($recordSource, "struct Header { marker: str, offset: i64 }`nlet header = Header(`"MZ`", 4)`nprint header.marker`nprint header.offset`n")
 $recordVm = & $binary run $recordSource --engine vm
@@ -385,7 +385,7 @@ $udpProcess = Start-Process -FilePath "$udpNativeSource.exe" -ArgumentList @('--
 if ($udpProcess.ExitCode -eq 0 -or (Get-Content -LiteralPath $udpStderr -Raw) -notlike '*request exceeds 65507 bytes*') {
     throw 'Installed native UDP request limit was not enforced'
 }
-Remove-SmokeFiles -Paths @($udpNativeSource, "$udpNativeSource.exe", "$udpNativeSource.win64.S", "$udpNativeSource.native_file.c", "$udpNativeSource.native_net.c", $udpStdout, $udpStderr)
+Remove-SmokeFiles -Paths @($udpNativeSource, "$udpNativeSource.exe", "$udpNativeSource.win64.S", $udpStdout, $udpStderr)
 & $binary check (Join-Path $smokeRoot 'examples\http_fetch.gak')
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI does not recognize the HTTP API' }
 & $binary check (Join-Path $smokeRoot 'examples\http_request.gak')
@@ -444,7 +444,7 @@ $nativeFormatOutput = & "$nativeFormatSource.exe" --allow-read 'C:\Windows\Syste
 if ($LASTEXITCODE -ne 0 -or ($nativeFormatOutput -join "`n") -ne "pe`n64`npresent") {
     throw 'Installed native PE format inspection failed'
 }
-Remove-Item -LiteralPath $nativeFormatSource, "$nativeFormatSource.exe", "$nativeFormatSource.win64.S", "$nativeFormatSource.native_file.c", "$nativeFormatSource.native_formats.c"
+Remove-Item -LiteralPath $nativeFormatSource, "$nativeFormatSource.exe", "$nativeFormatSource.win64.S"
 $wxExample = Join-Path $smokeRoot 'examples\section_wx.gak'
 $wxCase = Join-Path $smokeRoot 'section-wx-case.json'
 & $binary run $wxExample --allow-read $smokeRoot --case $wxCase -- $binary
@@ -539,7 +539,7 @@ if ($python) {
     } finally {
         $env:PYTHONPATH = $savedPythonPath
     }
-    Remove-SmokeFiles -Paths @($pythonHelper, $pythonSource, "$pythonSource.exe", "$pythonSource.win64.S", "$pythonSource.native_file.c", "$pythonSource.native_python.c", "$pythonSource.native_text.c")
+    Remove-SmokeFiles -Paths @($pythonHelper, $pythonSource, "$pythonSource.exe", "$pythonSource.win64.S")
 }
 $processSource = Join-Path $smokeRoot 'native-process-smoke.gak'
 [System.IO.File]::WriteAllLines($processSource, [string[]]@(
@@ -563,7 +563,7 @@ $processOutput = & "$processSource.exe" --allow-process self
 if ($LASTEXITCODE -ne 0 -or $processOutput.Count -ne 5 -or $processOutput[0] -notmatch '^[1-9][0-9]*$' -or $processOutput[1] -ne 'true' -or $processOutput[2] -ne 'true' -or $processOutput[3] -ne 'true' -or $processOutput[4] -ne 'true') {
     throw 'Installed native process bridge failed'
 }
-Remove-Item -LiteralPath $processSource, "$processSource.exe", "$processSource.win64.S", "$processSource.native_file.c"
+Remove-Item -LiteralPath $processSource, "$processSource.exe", "$processSource.win64.S"
 & $binary run $example
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI run failed' }
 $caseExample = Join-Path $smokeRoot 'examples\case_lineage.gak'
@@ -581,8 +581,9 @@ for ($depth = 0; $depth -le 64; $depth++) {
     Remove-Item -LiteralPath (Join-Path $depthDir "m$depth.gak")
 }
 Remove-Item -LiteralPath $depthDir, $depthError, $missingImport, $missingError
-Get-ChildItem -LiteralPath $smokeRoot -Filter '*.native_call.c' -File |
-    ForEach-Object { Remove-Item -LiteralPath $_.FullName }
+if (@(Get-ChildItem -LiteralPath $smokeRoot -Recurse -Filter '*.native_*.c' -File).Count -ne 0) {
+    throw 'Installed compiler left temporary C helpers beside source files'
+}
 
 $uninstaller = Join-Path $smokeRoot 'Uninstall.exe'
 $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden
