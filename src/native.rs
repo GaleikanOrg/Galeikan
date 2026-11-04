@@ -1750,10 +1750,14 @@ impl Codegen {
     }
 
     fn literal(&mut self, value: &str) -> Result<String, String> {
+        self.literal_bytes(value.as_bytes())
+    }
+
+    fn literal_bytes(&mut self, value: &[u8]) -> Result<String, String> {
         let label = self.label();
         writeln!(self.data, ".align 8\n{label}: .quad {}", value.len()).unwrap();
         write!(self.data, "    .byte ").unwrap();
-        for byte in value.bytes() {
+        for byte in value {
             write!(self.data, "{byte},").unwrap();
         }
         writeln!(self.data, "0").unwrap();
@@ -6959,6 +6963,11 @@ impl Codegen {
                 let label = self.literal(value)?;
                 writeln!(self.code, "    lea rax, [rip+{label}]").unwrap();
                 Ok(Scalar::Str)
+            }
+            ExprKind::Bytes(value) => {
+                let label = self.literal_bytes(value)?;
+                writeln!(self.code, "    lea rax, [rip+{label}]").unwrap();
+                Ok(Scalar::Bytes)
             }
             ExprKind::Var(name) => {
                 let (binding, fields) = if let Some((alias, key)) = name.split_once('.') {

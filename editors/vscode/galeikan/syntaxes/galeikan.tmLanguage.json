@@ -2,6 +2,7 @@
   "name": "Galeikan",
   "scopeName": "source.galeikan",
   "patterns": [
+    { "include": "#hexBytes" },
     { "include": "#strings" },
     { "include": "#comments" },
     { "include": "#declarations" },
@@ -18,6 +19,17 @@
     { "include": "#operators" }
   ],
   "repository": {
+    "hexBytes": {
+      "patterns": [{
+        "name": "string.quoted.double.hex.galeikan",
+        "begin": "\\bhex\"",
+        "end": "\"",
+        "patterns": [
+          { "name": "constant.numeric.hex.galeikan", "match": "[0-9A-Fa-f]+" },
+          { "name": "invalid.illegal.hex.galeikan", "match": "[^0-9A-Fa-f\\s]" }
+        ]
+      }]
+    },
     "strings": {
       "patterns": [{
         "name": "string.quoted.double.galeikan",

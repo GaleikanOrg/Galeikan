@@ -3963,6 +3963,7 @@ impl Runtime {
                 ExprKind::UInt(_) => Type::UInt,
                 ExprKind::Bool(_) => Type::Bool,
                 ExprKind::Str(_) => Type::Str,
+                ExprKind::Bytes(_) => Type::Bytes,
                 ExprKind::List(items) => {
                     if items.len() > MAX_LOOP_ITEMS {
                         return Err(error(format!("list exceeds {MAX_LOOP_ITEMS} items")));
@@ -4393,6 +4394,7 @@ impl Runtime {
             ExprKind::UInt(n) => Ok(Value::UInt(*n)),
             ExprKind::Bool(value) => Ok(Value::Bool(*value)),
             ExprKind::Str(s) => Ok(Value::Str(s.clone())),
+            ExprKind::Bytes(value) => Ok(Value::Bytes(Arc::new(value.clone()))),
             ExprKind::List(items) => make_list(
                 items
                     .iter()
@@ -4501,6 +4503,7 @@ impl Runtime {
                 Instruction::UInt(value) => stack.push(Value::UInt(*value)),
                 Instruction::Bool(value) => stack.push(Value::Bool(*value)),
                 Instruction::Str(value) => stack.push(Value::Str(value.clone())),
+                Instruction::Bytes(value) => stack.push(Value::Bytes(Arc::new(value.clone()))),
                 Instruction::Load(name) => stack.push(self.load_value(module, locals, name)?),
                 Instruction::Dup => {
                     let value = stack.last().ok_or("invalid bytecode stack")?.clone();

@@ -18,6 +18,9 @@
   "tokenColors": [
     { "scope": "comment.line.number-sign.galeikan", "settings": { "foreground": "#7891A2", "fontStyle": "italic" } },
     { "scope": "string.quoted.double.galeikan", "settings": { "foreground": "#BBE4FF" } },
+    { "scope": "string.quoted.double.hex.galeikan", "settings": { "foreground": "#9CD9FF" } },
+    { "scope": "constant.numeric.hex.galeikan", "settings": { "foreground": "#E8F3FF" } },
+    { "scope": "invalid.illegal.hex.galeikan", "settings": { "foreground": "#FF758A", "fontStyle": "underline" } },
     { "scope": "constant.character.escape.galeikan", "settings": { "foreground": "#73C8FF" } },
     { "scope": "invalid.illegal.escape.galeikan", "settings": { "foreground": "#FF758A", "fontStyle": "underline" } },
     { "scope": "keyword.control.galeikan, storage.type.function.galeikan", "settings": { "foreground": "#69C6FF", "fontStyle": "bold" } },

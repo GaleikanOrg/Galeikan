@@ -401,6 +401,7 @@ impl Expr {
             | ExprKind::UInt(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::Bytes(_)
             | ExprKind::Var(_) => 0,
             ExprKind::List(items) | ExprKind::Call(_, items) => {
                 items.iter().map(|item| item.depth).max().unwrap_or(0)
@@ -448,6 +449,7 @@ pub enum ExprKind {
     UInt(u64),
     Bool(bool),
     Str(String),
+    Bytes(Vec<u8>),
     Var(String),
     List(Vec<Expr>),
     Index(Box<Expr>, Box<Expr>),
@@ -1205,6 +1207,19 @@ impl Parser {
                 let inner = self.expr(3)?;
                 Expr::new(ExprKind::Not(Box::new(inner)), token.line, token.col)?
             }
+            TokenKind::Ident(name)
+                if name == "hex"
+                    && self.current().line == token.line
+                    && self.current().col == token.col + 3
+                    && matches!(self.current().kind, TokenKind::String(_)) =>
+            {
+                let TokenKind::String(value) = self.bump().kind else {
+                    unreachable!()
+                };
+                let value = crate::bytes::parse_hex(&value)
+                    .map_err(|error| format!("{}:{}: {error}", token.line, token.col))?;
+                Expr::new(ExprKind::Bytes(value), token.line, token.col)?
+            }
             TokenKind::Ident(name) => {
                 if self.current().kind == TokenKind::LParen {
                     let args = self.call_args()?;
@@ -1650,7 +1665,11 @@ fn rewrite_import_references(expr: &mut Expr, calls: &HashMap<&str, &str>) {
                 *name = (*qualified).to_string();
             }
         }
-        ExprKind::Int(_) | ExprKind::UInt(_) | ExprKind::Bool(_) | ExprKind::Str(_) => {}
+        ExprKind::Int(_)
+        | ExprKind::UInt(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::Bytes(_) => {}
     }
 }
 

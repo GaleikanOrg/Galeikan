@@ -15,6 +15,7 @@ pub enum Instruction {
     UInt(u64),
     Bool(bool),
     Str(String),
+    Bytes(Vec<u8>),
     Load(String),
     Dup,
     Pop,
@@ -62,6 +63,8 @@ impl Program {
                 | Instruction::Bool(_)
                 | Instruction::Str(_)
                 | Instruction::Load(_) => (0, 1),
+                Instruction::Bytes(value) if value.len() <= crate::bytes::MAX_BYTES_VALUE => (0, 1),
+                Instruction::Bytes(_) => return Err("bytecode bytes literal exceeds limit".into()),
                 Instruction::Dup => (1, 2),
                 Instruction::Pop => (1, 0),
                 Instruction::Neg
@@ -133,6 +136,7 @@ fn emit(expr: &Expr, out: &mut Vec<Instruction>) {
         ExprKind::UInt(n) => out.push(Instruction::UInt(*n)),
         ExprKind::Bool(value) => out.push(Instruction::Bool(*value)),
         ExprKind::Str(value) => out.push(Instruction::Str(value.clone())),
+        ExprKind::Bytes(value) => out.push(Instruction::Bytes(value.clone())),
         ExprKind::Var(name) => out.push(Instruction::Load(name.clone())),
         ExprKind::List(items) => {
             for item in items {

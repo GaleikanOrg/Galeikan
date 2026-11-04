@@ -8481,6 +8481,81 @@ fn native_lab_mutations_match_interpreter_for_all_strategies() {
 }
 
 #[test]
+fn hex_bytes_literals_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "hex-literal.gaks",
+        "from std.bytes import to_hex\nfrom std.binary import snapshot, find, size\nfn marker() -> bytes = hex\"00 ff\"\nlet payload = hex\"41 00 ff\"\nprint to_hex(payload)\nprint to_hex(marker())\nprint find(snapshot(payload), hex\"00 ff\")\nprint size(snapshot(hex\"\"))\nprint to_hex(hex\"41\\t42\")\n",
+    );
+    let expected = b"4100ff\n00ff\n1\n0\n4142\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+    for (literal, error) in [
+        ("hex\"0\"", "even number of digits"),
+        ("hex\"0g\"", "invalid hex data"),
+    ] {
+        let invalid = s.write("hex-invalid.gak", &format!("print {literal}\n"));
+        let checked = Command::new(galeikan)
+            .arg("check")
+            .arg(invalid)
+            .output()
+            .unwrap();
+        assert!(!checked.status.success());
+        assert!(String::from_utf8_lossy(&checked.stderr).contains(error));
+    }
+}
+
+#[test]
 fn binary_find_and_contains_match_across_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(
