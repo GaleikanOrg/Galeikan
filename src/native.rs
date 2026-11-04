@@ -6956,16 +6956,28 @@ impl Codegen {
             }
             ExprKind::Index(list, index) => {
                 let list_kind = self.expr(list, scope)?;
-                let element = list_kind
-                    .element()
-                    .ok_or("native indexing needs a typed List value")?;
                 let slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                 if self.expr(index, scope)? != Scalar::Int {
-                    return Err("list index must be i64".into());
+                    return Err("index must be i64".into());
                 }
-                writeln!(self.code, "    test rax, rax\n    js gak_list_index\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae gak_list_index\n    mov rax, QWORD PTR [r10+rax*8+8]", slot * 8).unwrap();
-                Ok(element)
+                match list_kind {
+                    Scalar::Bytes => {
+                        writeln!(self.code, "    test rax, rax\n    js gak_bytes_index\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae gak_bytes_index\n    movzx eax, BYTE PTR [r10+rax+8]", slot * 8).unwrap();
+                        Ok(Scalar::Int)
+                    }
+                    Scalar::Source => {
+                        writeln!(self.code, "    test rax, rax\n    js gak_bytes_index\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    sub r11, QWORD PTR [r10+16]\n    cmp rax, r11\n    jae gak_bytes_index\n    add rax, QWORD PTR [r10+16]\n    mov r10, QWORD PTR [r10]\n    movzx eax, BYTE PTR [r10+rax+8]", slot * 8).unwrap();
+                        Ok(Scalar::Int)
+                    }
+                    kind => {
+                        let element = kind
+                            .element()
+                            .ok_or("native indexing needs a typed List, bytes, or Source value")?;
+                        writeln!(self.code, "    test rax, rax\n    js gak_list_index\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae gak_list_index\n    mov rax, QWORD PTR [r10+rax*8+8]", slot * 8).unwrap();
+                        Ok(element)
+                    }
+                }
             }
             ExprKind::Field(value, field) => {
                 let kind = self.expr(value, scope)?;

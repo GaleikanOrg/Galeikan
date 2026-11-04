@@ -9632,3 +9632,89 @@ fn native_source_display_matches_vm_for_nested_views_and_containers() {
     );
     assert_eq!(native.stdout, vm.stdout);
 }
+
+#[test]
+fn byte_indexing_matches_all_execution_modes_and_checks_view_bounds() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "byte-index.gaks",
+        r#"from std.binary import snapshot, view
+from std.result import is_error, message
+fn byte_end(data: bytes) -> Result<i64> = data[4]
+fn byte_negative(data: bytes) -> Result<i64> = data[-1]
+fn view_end(data: Source) -> Result<i64> = data[2]
+fn view_negative(data: Source) -> Result<i64> = data[-1]
+let data = hex"00 7f 80 ff"
+let root = snapshot(data)
+let first = view(root, 1, 3)
+let nested = view(first, 1, 2)
+print data[0]
+print data[2]
+print data[3]
+print root[3]
+print first[0]
+print nested[0]
+print nested[1]
+print [10, 20][1]
+print is_error(byte_end(data))
+print is_error(byte_negative(data))
+print is_error(view_end(nested))
+print is_error(view_negative(nested))
+print message(byte_end(data))
+print message(view_end(nested))
+"#,
+    );
+    let expected = b"0\n128\n255\n255\n127\n128\n255\n20\ntrue\ntrue\ntrue\ntrue\nbyte index out of range\nbyte index out of range\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}

@@ -3998,7 +3998,12 @@ impl Runtime {
                     match list_type {
                         Type::List(Some(kind)) => kind.as_type(),
                         Type::List(None) | Type::Any => Type::Any,
-                        _ => return Err(error(format!("indexing expects List, got {list_type}"))),
+                        Type::Bytes | Type::Source => Type::Int,
+                        _ => {
+                            return Err(error(format!(
+                                "indexing expects List, bytes, or Source, got {list_type}"
+                            )))
+                        }
                     }
                 }
                 ExprKind::Field(value, field) => {
@@ -4417,7 +4422,7 @@ impl Runtime {
                     .map(|item| self.eval(module, locals, item, depth))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
-            ExprKind::Index(list, index) => list_index(
+            ExprKind::Index(list, index) => index_value(
                 self.eval(module, locals, list, depth)?,
                 self.eval(module, locals, index, depth)?,
             ),
@@ -4540,7 +4545,7 @@ impl Runtime {
                 Instruction::Index => {
                     let index = stack.pop().ok_or("invalid bytecode stack")?;
                     let list = stack.pop().ok_or("invalid bytecode stack")?;
-                    stack.push(list_index(list, index)?);
+                    stack.push(index_value(list, index)?);
                 }
                 Instruction::Field(field) => {
                     let value = stack.pop().ok_or("invalid bytecode stack")?;
@@ -7685,15 +7690,30 @@ fn locate_region(
         .ok_or_else(|| "no process region contains address".into())
 }
 
-fn list_index(list: Value, index: Value) -> Result<Value, String> {
-    let Value::List(items, _) = list else {
-        return Err("indexing expects List".into());
-    };
-    let index = usize::try_from(index.as_int()?).map_err(|_| "list index out of range")?;
-    items
-        .get(index)
-        .cloned()
-        .ok_or_else(|| "list index out of range".into())
+fn index_value(value: Value, index: Value) -> Result<Value, String> {
+    let index = index.as_int()?;
+    match value {
+        Value::List(items, _) => {
+            let index = usize::try_from(index).map_err(|_| "list index out of range")?;
+            items
+                .get(index)
+                .cloned()
+                .ok_or_else(|| "list index out of range".into())
+        }
+        Value::Bytes(bytes) => {
+            let index = usize::try_from(index).map_err(|_| "byte index out of range")?;
+            Ok(Value::Int(i64::from(
+                *bytes.get(index).ok_or("byte index out of range")?,
+            )))
+        }
+        Value::Source(source) => {
+            let index = usize::try_from(index).map_err(|_| "byte index out of range")?;
+            Ok(Value::Int(i64::from(
+                *source.bytes().get(index).ok_or("byte index out of range")?,
+            )))
+        }
+        _ => Err("indexing expects List, bytes, or Source".into()),
+    }
 }
 
 fn same_runtime_type(left: &Value, right: &Value) -> bool {
