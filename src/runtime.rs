@@ -4110,11 +4110,21 @@ impl Runtime {
                             if !a.compatible(b)
                                 || !matches!(
                                     a,
-                                    Type::Int | Type::UInt | Type::Bool | Type::Str | Type::Any
+                                    Type::Int
+                                        | Type::UInt
+                                        | Type::Bool
+                                        | Type::Str
+                                        | Type::Bytes
+                                        | Type::Any
                                 )
                                 || !matches!(
                                     b,
-                                    Type::Int | Type::UInt | Type::Bool | Type::Str | Type::Any
+                                    Type::Int
+                                        | Type::UInt
+                                        | Type::Bool
+                                        | Type::Str
+                                        | Type::Bytes
+                                        | Type::Any
                                 )
                             {
                                 return Err(error(
@@ -4146,11 +4156,11 @@ impl Runtime {
                     let subject_type = self.infer_expr(module, locals, globals, subject)?;
                     if !matches!(
                         subject_type,
-                        Type::Int | Type::UInt | Type::Bool | Type::Str
+                        Type::Int | Type::UInt | Type::Bool | Type::Str | Type::Bytes
                     ) {
                         return Err(error(format!(
-                            "match subject must be i64, u64, bool, or str, got {subject_type}"
-                        )));
+                        "match subject must be i64, u64, bool, str, or bytes, got {subject_type}"
+                    )));
                     }
                     let mut result = self.infer_expr(module, locals, globals, default)?;
                     for (pattern, value) in arms {
@@ -4159,6 +4169,7 @@ impl Runtime {
                             MatchPattern::UInt(_) => Type::UInt,
                             MatchPattern::Bool(_) => Type::Bool,
                             MatchPattern::Str(_) => Type::Str,
+                            MatchPattern::Bytes(_) => Type::Bytes,
                         };
                         if subject_type != pattern_type {
                             return Err(error(format!(
@@ -4456,6 +4467,7 @@ impl Runtime {
                         (Value::UInt(a), MatchPattern::UInt(b)) => a == b,
                         (Value::Bool(a), MatchPattern::Bool(b)) => a == b,
                         (Value::Str(a), MatchPattern::Str(b)) => a == b,
+                        (Value::Bytes(a), MatchPattern::Bytes(b)) => a.as_slice() == b,
                         _ => false,
                     };
                     if matches {
@@ -7797,6 +7809,7 @@ fn apply_binary(left: Value, op: Op, right: Value) -> Result<Value, String> {
                 (Value::UInt(a), Value::UInt(b)) => a == b,
                 (Value::Bool(a), Value::Bool(b)) => a == b,
                 (Value::Str(a), Value::Str(b)) => a == b,
+                (Value::Bytes(a), Value::Bytes(b)) => a == b,
                 _ => return Err("equality needs two values of the same scalar type".into()),
             };
             Ok(Value::Bool(if matches!(op, Op::Eq) {

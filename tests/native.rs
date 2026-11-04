@@ -8481,6 +8481,97 @@ fn native_lab_mutations_match_interpreter_for_all_strategies() {
 }
 
 #[test]
+fn bytes_equality_and_match_agree_across_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "bytes-match.gak",
+        r#"let header = hex"4d 5a"
+print header == hex"4d5a"
+print header != hex"7f454c46"
+print hex"00 ff" == hex"00ff"
+print match header {
+    hex"7f454c46" => "ELF",
+    hex"4d 5a" => "PE",
+    _ => "Unknown"
+}
+print match hex"" { hex"" => 0, _ => 1 }
+"#,
+    );
+    let expected = b"true\ntrue\ntrue\nPE\n0\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+    for (source, error) in [
+        (
+            "match hex\"4d5a\" { hex\"4d 5a\" => 1, hex\"4d5a\" => 2, _ => 0 }",
+            "duplicate match pattern",
+        ),
+        (
+            "match hex\"4d5a\" { \"MZ\" => 1, _ => 0 }",
+            "match pattern has type str, expected bytes",
+        ),
+    ] {
+        let invalid = s.write("bytes-match-invalid.gak", &format!("print {source}\n"));
+        let checked = Command::new(galeikan)
+            .arg("check")
+            .arg(invalid)
+            .output()
+            .unwrap();
+        assert!(!checked.status.success());
+        assert!(String::from_utf8_lossy(&checked.stderr).contains(error));
+    }
+}
+
+#[test]
 fn hex_bytes_literals_match_all_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(

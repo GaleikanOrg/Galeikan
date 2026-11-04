@@ -238,6 +238,7 @@ fn emit(expr: &Expr, out: &mut Vec<Instruction>) {
                     MatchPattern::UInt(value) => Instruction::UInt(*value),
                     MatchPattern::Bool(value) => Instruction::Bool(*value),
                     MatchPattern::Str(value) => Instruction::Str(value.clone()),
+                    MatchPattern::Bytes(value) => Instruction::Bytes(value.clone()),
                 });
                 out.push(Instruction::Binary(Op::Eq));
                 let next_jump = out.len();

@@ -7075,9 +7075,9 @@ impl Codegen {
                 let subject_kind = self.expr(subject, scope)?;
                 if !matches!(
                     subject_kind,
-                    Scalar::Int | Scalar::UInt | Scalar::Bool | Scalar::Str
+                    Scalar::Int | Scalar::UInt | Scalar::Bool | Scalar::Str | Scalar::Bytes
                 ) {
-                    return Err("match subject must be i64, u64, bool, or str".into());
+                    return Err("match subject must be i64, u64, bool, str, or bytes".into());
                 }
                 let slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
@@ -7103,6 +7103,10 @@ impl Codegen {
                         }
                         (Scalar::Str, MatchPattern::Str(text)) => {
                             let label = self.literal(text)?;
+                            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{label}]\n    call gak_str_eq\n    test eax, eax\n    jz {next}", self.arg0(), slot * 8, self.arg1()).unwrap();
+                        }
+                        (Scalar::Bytes, MatchPattern::Bytes(bytes)) => {
+                            let label = self.literal_bytes(bytes)?;
                             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{label}]\n    call gak_str_eq\n    test eax, eax\n    jz {next}", self.arg0(), slot * 8, self.arg1()).unwrap();
                         }
                         _ => return Err("match pattern has a different scalar type".into()),
@@ -7191,8 +7195,8 @@ impl Codegen {
         {
             return Err("native binary operator expects matching scalar values".into());
         }
-        if left_kind == Scalar::Str {
-            if matches!(op, Op::Add) {
+        if matches!(left_kind, Scalar::Str | Scalar::Bytes) {
+            if left_kind == Scalar::Str && matches!(op, Op::Add) {
                 writeln!(
                     self.code,
                     "    mov r11, QWORD PTR [r10]\n    add r11, QWORD PTR [rax]\n    jc gak_str_limit\n    cmp r11, 67108856\n    ja gak_str_limit\n    lea r8, [r11+8]\n    mov r9, QWORD PTR [rip+gak_str_bytes]\n    add r9, r8\n    jc gak_str_limit\n    cmp r9, 67108864\n    ja gak_str_limit\n    mov {}, r10\n    mov {}, rax\n    call gak_str_concat",
@@ -7203,7 +7207,12 @@ impl Codegen {
                 return Ok(Scalar::Str);
             }
             if !matches!(op, Op::Eq | Op::Ne) {
-                return Err("native str supports addition and equality comparisons only".into());
+                return Err(if left_kind == Scalar::Str {
+                    "native str supports addition and equality comparisons only"
+                } else {
+                    "native bytes supports equality comparisons only"
+                }
+                .into());
             }
             writeln!(
                 self.code,

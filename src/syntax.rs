@@ -470,6 +470,7 @@ pub enum MatchPattern {
     UInt(u64),
     Bool(bool),
     Str(String),
+    Bytes(Vec<u8>),
 }
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Op {
@@ -1422,7 +1423,8 @@ impl Parser {
             if arms.len() >= 256 {
                 return Err(self.error("match exceeds 256 patterns"));
             }
-            let pattern = match self.bump().kind {
+            let token = self.bump();
+            let pattern = match token.kind {
                 TokenKind::Number(value) => MatchPattern::Int(value),
                 TokenKind::Unsigned(value) => MatchPattern::UInt(value),
                 TokenKind::Minus => {
@@ -1436,6 +1438,19 @@ impl Parser {
                     )
                 }
                 TokenKind::String(value) => MatchPattern::Str(value),
+                TokenKind::Ident(value)
+                    if value == "hex"
+                        && self.current().line == token.line
+                        && self.current().col == token.col + 3
+                        && matches!(self.current().kind, TokenKind::String(_)) =>
+                {
+                    let TokenKind::String(value) = self.bump().kind else {
+                        unreachable!()
+                    };
+                    let value = crate::bytes::parse_hex(&value)
+                        .map_err(|error| format!("{}:{}: {error}", token.line, token.col))?;
+                    MatchPattern::Bytes(value)
+                }
                 TokenKind::Ident(value) if value == "true" || value == "false" => {
                     MatchPattern::Bool(value == "true")
                 }
