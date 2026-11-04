@@ -5444,8 +5444,8 @@ impl Codegen {
                 source_slot * 8
             )
             .unwrap();
-            if self.expr(&args[1], scope)? != Scalar::Bytes {
-                return Err(format!("binary.{name} pattern must be bytes"));
+            if !matches!(self.expr(&args[1], scope)?, Scalar::Str | Scalar::Bytes) {
+                return Err(format!("binary.{name} pattern must be str or bytes"));
             }
             let needle_slot = self.reserve_slot()?;
             writeln!(

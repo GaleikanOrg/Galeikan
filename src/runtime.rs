@@ -4914,23 +4914,23 @@ impl Runtime {
 
     fn binary(&self, module: &Rc<Module>, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
-            ("find" | "contains", [source, Value::Bytes(needle)]) => {
+            ("find" | "contains", [source, needle]) => {
                 let source = source.as_source()?;
-                let found = bytes::find(source.bytes(), needle)?;
+                let found = bytes::find(source.bytes(), needle.as_request_bytes()?)?;
                 Ok(if name == "find" {
                     Value::Int(found)
                 } else {
                     Value::Bool(found >= 0)
                 })
             }
-            ("find" | "contains", [source, Value::Bytes(needle), offset]) => {
+            ("find" | "contains", [source, needle, offset]) => {
                 let source = source.as_source()?;
                 let start = usize::try_from(offset.as_int()?)
                     .map_err(|_| "binary search offset out of range")?;
                 if start > source.bytes().len() {
                     return Err("binary search offset out of range".into());
                 }
-                let relative = bytes::find(&source.bytes()[start..], needle)?;
+                let relative = bytes::find(&source.bytes()[start..], needle.as_request_bytes()?)?;
                 let found = if relative < 0 {
                     -1
                 } else {
@@ -7929,11 +7929,14 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
     let qualified = format!("{module}.{name}");
     if module == "binary" && matches!(name, "find" | "contains") {
         let expected: &[Type] = match args.len() {
-            2 => &[Source, Bytes],
-            3 => &[Source, Bytes, Int],
+            2 => &[Source, Type::Any],
+            3 => &[Source, Type::Any, Int],
             _ => return Err(format!("{qualified} expects 2 or 3 arguments")),
         };
         check_arguments(&qualified, args, expected)?;
+        if !matches!(args[1], Str | Bytes | Type::Any) {
+            return Err(format!("{qualified} pattern expects str or bytes"));
+        }
         return Ok(if name == "find" { Int } else { Bool });
     }
     if module == "syscall" {

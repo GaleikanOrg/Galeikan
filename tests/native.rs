@@ -8485,10 +8485,10 @@ fn binary_find_and_contains_match_across_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(
         "binary-find.gaks",
-        "from std.binary import from_hex, snapshot, view, find, contains\nfrom std.bytes import repeat\nfrom std.result import is_error\nfn outside(source: Source, needle: bytes) -> Result<i64> = find(source, needle, 5)\nfn negative(source: Source, needle: bytes) -> Result<i64> = find(source, needle, -1)\nlet source = snapshot(from_hex(\"41 42 41 42\"))\nlet needle = from_hex(\"41 42\")\nlet long = snapshot(repeat(from_hex(\"41\"), 11000))\nprint find(source, needle)\nprint find(source, needle, 1)\nprint find(source, needle, 3)\nprint find(view(source, 1, 3), needle)\nprint find(source, from_hex(\"\"), 4)\nprint contains(source, needle, 2)\nprint contains(source, from_hex(\"ff\"))\nprint find(long, from_hex(\"41\"), 10999)\nprint is_error(outside(source, needle))\nprint is_error(negative(source, needle))\n",
+        "from std.binary import from_hex, snapshot, view, find, contains\nfrom std.bytes import repeat\nfrom std.result import is_error\nfn outside(source: Source, needle: bytes) -> Result<i64> = find(source, needle, 5)\nfn negative(source: Source, needle: bytes) -> Result<i64> = find(source, needle, -1)\nlet source = snapshot(from_hex(\"41 42 41 42\"))\nlet needle = from_hex(\"41 42\")\nlet long = snapshot(repeat(from_hex(\"41\"), 11000))\nlet unicode = snapshot(from_hex(\"ce bb 41\"))\nprint find(source, needle)\nprint find(source, needle, 1)\nprint find(source, needle, 3)\nprint find(view(source, 1, 3), needle)\nprint find(source, from_hex(\"\"), 4)\nprint contains(source, needle, 2)\nprint contains(source, from_hex(\"ff\"))\nprint find(long, from_hex(\"41\"), 10999)\nprint is_error(outside(source, needle))\nprint is_error(negative(source, needle))\nprint find(source, \"AB\", 1)\nprint contains(source, \"BA\")\nprint find(unicode, \"λ\")\nprint find(source, \"hex:41\")\n",
     );
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"0\n2\n-1\n1\n4\ntrue\nfalse\n10999\ntrue\ntrue\n";
+    let expected = b"0\n2\n-1\n1\n4\ntrue\nfalse\n10999\ntrue\ntrue\n2\ntrue\n0\n-1\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
             .arg("run")
