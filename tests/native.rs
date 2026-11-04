@@ -8543,6 +8543,45 @@ fn binary_find_and_contains_match_across_execution_modes() {
 }
 
 #[test]
+fn native_binary_search_matches_vm_at_stack_table_boundary() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-search-boundary.gak",
+        "from std.binary import from_hex, snapshot, find, contains\nfrom std.bytes import concat, repeat\nlet exact = repeat(from_hex(\"41\"), 256)\nlet longer = repeat(from_hex(\"41\"), 257)\nlet source = snapshot(concat(from_hex(\"00\"), longer))\nprint find(source, exact)\nprint find(source, longer)\nprint find(source, longer, 2)\nprint contains(source, longer)\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let vm = Command::new(galeikan)
+        .args(["run"])
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(vm.stdout, b"1\n1\n-1\ntrue\n");
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_binary_hunt_matches_vm_for_patterns_views_and_overlaps() {
     if !gcc_available() {
         return;

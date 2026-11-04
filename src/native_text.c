@@ -156,8 +156,12 @@ static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
     if (needle_size == 0) return 0;
     if (needle_size > size) return -1;
     if (needle_size > SIZE_MAX / sizeof(uint32_t)) return -2;
-    uint32_t *failure = malloc((size_t)needle_size * sizeof(*failure));
-    if (!failure) return -2;
+    uint32_t local_failure[256];
+    uint32_t *failure = local_failure;
+    if (needle_size > sizeof(local_failure) / sizeof(local_failure[0])) {
+        failure = malloc((size_t)needle_size * sizeof(*failure));
+        if (!failure) return -2;
+    }
     failure[0] = 0;
     uint32_t matched = 0;
     for (uint64_t index = 1; index < needle_size; ++index) {
@@ -173,11 +177,11 @@ static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
         if (data[index] == needle[matched]) ++matched;
         if (matched == needle_size) {
             uint64_t offset = index + 1 - needle_size;
-            free(failure);
+            if (failure != local_failure) free(failure);
             return (int64_t)offset;
         }
     }
-    free(failure);
+    if (failure != local_failure) free(failure);
     return -1;
 }
 
