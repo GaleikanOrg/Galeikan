@@ -2503,6 +2503,11 @@ impl Runtime {
                         Value::Bytes(bytes) if bytes.len() <= MAX_LOOP_ITEMS => {
                             bytes.iter().map(|b| Value::Int(i64::from(*b))).collect()
                         }
+                        Value::Source(source) if source.bytes().len() <= MAX_LOOP_ITEMS => source
+                            .bytes()
+                            .iter()
+                            .map(|b| Value::Int(i64::from(*b)))
+                            .collect(),
                         Value::Disassembly(disassembly)
                             if disassembly.instructions.len() <= MAX_LOOP_ITEMS =>
                         {
@@ -2518,6 +2523,7 @@ impl Runtime {
                         }
                         Value::Offsets(_)
                         | Value::Bytes(_)
+                        | Value::Source(_)
                         | Value::Disassembly(_)
                         | Value::Regions(_) => {
                             return Err(at(format!("loop exceeds {MAX_LOOP_ITEMS} items")))
@@ -2525,12 +2531,10 @@ impl Runtime {
                         Value::List(_, _) => {
                             return Err(at(format!("loop exceeds {MAX_LOOP_ITEMS} items")))
                         }
-                        _ => {
-                            return Err(at(
-                                "for expects a List, Offsets, bytes, Disassembly, or Regions"
-                                    .into(),
-                            ))
-                        }
+                        _ => return Err(at(
+                            "for expects a List, Offsets, bytes, Source, Disassembly, or Regions"
+                                .into(),
+                        )),
                     };
                     for item in values {
                         self.tick_action().map_err(&at)?;
@@ -3804,13 +3808,14 @@ impl Runtime {
                         kind,
                         Type::Offsets
                             | Type::Bytes
+                            | Type::Source
                             | Type::Disassembly
                             | Type::Regions
                             | Type::List(_)
                             | Type::Any
                     ) {
                         return Err(format!(
-                            "{}:{}:{}: for expects a List, Offsets, bytes, Disassembly, or Regions, got {kind}",
+                            "{}:{}:{}: for expects a List, Offsets, bytes, Source, Disassembly, or Regions, got {kind}",
                             module.path.display(),
                             action.line,
                             action.col

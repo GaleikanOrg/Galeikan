@@ -8481,6 +8481,116 @@ fn native_lab_mutations_match_interpreter_for_all_strategies() {
 }
 
 #[test]
+fn bytes_iteration_matches_all_execution_modes_and_enforces_limit() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "bytes-iteration.gak",
+        r#"from std.bytes import repeat
+from std.binary import snapshot, view
+from std.result import is_error
+fn sum(data: bytes) -> i64 {
+    var total = 0
+    for byte in data {
+        total = total + byte
+    }
+    return total
+}
+fn selective(data: bytes) -> i64 {
+    var total = 0
+    for byte in data {
+        if byte == 128 {
+            continue
+        }
+        total = total + byte
+        if byte == 255 {
+            break
+        }
+    }
+    return total
+}
+fn count_bytes(data: bytes) -> i64 {
+    var count = 0
+    for byte in data {
+        count = count + 1
+    }
+    return count
+}
+fn sum_source(data: Source) -> i64 {
+    var total = 0
+    for byte in data {
+        total = total + byte
+    }
+    return total
+}
+fn oversized() -> Result<i64> = count_bytes(repeat(hex"01", 100001))
+fn oversized_source() -> Result<i64> = sum_source(snapshot(repeat(hex"01", 100001)))
+print sum(hex"00 7f 80 ff")
+print selective(hex"00 7f 80 ff")
+print sum(hex"")
+print count_bytes(repeat(hex"00", 100000))
+print is_error(oversized())
+print sum_source(view(snapshot(hex"10 20 30 40"), 1, 2))
+print sum_source(view(view(snapshot(hex"10 20 30 40"), 1, 3), 1, 2))
+print sum_source(view(snapshot(hex"10 20"), 2, 0))
+print is_error(oversized_source())
+"#,
+    );
+    let expected = b"510\n382\n0\n100000\ntrue\n80\n112\n0\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn bytes_equality_and_match_agree_across_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(

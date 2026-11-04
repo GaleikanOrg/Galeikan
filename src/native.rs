@@ -286,6 +286,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_range_start", "range start must not be negative"),
     ("gak_range_end", "range end must not be negative"),
     ("gak_range_limit", "range exceeds 100000 items"),
+    ("gak_loop_limit", "loop exceeds 100000 items"),
     ("gak_list_index", "list index out of range"),
     ("gak_cli_index", "argument index out of range"),
     ("gak_process_address_range", "process address out of range"),
@@ -3317,13 +3318,13 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
     ) -> Result<(), String> {
         let kind = self.expr(iterable, scope)?;
-        let element = if kind == Scalar::Offsets {
+        let element = if matches!(kind, Scalar::Offsets | Scalar::Bytes | Scalar::Source) {
             Scalar::Int
         } else if kind == Scalar::Regions {
             Scalar::Region
         } else {
             kind.element()
-                .ok_or("native for needs a typed List, Offsets, or std.iter.range(...) iterable")?
+                .ok_or("native for needs a typed List, Offsets, bytes, Source, Regions, or std.iter.range(...) iterable")?
         };
         let list_slot = self.reserve_slot()?;
         let index_slot = self.reserve_slot()?;
@@ -3335,17 +3336,40 @@ impl Codegen {
             index_slot * 8
         )
         .unwrap();
+        if kind == Scalar::Bytes {
+            writeln!(
+                self.code,
+                "    cmp QWORD PTR [rax], 100000\n    ja gak_loop_limit"
+            )
+            .unwrap();
+        } else if kind == Scalar::Source {
+            self.code.push_str("    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    cmp r10, 100000\n    ja gak_loop_limit\n");
+        }
         let start = self.label();
         let end = self.label();
         let next = self.label();
-        writeln!(self.code, "{start}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae {end}", list_slot * 8, index_slot * 8).unwrap();
-        self.tick();
         writeln!(
             self.code,
-            "    mov rax, QWORD PTR [r10+rax*8+8]\n    mov QWORD PTR [rbp-{}], rax",
-            item_slot * 8
+            "{start}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rbp-{}]",
+            list_slot * 8,
+            index_slot * 8
         )
         .unwrap();
+        if kind == Scalar::Source {
+            self.code.push_str("    mov r11, QWORD PTR [r10+24]\n    sub r11, QWORD PTR [r10+16]\n    cmp rax, r11\n");
+        } else {
+            self.code.push_str("    cmp rax, QWORD PTR [r10]\n");
+        }
+        writeln!(self.code, "    jae {end}").unwrap();
+        self.tick();
+        if kind == Scalar::Bytes {
+            self.code.push_str("    movzx eax, BYTE PTR [r10+rax+8]\n");
+        } else if kind == Scalar::Source {
+            self.code.push_str("    add rax, QWORD PTR [r10+16]\n    mov r10, QWORD PTR [r10]\n    movzx eax, BYTE PTR [r10+rax+8]\n");
+        } else {
+            self.code.push_str("    mov rax, QWORD PTR [r10+rax*8+8]\n");
+        }
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", item_slot * 8).unwrap();
         let mut inner = scope.clone();
         inner.insert(
             name.into(),
@@ -7337,6 +7361,7 @@ impl Codegen {
         let mut out = String::new();
         writeln!(out, ".equ gak_frame_reserve, {reserve}").unwrap();
         out.push_str(".intel_syntax noprefix\n.section .rodata\ngak_int_fmt: .asciz \"%lld\\n\"\ngak_true: .asciz \"true\"\ngak_false: .asciz \"false\"\ngak_overflow_msg: .ascii \"integer overflow\\n\"\ngak_overflow_msg_end:\ngak_divzero_msg: .ascii \"division by zero\\n\"\ngak_divzero_msg_end:\ngak_shift_range_msg: .ascii \"shift count must be in 0..63\\n\"\ngak_shift_range_msg_end:\ngak_limit_msg: .ascii \"execution exceeds 1000000 action steps\\n\"\ngak_limit_msg_end:\ngak_range_start_msg: .ascii \"range start must not be negative\\n\"\ngak_range_start_msg_end:\ngak_range_end_msg: .ascii \"range end must not be negative\\n\"\ngak_range_end_msg_end:\ngak_range_limit_msg: .ascii \"range exceeds 100000 items\\n\"\ngak_range_limit_msg_end:\ngak_record_limit_msg: .ascii \"native struct memory exceeds 64 MiB\\n\"\ngak_record_limit_msg_end:\ngak_alloc_failure_msg: .ascii \"native allocation failed\\n\"\ngak_alloc_failure_msg_end:\ngak_list_limit_msg: .ascii \"list exceeds 100000 items or 64 MiB of native allocations\\n\"\ngak_list_limit_msg_end:\ngak_list_index_msg: .ascii \"list index out of range\\n\"\ngak_list_index_msg_end:\n");
+        out.push_str("gak_loop_limit_msg: .ascii \"loop exceeds 100000 items\\n\"\ngak_loop_limit_msg_end:\n");
         out.push_str("gak_uint_fmt: .asciz \"%llu\\n\"\ngak_int_inner_fmt: .asciz \"%lld\"\ngak_uint_inner_fmt: .asciz \"%llu\"\ngak_result_ok_prefix: .ascii \"ok(\"\ngak_result_error_prefix: .ascii \"error(\"\ngak_result_suffix: .byte 41,10\n");
         out.push_str("gak_newline: .byte 10\ngak_call_depth_error_msg: .ascii \"call depth exceeded\\n\"\ngak_call_depth_error_msg_end:\ngak_call_stack_error_msg: .ascii \"native call stack exceeds 512 KiB\\n\"\ngak_call_stack_error_msg_end:\ngak_str_limit_msg: .ascii \"string memory exceeds 64 MiB\\n\"\ngak_str_limit_msg_end:\ngak_output_failure_msg: .ascii \"native output failed\\n\"\ngak_output_failure_msg_end:\n");
         out.push_str("gak_text_slice_range_msg: .ascii \"text slice out of range\\n\"\ngak_text_slice_range_msg_end:\n");
@@ -8459,6 +8484,7 @@ gak_cli_utf8_done:
             ("gak_range_start", "gak_range_start_msg"),
             ("gak_range_end", "gak_range_end_msg"),
             ("gak_range_limit", "gak_range_limit_msg"),
+            ("gak_loop_limit", "gak_loop_limit_msg"),
             ("gak_record_limit", "gak_record_limit_msg"),
             ("gak_alloc_failure", "gak_alloc_failure_msg"),
             ("gak_list_limit", "gak_list_limit_msg"),
