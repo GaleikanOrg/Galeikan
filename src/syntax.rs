@@ -668,14 +668,39 @@ impl Parser {
         }
     }
     fn type_name(&mut self) -> Result<String, String> {
+        self.type_name_with_depth(0)
+    }
+    fn type_name_with_depth(&mut self, depth: usize) -> Result<String, String> {
+        if depth >= 8 {
+            return Err(self.error("type nesting too deep"));
+        }
         let name = self.ident()?;
         if name != "Result" && name != "List" {
             return Ok(name);
         }
         self.expect(TokenKind::Less)?;
-        let inner = self.ident()?;
-        self.expect(TokenKind::Greater)?;
+        let inner = self.type_name_with_depth(depth + 1)?;
+        self.type_greater()?;
         Ok(format!("{name}<{inner}>"))
+    }
+    fn type_greater(&mut self) -> Result<(), String> {
+        match self.current().kind {
+            TokenKind::Greater => {
+                self.bump();
+                Ok(())
+            }
+            TokenKind::ShiftRight => {
+                self.tokens[self.pos].kind = TokenKind::Greater;
+                self.tokens[self.pos].col += 1;
+                Ok(())
+            }
+            TokenKind::UnsignedShiftRight => {
+                self.tokens[self.pos].kind = TokenKind::ShiftRight;
+                self.tokens[self.pos].col += 1;
+                Ok(())
+            }
+            _ => Err(self.error("expected Greater")),
+        }
     }
     fn optional_type(&mut self) -> Result<Option<String>, String> {
         if self.current().kind == TokenKind::Colon {

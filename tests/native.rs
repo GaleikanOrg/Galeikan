@@ -8284,6 +8284,74 @@ fn native_binary_strings_errors_and_hit_limit_match_vm() {
 }
 
 #[test]
+fn result_lists_capture_mutation_errors_across_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "result-lists.gaks",
+        "from std.binary import from_hex, snapshot\nfrom std.lab import mutate\nfrom std.list import count\nfrom std.result import ok, is_error, recover\nstruct Marker { value: i64 }\nfn variants(source: Source, strategy: str) -> Result<List<Source>> = mutate(source, strategy, 2)\nfn first(source: Source, strategy: str) -> Result<Source> {\n    let cases = variants(source, strategy)?\n    return cases[0]\n}\nfn numbers() -> Result<List<i64>> = ok([1, 2])\nfn markers() -> Result<List<Marker>> = ok([Marker(3)])\nfn empty() -> Result<List<Source>> = ok([])\nlet source = snapshot(from_hex(\"00 7f\"))\nprint is_error(variants(source, \"invalid\"))\nprint is_error(first(source, \"invalid\"))\nprint count(recover(variants(source, \"invalid\"), []))\nprint count(recover(variants(source, \"bitflip\"), []))\nprint first(source, \"bitflip\")\nprint numbers()\nprint markers()\nprint empty()\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(bytes) = &expected {
+            assert_eq!(&output.stdout, bytes, "{engine}");
+        } else {
+            expected = Some(output.stdout);
+        }
+    }
+    let expected = expected.unwrap();
+    assert!(expected.starts_with(b"true\ntrue\n0\n2\n"));
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_lab_rejects_invalid_mutation_requests() {
     if !gcc_available() {
         return;

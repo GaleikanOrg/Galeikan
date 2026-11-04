@@ -4025,9 +4025,9 @@ fn explicit_result_constructors_reject_invalid_types_and_messages() {
             "cannot wrap Result<i64>",
         ),
         (
-            "list-result",
-            "import std.result\nprint result.ok([1])\n",
-            "cannot wrap List<i64>",
+            "nested-list-result",
+            "import std.result\nprint result.ok([[1]])\n",
+            "list element type List<i64> is unsupported",
         ),
         (
             "empty-error",

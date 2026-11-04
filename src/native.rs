@@ -492,6 +492,22 @@ enum ResultValue {
     Regions,
     Region,
     Record(u32),
+    ListInt,
+    ListUInt,
+    ListBool,
+    ListStr,
+    ListBytes,
+    ListSource,
+    ListFormat,
+    ListSection,
+    ListObservation,
+    ListFinding,
+    ListOffsets,
+    ListDiff,
+    ListRegions,
+    ListRegion,
+    ListRecord(u32),
+    ListEmpty,
 }
 
 impl ResultValue {
@@ -512,6 +528,22 @@ impl ResultValue {
             Scalar::Regions => Some(Self::Regions),
             Scalar::Region => Some(Self::Region),
             Scalar::Record(id) => Some(Self::Record(id)),
+            Scalar::ListInt => Some(Self::ListInt),
+            Scalar::ListUInt => Some(Self::ListUInt),
+            Scalar::ListBool => Some(Self::ListBool),
+            Scalar::ListStr => Some(Self::ListStr),
+            Scalar::ListBytes => Some(Self::ListBytes),
+            Scalar::ListSource => Some(Self::ListSource),
+            Scalar::ListFormat => Some(Self::ListFormat),
+            Scalar::ListSection => Some(Self::ListSection),
+            Scalar::ListObservation => Some(Self::ListObservation),
+            Scalar::ListFinding => Some(Self::ListFinding),
+            Scalar::ListOffsets => Some(Self::ListOffsets),
+            Scalar::ListDiff => Some(Self::ListDiff),
+            Scalar::ListRegions => Some(Self::ListRegions),
+            Scalar::ListRegion => Some(Self::ListRegion),
+            Scalar::ListRecord(id) => Some(Self::ListRecord(id)),
+            Scalar::ListEmpty => Some(Self::ListEmpty),
             _ => None,
         }
     }
@@ -533,6 +565,22 @@ impl ResultValue {
             Self::Regions => Scalar::Regions,
             Self::Region => Scalar::Region,
             Self::Record(id) => Scalar::Record(id),
+            Self::ListInt => Scalar::ListInt,
+            Self::ListUInt => Scalar::ListUInt,
+            Self::ListBool => Scalar::ListBool,
+            Self::ListStr => Scalar::ListStr,
+            Self::ListBytes => Scalar::ListBytes,
+            Self::ListSource => Scalar::ListSource,
+            Self::ListFormat => Scalar::ListFormat,
+            Self::ListSection => Scalar::ListSection,
+            Self::ListObservation => Scalar::ListObservation,
+            Self::ListFinding => Scalar::ListFinding,
+            Self::ListOffsets => Scalar::ListOffsets,
+            Self::ListDiff => Scalar::ListDiff,
+            Self::ListRegions => Scalar::ListRegions,
+            Self::ListRegion => Scalar::ListRegion,
+            Self::ListRecord(id) => Scalar::ListRecord(id),
+            Self::ListEmpty => Scalar::ListEmpty,
         }
     }
 }
@@ -584,6 +632,7 @@ impl Scalar {
         self == actual
             || (actual == Self::ListEmpty && self.element().is_some())
             || matches!((self, actual), (Self::Result(Some(_)), Self::Result(None)))
+            || matches!((self, actual), (Self::Result(Some(a)), Self::Result(Some(b))) if a.scalar().accepts(b.scalar()))
     }
 
     fn merge(self, other: Self) -> Option<Self> {
@@ -3650,7 +3699,7 @@ impl Codegen {
             ("ok", [value]) => {
                 let kind = self.expr(value, scope)?;
                 let value = ResultValue::from_scalar(kind)
-                    .ok_or("result.ok supports scalar and struct values")?;
+                    .ok_or("result.ok supports values and flat lists")?;
                 self.code
                     .push_str("    xor edx, edx\n    call gak_alloc_result\n");
                 Ok(Scalar::Result(Some(value)))
@@ -6827,7 +6876,7 @@ impl Codegen {
         if result.accepts(actual) {
             return Ok(result);
         }
-        if inner.is_some_and(|value| value.scalar() == actual) {
+        if inner.is_some_and(|value| value.scalar().accepts(actual)) {
             self.code
                 .push_str("    xor edx, edx\n    call gak_alloc_result\n");
             return Ok(result);

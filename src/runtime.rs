@@ -779,9 +779,53 @@ enum ResultKind {
     Regions,
     Region,
     Record(u64),
+    ListInt,
+    ListUInt,
+    ListBool,
+    ListStr,
+    ListBytes,
+    ListSource,
+    ListHttpResponse,
+    ListObservation,
+    ListFormat,
+    ListSection,
+    ListOffsets,
+    ListDiff,
+    ListFinding,
+    ListInstruction,
+    ListDisassembly,
+    ListRegions,
+    ListRegion,
+    ListRecord(u64),
+    ListEmpty,
 }
 
 impl ResultKind {
+    fn from_list_kind(kind: Option<Self>) -> Option<Self> {
+        Some(match kind {
+            None => Self::ListEmpty,
+            Some(Self::Int) => Self::ListInt,
+            Some(Self::UInt) => Self::ListUInt,
+            Some(Self::Bool) => Self::ListBool,
+            Some(Self::Str) => Self::ListStr,
+            Some(Self::Bytes) => Self::ListBytes,
+            Some(Self::Source) => Self::ListSource,
+            Some(Self::HttpResponse) => Self::ListHttpResponse,
+            Some(Self::Observation) => Self::ListObservation,
+            Some(Self::Format) => Self::ListFormat,
+            Some(Self::Section) => Self::ListSection,
+            Some(Self::Offsets) => Self::ListOffsets,
+            Some(Self::Diff) => Self::ListDiff,
+            Some(Self::Finding) => Self::ListFinding,
+            Some(Self::Instruction) => Self::ListInstruction,
+            Some(Self::Disassembly) => Self::ListDisassembly,
+            Some(Self::Regions) => Self::ListRegions,
+            Some(Self::Region) => Self::ListRegion,
+            Some(Self::Record(id)) => Self::ListRecord(id),
+            _ => return None,
+        })
+    }
+
     fn from_value(value: &Value) -> Option<Self> {
         Some(match value {
             Value::Int(_) => Self::Int,
@@ -802,7 +846,8 @@ impl ResultKind {
             Value::Regions(_) => Self::Regions,
             Value::Region(_) => Self::Region,
             Value::Record(record) => Self::Record(record.id),
-            Value::Result(_) | Value::List(_, _) => return None,
+            Value::List(_, kind) => return Self::from_list_kind(*kind),
+            Value::Result(_) => return None,
         })
     }
     fn as_type(self) -> Type {
@@ -825,6 +870,25 @@ impl ResultKind {
             Self::Regions => Type::Regions,
             Self::Region => Type::Region,
             Self::Record(id) => Type::Record(id),
+            Self::ListInt => Type::List(Some(Self::Int)),
+            Self::ListUInt => Type::List(Some(Self::UInt)),
+            Self::ListBool => Type::List(Some(Self::Bool)),
+            Self::ListStr => Type::List(Some(Self::Str)),
+            Self::ListBytes => Type::List(Some(Self::Bytes)),
+            Self::ListSource => Type::List(Some(Self::Source)),
+            Self::ListHttpResponse => Type::List(Some(Self::HttpResponse)),
+            Self::ListObservation => Type::List(Some(Self::Observation)),
+            Self::ListFormat => Type::List(Some(Self::Format)),
+            Self::ListSection => Type::List(Some(Self::Section)),
+            Self::ListOffsets => Type::List(Some(Self::Offsets)),
+            Self::ListDiff => Type::List(Some(Self::Diff)),
+            Self::ListFinding => Type::List(Some(Self::Finding)),
+            Self::ListInstruction => Type::List(Some(Self::Instruction)),
+            Self::ListDisassembly => Type::List(Some(Self::Disassembly)),
+            Self::ListRegions => Type::List(Some(Self::Regions)),
+            Self::ListRegion => Type::List(Some(Self::Region)),
+            Self::ListRecord(id) => Type::List(Some(Self::Record(id))),
+            Self::ListEmpty => Type::List(None),
         }
     }
     fn from_type(value: Type) -> Option<Self> {
@@ -847,6 +911,7 @@ impl ResultKind {
             Type::Regions => Self::Regions,
             Type::Region => Self::Region,
             Type::Record(id) => Self::Record(id),
+            Type::List(kind) => return Self::from_list_kind(kind),
             _ => return None,
         })
     }
@@ -856,6 +921,9 @@ impl Type {
     fn from_name(name: &str) -> Result<Self, String> {
         if let Some(inner) = name.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
             let inner = Self::from_name(inner)?;
+            if matches!(inner, Self::List(_) | Self::Result(_)) {
+                return Err(format!("unsupported List type {name}"));
+            }
             let kind = ResultKind::from_type(inner)
                 .ok_or_else(|| format!("unsupported List type {name}"))?;
             return Ok(Self::List(Some(kind)));
@@ -932,6 +1000,7 @@ impl Type {
         self == Self::Any
             || actual == Self::Any
             || self == actual
+            || matches!((self, actual), (Self::Result(Some(a)), Self::Result(Some(b))) if a.as_type().compatible(b.as_type()))
             || matches!(
                 (self, actual),
                 (Self::List(None), Self::List(_))
@@ -1327,7 +1396,11 @@ fn resolve_type(
     imports: &HashMap<String, Import>,
 ) -> Result<Type, String> {
     if let Some(inner) = name.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
-        return ResultKind::from_type(resolve_type(inner, records, imports)?)
+        let inner = resolve_type(inner, records, imports)?;
+        if matches!(inner, Type::List(_) | Type::Result(_)) {
+            return Err(format!("unsupported List type {name}"));
+        }
+        return ResultKind::from_type(inner)
             .map(|kind| Type::List(Some(kind)))
             .ok_or_else(|| format!("unsupported List type {name}"));
     }
@@ -3897,7 +3970,9 @@ impl Runtime {
                     let mut element = Type::Any;
                     for item in items {
                         let next = self.infer_expr(module, locals, globals, item)?;
-                        if ResultKind::from_type(next).is_none() && next != Type::Any {
+                        if matches!(next, Type::List(_) | Type::Result(_))
+                            || (ResultKind::from_type(next).is_none() && next != Type::Any)
+                        {
                             return Err(error(format!("list element type {next} is unsupported")));
                         }
                         if element == Type::Any {
@@ -7155,6 +7230,9 @@ impl Runtime {
         match (name, args) {
             ("count", [Value::List(items, _)]) => Ok(Value::Int(items.len() as i64)),
             ("append", [Value::List(items, kind), value]) => {
+                if matches!(value, Value::List(_, _) | Value::Result(_)) {
+                    return Err("list.append cannot add nested List or Result".into());
+                }
                 let next = ResultKind::from_value(value)
                     .ok_or("list.append cannot add nested List or Result")?;
                 if kind.is_some() && *kind != Some(next) {
@@ -7249,7 +7327,7 @@ impl Runtime {
         match (name, args) {
             ("ok", [value]) => {
                 if ResultKind::from_value(value).is_none() {
-                    return Err("result.ok supports only scalar or research values".into());
+                    return Err("result.ok supports values and flat lists".into());
                 }
                 Ok(Value::Result(Arc::new(Ok(value.clone()))))
             }
@@ -7556,6 +7634,9 @@ fn make_list(items: Vec<Value>) -> Result<Value, String> {
     }
     let mut kind: Option<ResultKind> = None;
     for item in &items {
+        if matches!(item, Value::List(_, _) | Value::Result(_)) {
+            return Err("nested lists and Result values are not supported as list elements".into());
+        }
         let next = ResultKind::from_value(item)
             .ok_or("nested lists and Result values are not supported as list elements")?;
         if let Some(existing) = kind {
@@ -7921,6 +8002,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         return match (name, args) {
             ("count", [Type::List(_) | Type::Any]) => Ok(Int),
             ("append", [Type::List(kind), value]) => {
+                if matches!(value, Type::List(_) | Type::Result(_)) {
+                    return Err(format!("{qualified} cannot append {value}"));
+                }
                 if let Some(kind) = kind {
                     require_type(kind.as_type(), *value)?;
                     Ok(Type::List(Some(*kind)))
