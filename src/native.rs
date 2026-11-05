@@ -282,6 +282,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_call_stack_error", "native call stack exceeds 512 KiB"),
     ("gak_overflow", "integer overflow"),
     ("gak_divzero", "division by zero"),
+    ("gak_assert_failed", "assertion failed"),
     ("gak_shift_range", "shift count must be in 0..63"),
     ("gak_range_start", "range start must not be negative"),
     ("gak_range_end", "range end must not be negative"),
@@ -3629,6 +3630,17 @@ impl Codegen {
         args: &[Expr],
         caller_scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if name == "assert" {
+            let [condition] = args else {
+                return Err("assert expects 1 bool argument".into());
+            };
+            if self.expr(condition, caller_scope)? != Scalar::Bool {
+                return Err("assert expects bool".into());
+            }
+            let passed = self.label();
+            writeln!(self.code, "    test rax, rax\n    jnz {passed}\n    jmp gak_assert_failed\n{passed}:\n    mov eax, 1").unwrap();
+            return Ok(Scalar::Bool);
+        }
         if name == "len" {
             let [value] = args else {
                 return Err("len expects 1 argument".into());
@@ -7553,6 +7565,9 @@ impl Codegen {
         writeln!(out, ".equ gak_frame_reserve, {reserve}").unwrap();
         out.push_str(".intel_syntax noprefix\n.section .rodata\ngak_int_fmt: .asciz \"%lld\\n\"\ngak_true: .asciz \"true\"\ngak_false: .asciz \"false\"\ngak_overflow_msg: .ascii \"integer overflow\\n\"\ngak_overflow_msg_end:\ngak_divzero_msg: .ascii \"division by zero\\n\"\ngak_divzero_msg_end:\ngak_shift_range_msg: .ascii \"shift count must be in 0..63\\n\"\ngak_shift_range_msg_end:\ngak_limit_msg: .ascii \"execution exceeds 1000000 action steps\\n\"\ngak_limit_msg_end:\ngak_range_start_msg: .ascii \"range start must not be negative\\n\"\ngak_range_start_msg_end:\ngak_range_end_msg: .ascii \"range end must not be negative\\n\"\ngak_range_end_msg_end:\ngak_range_limit_msg: .ascii \"range exceeds 100000 items\\n\"\ngak_range_limit_msg_end:\ngak_record_limit_msg: .ascii \"native struct memory exceeds 64 MiB\\n\"\ngak_record_limit_msg_end:\ngak_alloc_failure_msg: .ascii \"native allocation failed\\n\"\ngak_alloc_failure_msg_end:\ngak_list_limit_msg: .ascii \"list exceeds 100000 items or 64 MiB of native allocations\\n\"\ngak_list_limit_msg_end:\ngak_list_index_msg: .ascii \"list index out of range\\n\"\ngak_list_index_msg_end:\n");
         out.push_str("gak_loop_limit_msg: .ascii \"loop exceeds 100000 items\\n\"\ngak_loop_limit_msg_end:\n");
+        out.push_str(
+            "gak_assert_failed_msg: .ascii \"assertion failed\\n\"\ngak_assert_failed_msg_end:\n",
+        );
         out.push_str("gak_offset_index_msg: .ascii \"offset index out of range\\n\"\ngak_offset_index_msg_end:\ngak_region_index_msg: .ascii \"region index out of range\\n\"\ngak_region_index_msg_end:\n");
         out.push_str("gak_uint_fmt: .asciz \"%llu\\n\"\ngak_int_inner_fmt: .asciz \"%lld\"\ngak_uint_inner_fmt: .asciz \"%llu\"\ngak_result_ok_prefix: .ascii \"ok(\"\ngak_result_error_prefix: .ascii \"error(\"\ngak_result_suffix: .byte 41,10\n");
         out.push_str("gak_newline: .byte 10\ngak_call_depth_error_msg: .ascii \"call depth exceeded\\n\"\ngak_call_depth_error_msg_end:\ngak_call_stack_error_msg: .ascii \"native call stack exceeds 512 KiB\\n\"\ngak_call_stack_error_msg_end:\ngak_str_limit_msg: .ascii \"string memory exceeds 64 MiB\\n\"\ngak_str_limit_msg_end:\ngak_output_failure_msg: .ascii \"native output failed\\n\"\ngak_output_failure_msg_end:\n");
@@ -8675,6 +8690,7 @@ gak_cli_utf8_done:
             ("gak_call_stack_error", "gak_call_stack_error_msg"),
             ("gak_overflow", "gak_overflow_msg"),
             ("gak_divzero", "gak_divzero_msg"),
+            ("gak_assert_failed", "gak_assert_failed_msg"),
             ("gak_shift_range", "gak_shift_range_msg"),
             ("gak_limit", "gak_limit_msg"),
             ("gak_range_start", "gak_range_start_msg"),

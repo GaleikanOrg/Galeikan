@@ -10355,3 +10355,77 @@ print message(past_slice(values))
         assert_eq!(native.stdout, expected);
     }
 }
+
+#[test]
+fn assertions_match_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "assertions.gaks",
+        "from std.result import is_error, message\nfn passing() -> bool = assert(2 + 2 == 4)\nfn failing() -> Result<bool> = assert(false)\nprint passing()\nprint is_error(failing())\nprint message(failing())\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let mut outputs = Vec::new();
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        outputs.push(output.stdout);
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0], bundle.stdout);
+    assert!(outputs[0].starts_with(b"true\ntrue\n"));
+    assert!(outputs[0].ends_with(b"assertion failed\n"));
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, outputs[0]);
+    }
+
+    let wrong_type = s.write("assert-type.gak", "print assert(1)\n");
+    let checked = Command::new(galeikan)
+        .arg("check")
+        .arg(wrong_type)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("assert expects bool"));
+}

@@ -4853,6 +4853,16 @@ impl Runtime {
             };
             return Ok(Value::Int(length as i64));
         }
+        if name == "assert" {
+            let [Value::Bool(condition)] = args.as_slice() else {
+                return Err("assert expects 1 bool argument".into());
+            };
+            return if *condition {
+                Ok(Value::Bool(true))
+            } else {
+                Err("assertion failed".into())
+            };
+        }
         if let Some(record) = module.records.get(name) {
             if args.len() != record.fields.len() {
                 return Err(format!("{name} expects {} arguments", record.fields.len()));
@@ -8070,6 +8080,14 @@ fn is_value_method_receiver(module: &Module, receiver: &str) -> bool {
 }
 
 fn check_function_call(module: &Module, name: &str, args: &[Type]) -> Result<Type, String> {
+    if name == "assert" {
+        let [condition] = args else {
+            return Err("assert expects 1 bool argument".into());
+        };
+        require_type(Type::Bool, *condition)
+            .map_err(|_| format!("assert expects bool, got {condition}"))?;
+        return Ok(Type::Bool);
+    }
     if matches!(name, "i64" | "u64") {
         let [value] = args else {
             return Err(format!("{name} expects 1 argument"));
