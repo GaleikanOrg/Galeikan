@@ -2508,6 +2508,10 @@ impl Runtime {
                             .iter()
                             .map(|b| Value::Int(i64::from(*b)))
                             .collect(),
+                        Value::Str(text) if text.chars().count() <= MAX_LOOP_ITEMS => text
+                            .chars()
+                            .map(|character| Value::Str(character.to_string()))
+                            .collect(),
                         Value::Disassembly(disassembly)
                             if disassembly.instructions.len() <= MAX_LOOP_ITEMS =>
                         {
@@ -2524,6 +2528,7 @@ impl Runtime {
                         Value::Offsets(_)
                         | Value::Bytes(_)
                         | Value::Source(_)
+                        | Value::Str(_)
                         | Value::Disassembly(_)
                         | Value::Regions(_) => {
                             return Err(at(format!("loop exceeds {MAX_LOOP_ITEMS} items")))
@@ -2532,7 +2537,7 @@ impl Runtime {
                             return Err(at(format!("loop exceeds {MAX_LOOP_ITEMS} items")))
                         }
                         _ => return Err(at(
-                            "for expects a List, Offsets, bytes, Source, Disassembly, or Regions"
+                            "for expects a List, Offsets, bytes, Source, str, Disassembly, or Regions"
                                 .into(),
                         )),
                     };
@@ -3809,13 +3814,14 @@ impl Runtime {
                         Type::Offsets
                             | Type::Bytes
                             | Type::Source
+                            | Type::Str
                             | Type::Disassembly
                             | Type::Regions
                             | Type::List(_)
                             | Type::Any
                     ) {
                         return Err(format!(
-                            "{}:{}:{}: for expects a List, Offsets, bytes, Source, Disassembly, or Regions, got {kind}",
+                            "{}:{}:{}: for expects a List, Offsets, bytes, Source, str, Disassembly, or Regions, got {kind}",
                             module.path.display(),
                             action.line,
                             action.col
@@ -3827,6 +3833,7 @@ impl Runtime {
                     let item_type = match kind {
                         Type::Disassembly => Type::Instruction,
                         Type::Regions => Type::Region,
+                        Type::Str => Type::Str,
                         Type::List(Some(kind)) => kind.as_type(),
                         Type::List(None) => Type::Any,
                         Type::Any => Type::Any,

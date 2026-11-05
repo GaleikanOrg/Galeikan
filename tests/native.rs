@@ -739,7 +739,7 @@ fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     );
     let script = s.write(
         "text-main.gak",
-        "import text_helpers as helper\nfrom std.text import length, byte_length, find, contains, starts_with, ends_with, slice\nfrom std.result import is_error, message\nfn invalid() -> Result<str> = slice(\"Aλ😀Z\", 4, 1)\nfn negative() -> Result<str> = slice(\"Aλ😀Z\", -1, 1)\nfn huge() -> Result<str> = slice(\"Aλ😀Z\", 9223372036854775807, 9223372036854775807)\nlet value = \"Aλ😀Z\"\nprint length(value)\nprint byte_length(value)\nprint find(value, \"😀\")\nprint find(value, \"missing\")\nprint contains(value, \"λ😀\")\nprint contains(value, \"Zλ\")\nprint starts_with(value, \"Aλ\")\nprint ends_with(value, \"😀Z\")\nprint helper.middle(value)\nprint slice(value, 4, 0) == \"\"\nprint is_error(invalid())\nprint is_error(negative())\nprint is_error(huge())\nprint message(invalid())\nprint find(\"aaaaab\", \"aaab\")\nprint find(\"A\0B\", \"\0B\")\nprint find(value, \"\")\n",
+        "import text_helpers as helper\nfrom std.text import length, byte_length, find, contains, starts_with, ends_with, slice\nfrom std.result import is_error, message\nfn invalid() -> Result<str> = slice(\"Aλ😀Z\", 4, 1)\nfn negative() -> Result<str> = slice(\"Aλ😀Z\", -1, 1)\nfn huge() -> Result<str> = slice(\"Aλ😀Z\", 9223372036854775807, 9223372036854775807)\nfn too_long() -> Result<i64> {\n    var text = \"x\"\n    var step = 0\n    while step < 17 {\n        text = text + text\n        step = step + 1\n    }\n    var count = 0\n    for character in text {\n        count = count + 1\n    }\n    return count\n}\nlet value = \"Aλ😀Z\"\nvar roundtrip = \"\"\nvar empty_count = 0\nprint length(value)\nprint byte_length(value)\nprint find(value, \"😀\")\nprint find(value, \"missing\")\nprint contains(value, \"λ😀\")\nprint contains(value, \"Zλ\")\nprint starts_with(value, \"Aλ\")\nprint ends_with(value, \"😀Z\")\nprint helper.middle(value)\nprint slice(value, 4, 0) == \"\"\nprint is_error(invalid())\nprint is_error(negative())\nprint is_error(huge())\nprint message(invalid())\nprint find(\"aaaaab\", \"aaab\")\nprint find(\"A\0B\", \"\0B\")\nprint find(value, \"\")\nfor character in value {\n    roundtrip = roundtrip + character\n}\nprint roundtrip == value\nfor character in \"\" {\n    empty_count = empty_count + 1\n}\nprint empty_count\nprint is_error(too_long())\nprint message(too_long())\n",
     );
     let binary = env!("CARGO_BIN_EXE_galeikan");
     let mut outputs = Vec::new();
@@ -795,7 +795,8 @@ fn unicode_text_module_matches_ast_vm_bundle_and_native() {
         assert!(output.starts_with(b"4\n8\n2\n-1\ntrue\nfalse\ntrue\ntrue\n"));
         assert!(String::from_utf8_lossy(output).contains("λ😀\ntrue\ntrue\ntrue\ntrue\n"));
         assert!(String::from_utf8_lossy(output).contains("text slice out of range"));
-        assert!(output.ends_with(b"2\n1\n0\n"));
+        assert!(String::from_utf8_lossy(output).contains("2\n1\n0\ntrue\n0\ntrue\n"));
+        assert!(output.ends_with(b"loop exceeds 100000 items\n"));
     }
     assert_eq!(outputs[1], outputs[0]);
     assert_eq!(executed.stdout, outputs[0]);

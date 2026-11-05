@@ -3324,15 +3324,26 @@ impl Codegen {
         let kind = self.expr(iterable, scope)?;
         let element = if matches!(kind, Scalar::Offsets | Scalar::Bytes | Scalar::Source) {
             Scalar::Int
+        } else if kind == Scalar::Str {
+            Scalar::Str
         } else if kind == Scalar::Regions {
             Scalar::Region
         } else {
             kind.element()
-                .ok_or("native for needs a typed List, Offsets, bytes, Source, Regions, or std.iter.range(...) iterable")?
+                .ok_or("native for needs a typed List, Offsets, bytes, Source, str, Regions, or std.iter.range(...) iterable")?
         };
         let list_slot = self.reserve_slot()?;
         let index_slot = self.reserve_slot()?;
         let item_slot = self.reserve_slot()?;
+        let text_slots = if kind == Scalar::Str {
+            Some((
+                self.reserve_slot()?,
+                self.reserve_slot()?,
+                self.reserve_slot()?,
+            ))
+        } else {
+            None
+        };
         writeln!(
             self.code,
             "    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0",
@@ -3348,6 +3359,9 @@ impl Codegen {
             .unwrap();
         } else if kind == Scalar::Source {
             self.code.push_str("    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    cmp r10, 100000\n    ja gak_loop_limit\n");
+        } else if let Some((length_slot, byte_slot, _)) = text_slots {
+            self.uses_text = true;
+            writeln!(self.code, "    mov {}, rax\n    call gak_native_text_length\n    cmp rax, 100000\n    ja gak_loop_limit\n    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0", self.arg0(), length_slot * 8, byte_slot * 8).unwrap();
         }
         let start = self.label();
         let end = self.label();
@@ -3361,6 +3375,13 @@ impl Codegen {
         .unwrap();
         if kind == Scalar::Source {
             self.code.push_str("    mov r11, QWORD PTR [r10+24]\n    sub r11, QWORD PTR [r10+16]\n    cmp rax, r11\n");
+        } else if let Some((length_slot, _, _)) = text_slots {
+            writeln!(
+                self.code,
+                "    cmp rax, QWORD PTR [rbp-{}]",
+                length_slot * 8
+            )
+            .unwrap();
         } else {
             self.code.push_str("    cmp rax, QWORD PTR [r10]\n");
         }
@@ -3370,6 +3391,9 @@ impl Codegen {
             self.code.push_str("    movzx eax, BYTE PTR [r10+rax+8]\n");
         } else if kind == Scalar::Source {
             self.code.push_str("    add rax, QWORD PTR [r10+16]\n    mov r10, QWORD PTR [r10]\n    movzx eax, BYTE PTR [r10+rax+8]\n");
+        } else if let Some((_, byte_slot, width_slot)) = text_slots {
+            let width_ready = self.label();
+            writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    cmp r11, QWORD PTR [r10]\n    jae gak_text_index\n    movzx eax, BYTE PTR [r10+r11+8]\n    mov r9d, 1\n    cmp al, 128\n    jb {width_ready}\n    mov r9d, 2\n    cmp al, 224\n    jb {width_ready}\n    mov r9d, 3\n    cmp al, 240\n    jb {width_ready}\n    mov r9d, 4\n{width_ready}:\n    mov rax, r11\n    add rax, r9\n    jc gak_text_index\n    cmp rax, QWORD PTR [r10]\n    ja gak_text_index\n    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], r9\n    mov rax, r9\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    sub r11, QWORD PTR [rbp-{}]\n    lea {}, [r10+r11+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", byte_slot * 8, byte_slot * 8, width_slot * 8, item_slot * 8, self.arg0(), list_slot * 8, byte_slot * 8, width_slot * 8, self.arg1(), self.arg2(), width_slot * 8, item_slot * 8).unwrap();
         } else {
             self.code.push_str("    mov rax, QWORD PTR [r10+rax*8+8]\n");
         }
