@@ -6133,7 +6133,7 @@ fn bounded_for_blocks_work_in_modules_ast_vm_and_bundles() {
     let out = s.run(&wrong_type, false);
     assert!(!out.status.success());
     assert!(
-        stderr(&out).contains("for expects a List, Offsets, bytes, Disassembly, or Regions"),
+        stderr(&out).contains("for expects a List, Offsets, bytes, Source, str, Disassembly, or Regions"),
         "{}",
         stderr(&out)
     );
