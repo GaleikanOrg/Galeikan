@@ -4006,6 +4006,21 @@ impl Runtime {
                         }
                     }
                 }
+                ExprKind::Slice(value, start, end) => {
+                    let value_type = self.infer_expr(module, locals, globals, value)?;
+                    require_type(Type::Int, self.infer_expr(module, locals, globals, start)?)
+                        .map_err(&error)?;
+                    require_type(Type::Int, self.infer_expr(module, locals, globals, end)?)
+                        .map_err(&error)?;
+                    match value_type {
+                        Type::Bytes | Type::Source | Type::Any => value_type,
+                        _ => {
+                            return Err(error(format!(
+                                "slicing expects bytes or Source, got {value_type}"
+                            )))
+                        }
+                    }
+                }
                 ExprKind::Field(value, field) => {
                     let kind = self.infer_expr(module, locals, globals, value)?;
                     self.record_field_type(kind, field).map_err(&error)?
@@ -4426,6 +4441,11 @@ impl Runtime {
                 self.eval(module, locals, list, depth)?,
                 self.eval(module, locals, index, depth)?,
             ),
+            ExprKind::Slice(value, start, end) => slice_value(
+                self.eval(module, locals, value, depth)?,
+                self.eval(module, locals, start, depth)?,
+                self.eval(module, locals, end, depth)?,
+            ),
             ExprKind::Field(value, field) => {
                 record_field_value(self.eval(module, locals, value, depth)?, field)
             }
@@ -4546,6 +4566,12 @@ impl Runtime {
                     let index = stack.pop().ok_or("invalid bytecode stack")?;
                     let list = stack.pop().ok_or("invalid bytecode stack")?;
                     stack.push(index_value(list, index)?);
+                }
+                Instruction::Slice => {
+                    let end = stack.pop().ok_or("invalid bytecode stack")?;
+                    let start = stack.pop().ok_or("invalid bytecode stack")?;
+                    let value = stack.pop().ok_or("invalid bytecode stack")?;
+                    stack.push(slice_value(value, start, end)?);
                 }
                 Instruction::Field(field) => {
                     let value = stack.pop().ok_or("invalid bytecode stack")?;
@@ -7713,6 +7739,24 @@ fn index_value(value: Value, index: Value) -> Result<Value, String> {
             )))
         }
         _ => Err("indexing expects List, bytes, or Source".into()),
+    }
+}
+
+fn slice_value(value: Value, start: Value, end: Value) -> Result<Value, String> {
+    let start = usize::try_from(start.as_int()?).map_err(|_| "slice start must not be negative")?;
+    let end = usize::try_from(end.as_int()?).map_err(|_| "slice end must not be negative")?;
+    match value {
+        Value::Bytes(bytes) => {
+            let section = bytes.get(start..end).ok_or("slice out of range")?;
+            Ok(Value::Bytes(Arc::new(section.to_vec())))
+        }
+        Value::Source(source) => {
+            if start > end || end > source.bytes().len() {
+                return Err("slice out of range".into());
+            }
+            Ok(Value::Source(Arc::new(Source::view(source, start, end)?)))
+        }
+        _ => Err("slicing expects bytes or Source".into()),
     }
 }
 

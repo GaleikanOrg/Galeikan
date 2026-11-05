@@ -9718,3 +9718,102 @@ print message(view_end(nested))
         assert_eq!(native.stdout, expected);
     }
 }
+
+#[test]
+fn byte_slices_match_all_execution_modes_and_preserve_source_views() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "byte-slices.gaks",
+        r#"from std.binary import snapshot, size, extract
+from std.bytes import to_hex
+from std.result import is_error, message
+fn reverse(data: bytes) -> Result<bytes> = data[3:2]
+fn negative_start(data: bytes) -> Result<bytes> = data[-1:1]
+fn negative_end(data: bytes) -> Result<bytes> = data[0:-1]
+fn past_end(data: bytes) -> Result<bytes> = data[0:5]
+fn view_past_end(data: Source) -> Result<Source> = data[0:3]
+fn too_deep(data: Source) -> Result<Source> = data[0:0]
+let data = hex"00 7f 80 ff"
+let root = snapshot(data)
+let nested = root[1:4][1:3]
+var deep = root
+var depth = 0
+while depth < 64 {
+    deep = deep[0:1]
+    depth = depth + 1
+}
+print to_hex(data[1:3])
+print to_hex(data[4:4]) == ""
+print to_hex(data[0:4])
+print size(nested)
+print nested[0]
+print nested[1]
+print to_hex(extract(nested, 0, 2))
+print size(root[4:4])
+print is_error(reverse(data))
+print is_error(negative_start(data))
+print is_error(negative_end(data))
+print is_error(past_end(data))
+print is_error(view_past_end(nested))
+print is_error(too_deep(deep))
+print message(reverse(data))
+print message(negative_start(data))
+print message(negative_end(data))
+print message(view_past_end(nested))
+print message(too_deep(deep))
+"#,
+    );
+    let expected = b"7f80\ntrue\n007f80ff\n2\n128\n255\n80ff\n0\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nslice out of range\nslice start must not be negative\nslice end must not be negative\nslice out of range\nLimitExceeded: Source derivation depth exceeds 64\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}

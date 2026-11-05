@@ -28,6 +28,7 @@ pub enum Instruction {
     MethodCall(String, usize),
     MakeList(usize),
     Index,
+    Slice,
     Field(String),
     JumpIfFalse(usize),
     Jump(usize),
@@ -82,6 +83,7 @@ impl Program {
                 Instruction::MakeList(count) if *count <= 100_000 => (*count, 1),
                 Instruction::MakeList(_) => return Err("bytecode list limit exceeded".into()),
                 Instruction::Index => (2, 1),
+                Instruction::Slice => (3, 1),
                 Instruction::JumpIfFalse(_) => (1, 0),
                 Instruction::Jump(_) => (0, 0),
             };
@@ -148,6 +150,12 @@ fn emit(expr: &Expr, out: &mut Vec<Instruction>) {
             emit(list, out);
             emit(index, out);
             out.push(Instruction::Index);
+        }
+        ExprKind::Slice(value, start, end) => {
+            emit(value, out);
+            emit(start, out);
+            emit(end, out);
+            out.push(Instruction::Slice);
         }
         ExprKind::Field(value, field) => {
             emit(value, out);
