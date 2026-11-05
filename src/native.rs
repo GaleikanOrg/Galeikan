@@ -7040,13 +7040,29 @@ impl Codegen {
                 }
                 let value_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
-                if self.expr(start, scope)? != Scalar::Int {
-                    return Err("slice start must be i64".into());
+                if let Some(start) = start {
+                    if self.expr(start, scope)? != Scalar::Int {
+                        return Err("slice start must be i64".into());
+                    }
+                } else {
+                    self.code.push_str("    xor eax, eax\n");
                 }
                 let start_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", start_slot * 8).unwrap();
-                if self.expr(end, scope)? != Scalar::Int {
-                    return Err("slice end must be i64".into());
+                if let Some(end) = end {
+                    if self.expr(end, scope)? != Scalar::Int {
+                        return Err("slice end must be i64".into());
+                    }
+                } else {
+                    writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]", value_slot * 8).unwrap();
+                    match kind {
+                        Scalar::Source => self.code.push_str("    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    mov rax, r10\n"),
+                        Scalar::Str => {
+                            self.uses_text = true;
+                            writeln!(self.code, "    mov {}, rax\n    call gak_native_text_length", self.arg0()).unwrap();
+                        }
+                        _ => self.code.push_str("    mov rax, QWORD PTR [rax]\n"),
+                    }
                 }
                 writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_slice_start\n    test rax, rax\n    js gak_slice_end\n    cmp r10, rax\n    ja gak_slice_bounds\n    mov r11, QWORD PTR [rbp-{}]", start_slot * 8, value_slot * 8).unwrap();
                 if kind == Scalar::Str {

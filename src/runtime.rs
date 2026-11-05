@@ -4009,10 +4009,14 @@ impl Runtime {
                 }
                 ExprKind::Slice(value, start, end) => {
                     let value_type = self.infer_expr(module, locals, globals, value)?;
-                    require_type(Type::Int, self.infer_expr(module, locals, globals, start)?)
-                        .map_err(&error)?;
-                    require_type(Type::Int, self.infer_expr(module, locals, globals, end)?)
-                        .map_err(&error)?;
+                    if let Some(start) = start {
+                        require_type(Type::Int, self.infer_expr(module, locals, globals, start)?)
+                            .map_err(&error)?;
+                    }
+                    if let Some(end) = end {
+                        require_type(Type::Int, self.infer_expr(module, locals, globals, end)?)
+                            .map_err(&error)?;
+                    }
                     match value_type {
                         Type::List(_) | Type::Bytes | Type::Source | Type::Str | Type::Any => {
                             value_type
@@ -4444,11 +4448,18 @@ impl Runtime {
                 self.eval(module, locals, list, depth)?,
                 self.eval(module, locals, index, depth)?,
             ),
-            ExprKind::Slice(value, start, end) => slice_value(
-                self.eval(module, locals, value, depth)?,
-                self.eval(module, locals, start, depth)?,
-                self.eval(module, locals, end, depth)?,
-            ),
+            ExprKind::Slice(value, start, end) => {
+                let value = self.eval(module, locals, value, depth)?;
+                let start = start
+                    .as_ref()
+                    .map(|start| self.eval(module, locals, start, depth))
+                    .transpose()?;
+                let end = end
+                    .as_ref()
+                    .map(|end| self.eval(module, locals, end, depth))
+                    .transpose()?;
+                slice_value(value, start, end)
+            }
             ExprKind::Field(value, field) => {
                 record_field_value(self.eval(module, locals, value, depth)?, field)
             }
@@ -4570,9 +4581,21 @@ impl Runtime {
                     let list = stack.pop().ok_or("invalid bytecode stack")?;
                     stack.push(index_value(list, index)?);
                 }
-                Instruction::Slice => {
-                    let end = stack.pop().ok_or("invalid bytecode stack")?;
-                    let start = stack.pop().ok_or("invalid bytecode stack")?;
+                Instruction::Slice
+                | Instruction::SliceFrom
+                | Instruction::SliceTo
+                | Instruction::SliceAll => {
+                    let end = if matches!(&code[pc], Instruction::Slice | Instruction::SliceTo) {
+                        Some(stack.pop().ok_or("invalid bytecode stack")?)
+                    } else {
+                        None
+                    };
+                    let start = if matches!(&code[pc], Instruction::Slice | Instruction::SliceFrom)
+                    {
+                        Some(stack.pop().ok_or("invalid bytecode stack")?)
+                    } else {
+                        None
+                    };
                     let value = stack.pop().ok_or("invalid bytecode stack")?;
                     stack.push(slice_value(value, start, end)?);
                 }
@@ -7765,9 +7788,26 @@ fn index_value(value: Value, index: Value) -> Result<Value, String> {
     }
 }
 
-fn slice_value(value: Value, start: Value, end: Value) -> Result<Value, String> {
-    let start = usize::try_from(start.as_int()?).map_err(|_| "slice start must not be negative")?;
-    let end = usize::try_from(end.as_int()?).map_err(|_| "slice end must not be negative")?;
+fn slice_value(value: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
+    let start = start
+        .map(|start| {
+            usize::try_from(start.as_int()?)
+                .map_err(|_| "slice start must not be negative".to_string())
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let end = match end {
+        Some(end) => {
+            usize::try_from(end.as_int()?).map_err(|_| "slice end must not be negative")?
+        }
+        None => match &value {
+            Value::List(items, _) => items.len(),
+            Value::Bytes(bytes) => bytes.len(),
+            Value::Source(source) => source.bytes().len(),
+            Value::Str(text) => text.chars().count(),
+            _ => return Err("slicing expects List, bytes, Source, or str".into()),
+        },
+    };
     match value {
         Value::List(items, kind) => {
             let section = items.get(start..end).ok_or("slice out of range")?;

@@ -409,7 +409,10 @@ impl Expr {
             ExprKind::Index(left, right) | ExprKind::Binary(left, _, right) => {
                 left.depth.max(right.depth)
             }
-            ExprKind::Slice(value, start, end) => value.depth.max(start.depth).max(end.depth),
+            ExprKind::Slice(value, start, end) => value
+                .depth
+                .max(start.as_ref().map_or(0, |part| part.depth))
+                .max(end.as_ref().map_or(0, |part| part.depth)),
             ExprKind::Field(value, _)
             | ExprKind::Neg(value)
             | ExprKind::BitNot(value)
@@ -454,7 +457,7 @@ pub enum ExprKind {
     Var(String),
     List(Vec<Expr>),
     Index(Box<Expr>, Box<Expr>),
-    Slice(Box<Expr>, Box<Expr>, Box<Expr>),
+    Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>),
     Field(Box<Expr>, String),
     Call(String, Vec<Expr>),
     MethodCall(Box<Expr>, String, Vec<Expr>),
@@ -1288,13 +1291,21 @@ impl Parser {
             }
             if self.current().kind == TokenKind::LBracket {
                 self.bump();
-                let index = self.expr(0)?;
+                let start = if self.current().kind == TokenKind::Colon {
+                    None
+                } else {
+                    Some(Box::new(self.expr(0)?))
+                };
                 if self.current().kind == TokenKind::Colon {
                     self.bump();
-                    let end = self.expr(0)?;
+                    let end = if self.current().kind == TokenKind::RBracket {
+                        None
+                    } else {
+                        Some(Box::new(self.expr(0)?))
+                    };
                     self.expect(TokenKind::RBracket)?;
                     left = Expr::new(
-                        ExprKind::Slice(Box::new(left), Box::new(index), Box::new(end)),
+                        ExprKind::Slice(Box::new(left), start, end),
                         token.line,
                         token.col,
                     )?;
@@ -1302,7 +1313,7 @@ impl Parser {
                 }
                 self.expect(TokenKind::RBracket)?;
                 left = Expr::new(
-                    ExprKind::Index(Box::new(left), Box::new(index)),
+                    ExprKind::Index(Box::new(left), start.expect("index expression exists")),
                     token.line,
                     token.col,
                 )?;
@@ -1690,8 +1701,12 @@ fn rewrite_import_references(expr: &mut Expr, calls: &HashMap<&str, &str>) {
         }
         ExprKind::Slice(value, start, end) => {
             rewrite_import_references(value, calls);
-            rewrite_import_references(start, calls);
-            rewrite_import_references(end, calls);
+            if let Some(start) = start {
+                rewrite_import_references(start, calls);
+            }
+            if let Some(end) = end {
+                rewrite_import_references(end, calls);
+            }
         }
         ExprKind::Var(name) => {
             if let Some(qualified) = calls.get(name.as_str()) {

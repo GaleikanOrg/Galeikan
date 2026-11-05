@@ -29,6 +29,9 @@ pub enum Instruction {
     MakeList(usize),
     Index,
     Slice,
+    SliceFrom,
+    SliceTo,
+    SliceAll,
     Field(String),
     JumpIfFalse(usize),
     Jump(usize),
@@ -84,6 +87,8 @@ impl Program {
                 Instruction::MakeList(_) => return Err("bytecode list limit exceeded".into()),
                 Instruction::Index => (2, 1),
                 Instruction::Slice => (3, 1),
+                Instruction::SliceFrom | Instruction::SliceTo => (2, 1),
+                Instruction::SliceAll => (1, 1),
                 Instruction::JumpIfFalse(_) => (1, 0),
                 Instruction::Jump(_) => (0, 0),
             };
@@ -153,9 +158,18 @@ fn emit(expr: &Expr, out: &mut Vec<Instruction>) {
         }
         ExprKind::Slice(value, start, end) => {
             emit(value, out);
-            emit(start, out);
-            emit(end, out);
-            out.push(Instruction::Slice);
+            if let Some(start) = start {
+                emit(start, out);
+            }
+            if let Some(end) = end {
+                emit(end, out);
+            }
+            out.push(match (start.is_some(), end.is_some()) {
+                (true, true) => Instruction::Slice,
+                (true, false) => Instruction::SliceFrom,
+                (false, true) => Instruction::SliceTo,
+                (false, false) => Instruction::SliceAll,
+            });
         }
         ExprKind::Field(value, field) => {
             emit(value, out);
