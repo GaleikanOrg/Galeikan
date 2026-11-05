@@ -1707,9 +1707,7 @@ impl Codegen {
                 Err("std.syscall functions must be called directly".into())
             }
             Some(NativeImport::Net) => Err("std.net functions must be called directly".into()),
-            Some(NativeImport::Iter) => {
-                Err("std.iter.range is available natively only as a for iterable".into())
-            }
+            Some(NativeImport::Iter) => Err("std.iter functions must be called directly".into()),
             Some(NativeImport::Cli) => Err("std.cli functions must be called directly".into()),
             Some(NativeImport::List) => Err("std.list functions must be called directly".into()),
             Some(NativeImport::Result) => {
@@ -3666,6 +3664,7 @@ impl Codegen {
                     return self.syscall_call(function, args, caller_scope)
                 }
                 Some(NativeImport::Net) => return self.net_call(function, args, caller_scope),
+                Some(NativeImport::Iter) => return self.iter_call(function, args, caller_scope),
                 Some(NativeImport::Cli) => return self.cli_call(function, args, caller_scope),
                 Some(NativeImport::List) => return self.list_call(function, args, caller_scope),
                 Some(NativeImport::Result) => {
@@ -6585,6 +6584,39 @@ impl Codegen {
         let result_slot = self.reserve_slot()?;
         writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), value_slot * 8, begin_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
         Ok(Scalar::Str)
+    }
+
+    fn iter_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        if name != "range" || !(1..=2).contains(&args.len()) {
+            return Err(format!(
+                "unknown native iter function or wrong arguments: {name}"
+            ));
+        }
+        let start_slot = self.reserve_slot()?;
+        let end_slot = self.reserve_slot()?;
+        if args.len() == 2 {
+            if self.expr(&args[0], scope)? != Scalar::Int {
+                return Err("range start must be i64".into());
+            }
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", start_slot * 8).unwrap();
+        } else {
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], 0", start_slot * 8).unwrap();
+        }
+        if self.expr(args.last().expect("range has an end"), scope)? != Scalar::Int {
+            return Err("range end must be i64".into());
+        }
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", end_slot * 8).unwrap();
+        let empty = self.label();
+        let ready = self.label();
+        let copy = self.label();
+        let done = self.label();
+        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_range_start\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_range_end\n    cmp r10, rax\n    jle {empty}\n    sub r10, rax\n    cmp r10, {MAX_RANGE_ITEMS}\n    jg gak_range_limit\n    mov rax, r10\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n    mov rcx, QWORD PTR [rax]\n{copy}:\n    cmp r11, rcx\n    jae {done}\n    mov QWORD PTR [rax+r11*8+8], r10\n    inc r10\n    inc r11\n    jmp {copy}\n{done}:", start_slot * 8, end_slot * 8, start_slot * 8).unwrap();
+        Ok(Scalar::Offsets)
     }
 
     fn list_call(

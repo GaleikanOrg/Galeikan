@@ -10171,3 +10171,99 @@ print message(negative_end(text))
         assert_eq!(native.stdout, expected);
     }
 }
+
+#[test]
+fn native_iter_range_is_a_first_class_offsets_value() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "range-values.gaks",
+        r#"from std.iter import range
+from std.result import is_error, message
+var calls = 0
+fn lower() -> i64 {
+    calls = calls + 1
+    return 2
+}
+fn upper() -> i64 {
+    calls = calls + 1
+    return 5
+}
+fn bad_start() -> Result<Offsets> = range(-1, 2)
+fn bad_end() -> Result<Offsets> = range(-1)
+fn too_many() -> Result<Offsets> = range(0, 100001)
+let values: Offsets = range(lower(), upper())
+var total = 0
+let high = range(9223372036854775806, 9223372036854775807)
+for value in values {
+    total = total + value
+}
+print len(values)
+print total
+print calls
+print len(range(5, 2))
+print len(range(100000))
+for value in high {
+    print value
+}
+print is_error(bad_start())
+print is_error(bad_end())
+print is_error(too_many())
+print message(bad_start())
+print message(bad_end())
+print message(too_many())
+"#,
+    );
+    let expected = b"3\n9\n2\n0\n100000\n9223372036854775806\ntrue\ntrue\ntrue\nrange start must not be negative\nrange end must not be negative\nrange exceeds 100000 items\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
