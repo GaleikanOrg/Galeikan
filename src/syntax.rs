@@ -1787,6 +1787,7 @@ fn valid_binding_name(name: &str) -> bool {
                 | "impact"
                 | "i64"
                 | "u64"
+                | "len"
         )
 }
 

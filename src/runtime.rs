@@ -4798,6 +4798,21 @@ impl Runtime {
                 _ => Err(format!("{name} expects i64 or u64")),
             };
         }
+        if name == "len" {
+            let [value] = args.as_slice() else {
+                return Err("len expects 1 argument".into());
+            };
+            let length = match value {
+                Value::List(items, _) => items.len(),
+                Value::Offsets(offsets) => offsets.len(),
+                Value::Regions(regions) => regions.len(),
+                Value::Bytes(bytes) => bytes.len(),
+                Value::Source(source) => source.bytes().len(),
+                Value::Str(text) => text.chars().count(),
+                _ => return Err("len expects List, Offsets, Regions, bytes, Source, or str".into()),
+            };
+            return Ok(Value::Int(length as i64));
+        }
         if let Some(record) = module.records.get(name) {
             if args.len() != record.fields.len() {
                 return Err(format!("{name} expects {} arguments", record.fields.len()));
@@ -7959,6 +7974,26 @@ fn check_function_call(module: &Module, name: &str, args: &[Type]) -> Result<Typ
             return Err(format!("{name} expects i64 or u64, got {value}"));
         }
         return Ok(if name == "i64" { Type::Int } else { Type::UInt });
+    }
+    if name == "len" {
+        let [value] = args else {
+            return Err("len expects 1 argument".into());
+        };
+        if !matches!(
+            value,
+            Type::List(_)
+                | Type::Offsets
+                | Type::Regions
+                | Type::Bytes
+                | Type::Source
+                | Type::Str
+                | Type::Any
+        ) {
+            return Err(format!(
+                "len expects List, Offsets, Regions, bytes, Source, or str, got {value}"
+            ));
+        }
+        return Ok(Type::Int);
     }
     if let Some(record) = module.records.get(name) {
         check_arguments(

@@ -118,6 +118,6 @@
     "constants": { "patterns": [{ "name": "constant.language.galeikan", "match": "\\b(?:true|false)\\b" }] },
     "numbers": { "patterns": [{ "name": "constant.numeric.galeikan", "match": "\\b(?:0x[0-9A-Fa-f]+|[0-9]+)(?:u64)?\\b" }] },
     "calls": { "patterns": [{ "name": "entity.name.function.call.galeikan", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" }] },
-    "operators": { "patterns": [{ "name": "keyword.operator.galeikan", "match": ">>>|<<|>>|->|=>|==|!=|<=|>=|[+*/%=<>?~&|^-]" }] }
+    "operators": { "patterns": [{ "name": "keyword.operator.galeikan", "match": ">>>|<<|>>|->|=>|==|!=|<=|>=|[+*/%=<>?~&|^:-]" }] }
   }
 }

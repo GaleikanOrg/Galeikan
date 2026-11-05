@@ -3604,6 +3604,31 @@ impl Codegen {
         args: &[Expr],
         caller_scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if name == "len" {
+            let [value] = args else {
+                return Err("len expects 1 argument".into());
+            };
+            match self.expr(value, caller_scope)? {
+                Scalar::Bytes => self.code.push_str("    mov rax, QWORD PTR [rax]\n"),
+                Scalar::Source => self.code.push_str(
+                    "    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    mov rax, r10\n",
+                ),
+                Scalar::Str => {
+                    self.uses_text = true;
+                    writeln!(self.code, "    mov {}, rax\n    call gak_native_text_length", self.arg0())
+                        .unwrap();
+                }
+                kind if kind.element().is_some()
+                    || matches!(kind, Scalar::ListEmpty | Scalar::Offsets | Scalar::Regions) =>
+                {
+                    self.code.push_str("    mov rax, QWORD PTR [rax]\n");
+                }
+                _ => {
+                    return Err("len expects List, Offsets, Regions, bytes, Source, or str".into())
+                }
+            }
+            return Ok(Scalar::Int);
+        }
         if matches!(name, "i64" | "u64") {
             let [value] = args else {
                 return Err(format!("{name} expects 1 argument"));

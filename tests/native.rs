@@ -14,9 +14,9 @@ fn process_references_advance_within_region_across_engines() {
     let s = Sandbox::new();
     let script = s.write(
         "process-reference.gak",
-        "requires { process.inspect }\nimport std.process\nfrom std.result import is_error\nlet region = process.at(process.images(process.self_pid()), 0)\nlet first = process.reference(region, process.address_u64(region, 0))\nlet next = process.advance_ref(region, first, 1)\nfn before_start() -> Result<str> = process.advance_ref(region, first, -1)\nfn past_end() -> Result<str> = process.advance_ref(region, first, 9223372036854775807)\nfn foreign() -> Result<str> = process.advance_ref(region, \"wrong\", 1)\nprint process.resolve(region, next) == process.address_u64(region, 1)\nprint process.advance_ref(region, next, -1) == first\nprint process.advance_ref(region, first + \"00000000000000000\", 0) == first\nprint is_error(before_start())\nprint is_error(past_end())\nprint is_error(foreign())\n",
+        "requires { process.inspect }\nimport std.process\nfrom std.result import is_error\nlet regions = process.images(process.self_pid())\nlet region = process.at(regions, 0)\nlet first = process.reference(region, process.address_u64(region, 0))\nlet next = process.advance_ref(region, first, 1)\nfn before_start() -> Result<str> = process.advance_ref(region, first, -1)\nfn past_end() -> Result<str> = process.advance_ref(region, first, 9223372036854775807)\nfn foreign() -> Result<str> = process.advance_ref(region, \"wrong\", 1)\nprint len(regions) == process.count(regions)\nprint process.resolve(region, next) == process.address_u64(region, 1)\nprint process.advance_ref(region, next, -1) == first\nprint process.advance_ref(region, first + \"00000000000000000\", 0) == first\nprint is_error(before_start())\nprint is_error(past_end())\nprint is_error(foreign())\n",
     );
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
@@ -9764,6 +9764,80 @@ print message(too_deep(deep))
 "#,
     );
     let expected = b"7f80\ntrue\n007f80ff\n2\n128\n255\n80ff\n0\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nslice out of range\nslice start must not be negative\nslice end must not be negative\nslice out of range\nLimitExceeded: Source derivation depth exceeds 64\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
+fn builtin_len_agrees_across_modes_for_text_lists_bytes_and_views() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "builtin-len.gak",
+        r#"from std.binary import snapshot, hunt
+let data = hex"00 7f 80 ff"
+let source = snapshot(data)
+print len("")
+print len("Aλ😀Z")
+print len([])
+print len([10, 20, 30])
+print len(data)
+print len(data[1:3])
+print len(source)
+print len(source[1:4][1:3])
+print len(hunt(snapshot(hex"00 00 00"), hex"00 00"))
+"#,
+    );
+    let expected = b"0\n4\n0\n3\n4\n2\n4\n2\n2\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
