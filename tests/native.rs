@@ -9891,3 +9891,86 @@ print len(hunt(snapshot(hex"00 00 00"), hex"00 00"))
         assert_eq!(native.stdout, expected);
     }
 }
+
+#[test]
+fn list_slices_preserve_types_and_bounds_across_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "list-slices.gaks",
+        r#"from std.list import append
+from std.bytes import to_hex
+from std.result import is_error, message
+fn reverse(items: List<i64>) -> Result<List<i64>> = items[3:2]
+fn negative(items: List<i64>) -> Result<List<i64>> = items[-1:1]
+fn past_end(items: List<i64>) -> Result<List<i64>> = items[0:5]
+let items: List<i64> = [10, 20, 30, 40]
+let blobs: List<bytes> = [hex"00", hex"ff"]
+print items[1:3][0]
+print items[1:3][1]
+print len(items[4:4])
+print append(items[0:0], 9)[0]
+print len([][0:0])
+print to_hex(blobs[1:2][0])
+print items[1]
+print is_error(reverse(items))
+print is_error(negative(items))
+print is_error(past_end(items))
+print message(reverse(items))
+print message(negative(items))
+print message(past_end(items))
+"#,
+    );
+    let expected = b"20\n30\n0\n9\n0\nff\n20\ntrue\ntrue\ntrue\nslice out of range\nslice start must not be negative\nslice out of range\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}

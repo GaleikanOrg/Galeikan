@@ -4013,10 +4013,10 @@ impl Runtime {
                     require_type(Type::Int, self.infer_expr(module, locals, globals, end)?)
                         .map_err(&error)?;
                     match value_type {
-                        Type::Bytes | Type::Source | Type::Any => value_type,
+                        Type::List(_) | Type::Bytes | Type::Source | Type::Any => value_type,
                         _ => {
                             return Err(error(format!(
-                                "slicing expects bytes or Source, got {value_type}"
+                                "slicing expects List, bytes, or Source, got {value_type}"
                             )))
                         }
                     }
@@ -7761,6 +7761,10 @@ fn slice_value(value: Value, start: Value, end: Value) -> Result<Value, String> 
     let start = usize::try_from(start.as_int()?).map_err(|_| "slice start must not be negative")?;
     let end = usize::try_from(end.as_int()?).map_err(|_| "slice end must not be negative")?;
     match value {
+        Value::List(items, kind) => {
+            let section = items.get(start..end).ok_or("slice out of range")?;
+            Ok(Value::List(Arc::new(section.to_vec()), kind))
+        }
         Value::Bytes(bytes) => {
             let section = bytes.get(start..end).ok_or("slice out of range")?;
             Ok(Value::Bytes(Arc::new(section.to_vec())))
@@ -7771,7 +7775,7 @@ fn slice_value(value: Value, start: Value, end: Value) -> Result<Value, String> 
             }
             Ok(Value::Source(Arc::new(Source::view(source, start, end)?)))
         }
-        _ => Err("slicing expects bytes or Source".into()),
+        _ => Err("slicing expects List, bytes, or Source".into()),
     }
 }
 

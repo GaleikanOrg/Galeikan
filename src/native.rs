@@ -7009,8 +7009,10 @@ impl Codegen {
             }
             ExprKind::Slice(value, start, end) => {
                 let kind = self.expr(value, scope)?;
-                if !matches!(kind, Scalar::Bytes | Scalar::Source) {
-                    return Err("native slicing expects bytes or Source".into());
+                if !matches!(kind, Scalar::Bytes | Scalar::Source | Scalar::ListEmpty)
+                    && kind.element().is_none()
+                {
+                    return Err("native slicing expects List, bytes, or Source".into());
                 }
                 let value_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
@@ -7025,8 +7027,20 @@ impl Codegen {
                 writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_slice_start\n    test rax, rax\n    js gak_slice_end\n    cmp r10, rax\n    ja gak_slice_bounds\n    mov r11, QWORD PTR [rbp-{}]", start_slot * 8, value_slot * 8).unwrap();
                 if kind == Scalar::Bytes {
                     self.code.push_str("    cmp rax, QWORD PTR [r11]\n    ja gak_slice_bounds\n    mov rdx, r10\n    mov r10, rax\n    sub r10, rdx\n    mov rax, r11\n    call gak_bytes_extract\n");
-                } else {
+                } else if kind == Scalar::Source {
                     self.code.push_str("    mov r9, QWORD PTR [r11+24]\n    sub r9, QWORD PTR [r11+16]\n    cmp rax, r9\n    ja gak_slice_bounds\n    mov rdx, r11\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    add r10, QWORD PTR [rdx+16]\n    mov r11, rax\n    add r11, QWORD PTR [rdx+16]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n");
+                } else {
+                    self.code.push_str("    cmp rax, QWORD PTR [r11]\n    ja gak_slice_bounds\n    sub rax, r10\n    call gak_alloc_list\n");
+                    let result_slot = self.reserve_slot()?;
+                    writeln!(
+                        self.code,
+                        "    mov QWORD PTR [rbp-{}], rax",
+                        result_slot * 8
+                    )
+                    .unwrap();
+                    let copy = self.label();
+                    let done = self.label();
+                    writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r9, QWORD PTR [rbp-{}]\n    mov rcx, QWORD PTR [r10]\n    xor r8d, r8d\n{copy}:\n    cmp r8, rcx\n    jae {done}\n    mov rax, QWORD PTR [r11+r9*8+8]\n    mov QWORD PTR [r10+r8*8+8], rax\n    inc r8\n    inc r9\n    jmp {copy}\n{done}:\n    mov rax, r10", result_slot * 8, value_slot * 8, start_slot * 8).unwrap();
                 }
                 Ok(kind)
             }
