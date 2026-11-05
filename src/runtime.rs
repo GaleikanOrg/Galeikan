@@ -5687,6 +5687,19 @@ impl Runtime {
                 .collect();
                 Ok(Value::Regions(Arc::new(regions)))
             }
+            ("hunt_region", [Value::Region(region), Value::Bytes(pattern), offset, length]) => {
+                self.check_effect(module, "process.inspect")?;
+                if !self.allowed_processes.contains(&region.pid) {
+                    return Err(format!("process access not allowed: {}", region.pid));
+                }
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "region offset out of range")?;
+                let length = usize::try_from(length.as_int()?)
+                    .map_err(|_| "region length out of range")?;
+                Ok(Value::Offsets(process::hunt_region(
+                    region, pattern, offset, length,
+                )?))
+            }
             ("count", [Value::Regions(regions)]) => Ok(Value::Int(
                 i64::try_from(regions.len()).map_err(|_| "region count out of range")?,
             )),
@@ -8630,6 +8643,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "access" | "label") => (&[Region], Str),
         ("process", "image_backed") => (&[Region], Type::Bool),
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),
+        ("process", "hunt_region") => (&[Region, Bytes, Int, Int], Offsets),
         ("process", "snapshot_ref") => (&[Region, Str, Int], Source),
         ("process", "snapshot_at") => (&[Regions, Int, Int], Source),
         ("process", "snapshot_at_u64") => (&[Regions, UInt, Int], Source),

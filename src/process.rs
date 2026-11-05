@@ -5,6 +5,9 @@ pub const MAX_READ: usize = 1024 * 1024;
 pub const MAX_REGIONS: usize = 50_000;
 pub const MAX_THREADS: usize = 50_000;
 pub const MAX_CHILDREN: usize = 50_000;
+pub const MAX_SCAN: usize = 16 * 1024 * 1024;
+pub const MAX_SCAN_PATTERN: usize = 4096;
+pub const MAX_SCAN_HITS: usize = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct Region {
@@ -103,6 +106,70 @@ pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
         .into_iter()
         .filter(|region| region.access.as_bytes().get(1) == Some(&b'w'))
         .collect())
+}
+
+pub fn hunt_region(
+    region: &Region,
+    pattern: &[u8],
+    offset: usize,
+    length: usize,
+) -> Result<Vec<usize>, String> {
+    if pattern.is_empty() || pattern.len() > MAX_SCAN_PATTERN {
+        return Err(format!(
+            "process search pattern must contain 1..{MAX_SCAN_PATTERN} bytes"
+        ));
+    }
+    if length > MAX_SCAN {
+        return Err(format!("process scan length exceeds {MAX_SCAN} bytes"));
+    }
+    if offset > region.size
+        || length > region.size - offset
+        || offset
+            .checked_add(length)
+            .and_then(|end| i64::try_from(end).ok())
+            .is_none()
+    {
+        return Err("search exceeds region boundaries".into());
+    }
+    if !region.access.starts_with('r') {
+        return Err("region is not marked readable".into());
+    }
+    let mut prefix = vec![0; pattern.len()];
+    for index in 1..pattern.len() {
+        let mut matched = prefix[index - 1];
+        while matched > 0 && pattern[index] != pattern[matched] {
+            matched = prefix[matched - 1];
+        }
+        if pattern[index] == pattern[matched] {
+            matched += 1;
+        }
+        prefix[index] = matched;
+    }
+    let mut hits = Vec::new();
+    let mut matched = 0;
+    let mut scanned = 0;
+    while scanned < length {
+        let count = (length - scanned).min(MAX_READ);
+        let address = region.address_of(offset + scanned)?;
+        let bytes = snapshot(region.pid, address, count)?;
+        for (index, &byte) in bytes.iter().enumerate() {
+            while matched > 0 && byte != pattern[matched] {
+                matched = prefix[matched - 1];
+            }
+            if byte == pattern[matched] {
+                matched += 1;
+            }
+            if matched == pattern.len() {
+                hits.push(offset + scanned + index + 1 - pattern.len());
+                if hits.len() > MAX_SCAN_HITS {
+                    return Err(format!("process search exceeds {MAX_SCAN_HITS} matches"));
+                }
+                matched = prefix[matched - 1];
+            }
+        }
+        scanned += count;
+    }
+    Ok(hits)
 }
 
 /// Paths of executable, image-backed mappings in address order, once per path.
@@ -823,7 +890,8 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::{
-        executable, module_paths, regions, snapshot, thread_ids, writable_regions, Region, MAX_READ,
+        executable, hunt_region, module_paths, regions, snapshot, thread_ids, writable_regions,
+        Region, MAX_READ, MAX_SCAN,
     };
 
     #[test]
@@ -884,6 +952,45 @@ mod tests {
         assert!(maps
             .iter()
             .any(|region| { region.contains(address) && region.access.starts_with('r') }));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn region_search_spans_read_chunks_and_checks_limits() {
+        let mut data = vec![0_u8; MAX_READ + 32];
+        let needle = b"GAK!";
+        data[MAX_READ - 2..MAX_READ + 2].copy_from_slice(needle);
+        data[MAX_READ + 10..MAX_READ + 14].copy_from_slice(needle);
+        let region = Region {
+            pid: std::process::id(),
+            start: data.as_ptr() as usize,
+            size: data.len(),
+            access: "rw-".into(),
+            label: "test allocation".into(),
+            image_backed: false,
+        };
+        assert_eq!(
+            hunt_region(&region, needle, 0, data.len()).unwrap(),
+            [MAX_READ - 2, MAX_READ + 10]
+        );
+        assert_eq!(
+            hunt_region(&region, needle, MAX_READ - 2, needle.len()).unwrap(),
+            [MAX_READ - 2]
+        );
+        assert!(hunt_region(&region, b"", 0, 4).is_err());
+        assert!(hunt_region(&region, needle, 0, MAX_SCAN + 1).is_err());
+        assert!(hunt_region(&region, needle, data.len(), 1).is_err());
+        assert!(hunt_region(
+            &Region {
+                access: "---".into(),
+                ..region.clone()
+            },
+            needle,
+            0,
+            4
+        )
+        .is_err());
+        assert!(hunt_region(&region, &[0], 0, 10_001).is_err());
     }
 
     #[cfg(any(target_os = "linux", windows))]

@@ -4162,6 +4162,22 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::Str)
             }
+            ("hunt_region", [_, _, _, _]) => {
+                let expected = [Scalar::Region, Scalar::Bytes, Scalar::Int, Scalar::Int];
+                let mut slots = Vec::with_capacity(4);
+                for (argument, kind) in args.iter().zip(expected) {
+                    if self.expr(argument, scope)? != kind {
+                        return Err("process.hunt_region expects Region, bytes, i64, i64".into());
+                    }
+                    let slot = self.reserve_slot()?;
+                    writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                    slots.push(slot);
+                }
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_process_hunt_region", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), slots[3] * 8).unwrap();
+                self.process_checked_result();
+                self.uses_process = true;
+                Ok(Scalar::Offsets)
+            }
             (
                 "snapshot_region" | "snapshot_ref" | "snapshot_at" | "snapshot_at_u64",
                 [owner, address, length],

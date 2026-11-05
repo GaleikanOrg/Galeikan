@@ -32,6 +32,9 @@
 #define GAK_MAX_THREADS 50000
 #define GAK_MAX_CHILDREN 50000
 #define GAK_MAX_MAP_BYTES (16u * 1024u * 1024u)
+#define GAK_MAX_SCAN (16u * 1024u * 1024u)
+#define GAK_MAX_SCAN_PATTERN 4096u
+#define GAK_MAX_SCAN_HITS 10000u
 
 extern uint64_t gak_argc;
 extern void *gak_argv;
@@ -1721,6 +1724,117 @@ metadata_failed:
     free(result->origin);
     free(result);
     gak_failf("native allocation failed");
+    return NULL;
+}
+
+uint64_t *gak_native_process_hunt_region(GakRegion *region,
+                                         const uint8_t *pattern,
+                                         int64_t offset, int64_t length) {
+    gak_file_error = NULL;
+    if (!region || !pattern) {
+        gak_failf("invalid process search arguments");
+        return NULL;
+    }
+    if (!gak_process_allowed((uint32_t)region->pid)) {
+        gak_failf("process access not allowed: %llu", (unsigned long long)region->pid);
+        return NULL;
+    }
+    uint64_t pattern_length;
+    memcpy(&pattern_length, pattern, sizeof(pattern_length));
+    if (!pattern_length || pattern_length > GAK_MAX_SCAN_PATTERN) {
+        gak_failf("process search pattern must contain 1..4096 bytes");
+        return NULL;
+    }
+    if (offset < 0) { gak_failf("region offset out of range"); return NULL; }
+    if (length < 0) { gak_failf("region length out of range"); return NULL; }
+    if (length > GAK_MAX_SCAN) {
+        gak_failf("process scan length exceeds 16777216 bytes");
+        return NULL;
+    }
+    if ((uint64_t)offset > region->size ||
+        (uint64_t)length > region->size - (uint64_t)offset ||
+        offset > INT64_MAX - length) {
+        gak_failf("search exceeds region boundaries");
+        return NULL;
+    }
+    if (region->access[8] != 'r') {
+        gak_failf("region is not marked readable");
+        return NULL;
+    }
+    const uint8_t *needle = pattern + 8;
+    uint16_t prefix[GAK_MAX_SCAN_PATTERN] = {0};
+    for (uint64_t index = 1; index < pattern_length; index++) {
+        uint16_t matched = prefix[index - 1];
+        while (matched && needle[index] != needle[matched])
+            matched = prefix[matched - 1];
+        if (needle[index] == needle[matched]) matched++;
+        prefix[index] = matched;
+    }
+    size_t capacity = 16;
+    if (!gak_account_metadata((capacity + 1) * sizeof(uint64_t))) {
+        gak_failf("native metadata memory exceeds 64 MiB");
+        return NULL;
+    }
+    uint64_t *hits = malloc((capacity + 1) * sizeof(uint64_t));
+    if (!hits) { gak_failf("native allocation failed"); return NULL; }
+    uint64_t hit_count = 0;
+    uint16_t matched = 0;
+    uint64_t scanned = 0;
+    GakFileResult *chunk = NULL;
+    while (scanned < (uint64_t)length) {
+        uint64_t count = (uint64_t)length - scanned;
+        if (count > 1048576) count = 1048576;
+        uint64_t relative = (uint64_t)offset + scanned;
+        if (region->start > UINTPTR_MAX - relative) {
+            gak_failf("process region address overflow");
+            goto failed;
+        }
+        chunk = gak_native_process_snapshot(region->pid, region->start + relative, count);
+        if (!chunk) goto failed;
+        const uint8_t *bytes = chunk->backing + 8;
+        for (uint64_t index = 0; index < count; index++) {
+            while (matched && bytes[index] != needle[matched])
+                matched = prefix[matched - 1];
+            if (bytes[index] == needle[matched]) matched++;
+            if (matched == pattern_length) {
+                if (hit_count == GAK_MAX_SCAN_HITS) {
+                    gak_failf("process search exceeds 10000 matches");
+                    goto failed;
+                }
+                if (hit_count == capacity) {
+                    size_t next = capacity * 2;
+                    if (next > GAK_MAX_SCAN_HITS) next = GAK_MAX_SCAN_HITS;
+                    if (!gak_account_metadata((next - capacity) * sizeof(uint64_t))) {
+                        gak_failf("native metadata memory exceeds 64 MiB");
+                        goto failed;
+                    }
+                    uint64_t *grown = realloc(hits, (next + 1) * sizeof(uint64_t));
+                    if (!grown) { gak_failf("native allocation failed"); goto failed; }
+                    hits = grown;
+                    capacity = next;
+                }
+                hits[hit_count + 1] = (uint64_t)offset + scanned + index + 1 - pattern_length;
+                hit_count++;
+                matched = prefix[matched - 1];
+            }
+        }
+        free(chunk->backing);
+        free(chunk->label);
+        free(chunk->origin);
+        free(chunk);
+        chunk = NULL;
+        scanned += count;
+    }
+    hits[0] = hit_count;
+    return hits;
+failed:
+    if (chunk) {
+        free(chunk->backing);
+        free(chunk->label);
+        free(chunk->origin);
+        free(chunk);
+    }
+    free(hits);
     return NULL;
 }
 
