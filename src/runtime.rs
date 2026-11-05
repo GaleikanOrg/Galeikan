@@ -3999,9 +3999,10 @@ impl Runtime {
                         Type::List(Some(kind)) => kind.as_type(),
                         Type::List(None) | Type::Any => Type::Any,
                         Type::Bytes | Type::Source => Type::Int,
+                        Type::Str => Type::Str,
                         _ => {
                             return Err(error(format!(
-                                "indexing expects List, bytes, or Source, got {list_type}"
+                                "indexing expects List, bytes, Source, or str, got {list_type}"
                             )))
                         }
                     }
@@ -4013,10 +4014,12 @@ impl Runtime {
                     require_type(Type::Int, self.infer_expr(module, locals, globals, end)?)
                         .map_err(&error)?;
                     match value_type {
-                        Type::List(_) | Type::Bytes | Type::Source | Type::Any => value_type,
+                        Type::List(_) | Type::Bytes | Type::Source | Type::Str | Type::Any => {
+                            value_type
+                        }
                         _ => {
                             return Err(error(format!(
-                                "slicing expects List, bytes, or Source, got {value_type}"
+                                "slicing expects List, bytes, Source, or str, got {value_type}"
                             )))
                         }
                     }
@@ -7753,7 +7756,12 @@ fn index_value(value: Value, index: Value) -> Result<Value, String> {
                 *source.bytes().get(index).ok_or("byte index out of range")?,
             )))
         }
-        _ => Err("indexing expects List, bytes, or Source".into()),
+        Value::Str(text) => {
+            let index = usize::try_from(index).map_err(|_| "text index out of range")?;
+            let character = text.chars().nth(index).ok_or("text index out of range")?;
+            Ok(Value::Str(character.to_string()))
+        }
+        _ => Err("indexing expects List, bytes, Source, or str".into()),
     }
 }
 
@@ -7775,7 +7783,20 @@ fn slice_value(value: Value, start: Value, end: Value) -> Result<Value, String> 
             }
             Ok(Value::Source(Arc::new(Source::view(source, start, end)?)))
         }
-        _ => Err("slicing expects List, bytes, or Source".into()),
+        Value::Str(text) => {
+            let boundary = |index| {
+                text.char_indices()
+                    .map(|(offset, _)| offset)
+                    .chain(std::iter::once(text.len()))
+                    .nth(index)
+                    .ok_or("slice out of range")
+            };
+            let section = text
+                .get(boundary(start)?..boundary(end)?)
+                .ok_or("slice out of range")?;
+            Ok(Value::Str(section.to_owned()))
+        }
+        _ => Err("slicing expects List, bytes, Source, or str".into()),
     }
 }
 

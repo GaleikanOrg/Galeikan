@@ -9974,3 +9974,95 @@ print message(past_end(items))
         assert_eq!(native.stdout, expected);
     }
 }
+
+#[test]
+fn text_index_and_slices_use_unicode_characters_across_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "text-slices.gak",
+        r#"from std.result import is_error, message
+fn reverse(text: str) -> Result<str> = text[3:2]
+fn negative_start(text: str) -> Result<str> = text[-1:1]
+fn negative_end(text: str) -> Result<str> = text[0:-1]
+fn past_end(text: str) -> Result<str> = text[0:5]
+fn index_negative(text: str) -> Result<str> = text[-1]
+fn index_past_end(text: str) -> Result<str> = text[4]
+let text = "Aλ😀Z"
+print text[0]
+print text[1]
+print text[2]
+print text[0:1]
+print text[1:3]
+print text[1:4][1:2]
+print text[4:4] == ""
+print len(text[1:3])
+print "A\0B"[1:2] == "\0"
+print "A\0B"[1] == "\0"
+print is_error(reverse(text))
+print is_error(negative_start(text))
+print is_error(negative_end(text))
+print is_error(past_end(text))
+print is_error(index_negative(text))
+print is_error(index_past_end(text))
+print message(reverse(text))
+print message(negative_start(text))
+print message(negative_end(text))
+print message(past_end(text))
+print message(index_negative(text))
+print message(index_past_end(text))
+"#,
+    );
+    let expected = "A\nλ\n😀\nA\nλ😀\n😀\ntrue\n2\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nslice out of range\nslice start must not be negative\nslice end must not be negative\nslice out of range\ntext index out of range\ntext index out of range\n".as_bytes();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}

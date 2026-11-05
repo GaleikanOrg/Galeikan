@@ -288,6 +288,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_range_limit", "range exceeds 100000 items"),
     ("gak_loop_limit", "loop exceeds 100000 items"),
     ("gak_list_index", "list index out of range"),
+    ("gak_text_index", "text index out of range"),
     ("gak_cli_index", "argument index out of range"),
     ("gak_process_address_range", "process address out of range"),
     ("gak_process_length_range", "process length out of range"),
@@ -6561,18 +6562,29 @@ impl Codegen {
                 if self.expr(count, scope)? != Scalar::Int {
                     return Err("text.slice expects str, i64, i64".into());
                 }
-                let length_slot = self.reserve_slot()?;
-                let begin_slot = self.reserve_slot()?;
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    lea {}, [rbp-{}]\n    call gak_native_text_slice_bounds\n    test eax, eax\n    jz gak_text_slice_range", self.arg0(), value_slot * 8, self.arg1(), start_slot * 8, self.arg2(), self.arg3(), begin_slot * 8).unwrap();
-                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    cmp r11, 67108856\n    ja gak_str_limit\n    lea r8, [r11+8]\n    mov r9, QWORD PTR [rip+gak_str_bytes]\n    add r9, r8\n    jc gak_str_limit\n    cmp r9, 67108864\n    ja gak_str_limit\n    mov rax, r11\n    call gak_alloc_str", length_slot * 8).unwrap();
-                let result_slot = self.reserve_slot()?;
-                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), value_slot * 8, begin_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
-                Ok(Scalar::Str)
+                self.emit_text_slice(value_slot, start_slot, "gak_text_slice_range")
             }
             _ => Err(format!(
                 "unknown native text function or wrong arguments: {name}"
             )),
         }
+    }
+
+    fn emit_text_slice(
+        &mut self,
+        value_slot: usize,
+        start_slot: usize,
+        bounds_error: &str,
+    ) -> Result<Scalar, String> {
+        self.uses_text = true;
+        let count_slot = self.reserve_slot()?;
+        let length_slot = self.reserve_slot()?;
+        let begin_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rbp-{}]\n    call gak_native_text_slice_bounds\n    test eax, eax\n    jz {bounds_error}", count_slot * 8, self.arg0(), value_slot * 8, self.arg1(), start_slot * 8, self.arg2(), count_slot * 8, self.arg3(), begin_slot * 8).unwrap();
+        writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    cmp r11, 67108856\n    ja gak_str_limit\n    lea r8, [r11+8]\n    mov r9, QWORD PTR [rip+gak_str_bytes]\n    add r9, r8\n    jc gak_str_limit\n    cmp r9, 67108864\n    ja gak_str_limit\n    mov rax, r11\n    call gak_alloc_str", length_slot * 8).unwrap();
+        let result_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), value_slot * 8, begin_slot * 8, self.arg1(), self.arg2(), length_slot * 8, result_slot * 8).unwrap();
+        Ok(Scalar::Str)
     }
 
     fn list_call(
@@ -6990,6 +7002,16 @@ impl Codegen {
                     return Err("index must be i64".into());
                 }
                 match list_kind {
+                    Scalar::Str => {
+                        let index_slot = self.reserve_slot()?;
+                        writeln!(
+                            self.code,
+                            "    mov QWORD PTR [rbp-{}], rax\n    mov rax, 1",
+                            index_slot * 8
+                        )
+                        .unwrap();
+                        self.emit_text_slice(slot, index_slot, "gak_text_index")
+                    }
                     Scalar::Bytes => {
                         writeln!(self.code, "    test rax, rax\n    js gak_bytes_index\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae gak_bytes_index\n    movzx eax, BYTE PTR [r10+rax+8]", slot * 8).unwrap();
                         Ok(Scalar::Int)
@@ -6999,9 +7021,9 @@ impl Codegen {
                         Ok(Scalar::Int)
                     }
                     kind => {
-                        let element = kind
-                            .element()
-                            .ok_or("native indexing needs a typed List, bytes, or Source value")?;
+                        let element = kind.element().ok_or(
+                            "native indexing needs a typed List, bytes, Source, or str value",
+                        )?;
                         writeln!(self.code, "    test rax, rax\n    js gak_list_index\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jae gak_list_index\n    mov rax, QWORD PTR [r10+rax*8+8]", slot * 8).unwrap();
                         Ok(element)
                     }
@@ -7009,10 +7031,12 @@ impl Codegen {
             }
             ExprKind::Slice(value, start, end) => {
                 let kind = self.expr(value, scope)?;
-                if !matches!(kind, Scalar::Bytes | Scalar::Source | Scalar::ListEmpty)
-                    && kind.element().is_none()
+                if !matches!(
+                    kind,
+                    Scalar::Bytes | Scalar::Source | Scalar::Str | Scalar::ListEmpty
+                ) && kind.element().is_none()
                 {
-                    return Err("native slicing expects List, bytes, or Source".into());
+                    return Err("native slicing expects List, bytes, Source, or str".into());
                 }
                 let value_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
@@ -7025,7 +7049,10 @@ impl Codegen {
                     return Err("slice end must be i64".into());
                 }
                 writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_slice_start\n    test rax, rax\n    js gak_slice_end\n    cmp r10, rax\n    ja gak_slice_bounds\n    mov r11, QWORD PTR [rbp-{}]", start_slot * 8, value_slot * 8).unwrap();
-                if kind == Scalar::Bytes {
+                if kind == Scalar::Str {
+                    self.code.push_str("    sub rax, r10\n");
+                    self.emit_text_slice(value_slot, start_slot, "gak_slice_bounds")?;
+                } else if kind == Scalar::Bytes {
                     self.code.push_str("    cmp rax, QWORD PTR [r11]\n    ja gak_slice_bounds\n    mov rdx, r10\n    mov r10, rax\n    sub r10, rdx\n    mov rax, r11\n    call gak_bytes_extract\n");
                 } else if kind == Scalar::Source {
                     self.code.push_str("    mov r9, QWORD PTR [r11+24]\n    sub r9, QWORD PTR [r11+16]\n    cmp rax, r9\n    ja gak_slice_bounds\n    mov rdx, r11\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    add r10, QWORD PTR [rdx+16]\n    mov r11, rax\n    add r11, QWORD PTR [rdx+16]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n");
@@ -7442,6 +7469,9 @@ impl Codegen {
         out.push_str("gak_uint_fmt: .asciz \"%llu\\n\"\ngak_int_inner_fmt: .asciz \"%lld\"\ngak_uint_inner_fmt: .asciz \"%llu\"\ngak_result_ok_prefix: .ascii \"ok(\"\ngak_result_error_prefix: .ascii \"error(\"\ngak_result_suffix: .byte 41,10\n");
         out.push_str("gak_newline: .byte 10\ngak_call_depth_error_msg: .ascii \"call depth exceeded\\n\"\ngak_call_depth_error_msg_end:\ngak_call_stack_error_msg: .ascii \"native call stack exceeds 512 KiB\\n\"\ngak_call_stack_error_msg_end:\ngak_str_limit_msg: .ascii \"string memory exceeds 64 MiB\\n\"\ngak_str_limit_msg_end:\ngak_output_failure_msg: .ascii \"native output failed\\n\"\ngak_output_failure_msg_end:\n");
         out.push_str("gak_text_slice_range_msg: .ascii \"text slice out of range\\n\"\ngak_text_slice_range_msg_end:\n");
+        out.push_str(
+            "gak_text_index_msg: .ascii \"text index out of range\\n\"\ngak_text_index_msg_end:\n",
+        );
         out.push_str("gak_text_search_alloc_msg: .ascii \"text search allocation failed\\n\"\ngak_text_search_alloc_msg_end:\n");
         out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str("gak_slice_start_msg: .ascii \"slice start must not be negative\\n\"\ngak_slice_start_msg_end:\ngak_slice_end_msg: .ascii \"slice end must not be negative\\n\"\ngak_slice_end_msg_end:\ngak_slice_bounds_msg: .ascii \"slice out of range\\n\"\ngak_slice_bounds_msg_end:\n");
@@ -8572,6 +8602,7 @@ gak_cli_utf8_done:
             ("gak_cli_utf8_failure", "gak_cli_utf8_msg"),
             ("gak_str_limit", "gak_str_limit_msg"),
             ("gak_text_slice_range", "gak_text_slice_range_msg"),
+            ("gak_text_index", "gak_text_index_msg"),
             ("gak_text_search_alloc", "gak_text_search_alloc_msg"),
             ("gak_output_failure", "gak_output_failure_msg"),
             ("gak_result_limit", "gak_result_limit_msg"),
