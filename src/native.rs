@@ -7072,10 +7072,18 @@ impl Codegen {
                 let kind = self.expr(value, scope)?;
                 if !matches!(
                     kind,
-                    Scalar::Bytes | Scalar::Source | Scalar::Str | Scalar::ListEmpty
+                    Scalar::Bytes
+                        | Scalar::Source
+                        | Scalar::Str
+                        | Scalar::Offsets
+                        | Scalar::Regions
+                        | Scalar::ListEmpty
                 ) && kind.element().is_none()
                 {
-                    return Err("native slicing expects List, bytes, Source, or str".into());
+                    return Err(
+                        "native slicing expects List, Offsets, Regions, bytes, Source, or str"
+                            .into(),
+                    );
                 }
                 let value_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();

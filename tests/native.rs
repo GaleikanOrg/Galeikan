@@ -14,10 +14,10 @@ fn process_references_advance_within_region_across_engines() {
     let s = Sandbox::new();
     let script = s.write(
         "process-reference.gak",
-        "requires { process.inspect }\nimport std.process\nfrom std.result import is_error, message\nlet regions = process.images(process.self_pid())\nlet region = regions[0]\nlet first = process.reference(region, process.address_u64(region, 0))\nlet next = process.advance_ref(region, first, 1)\nfn before_start() -> Result<str> = process.advance_ref(region, first, -1)\nfn past_end() -> Result<str> = process.advance_ref(region, first, 9223372036854775807)\nfn foreign() -> Result<str> = process.advance_ref(region, \"wrong\", 1)\nfn missing_region(values: Regions) -> Result<Region> = values[len(values)]\nfn negative_region(values: Regions) -> Result<Region> = values[-1]\nprint len(regions) == process.count(regions)\nprint process.label(region) == process.label(process.at(regions, 0))\nprint process.resolve(region, next) == process.address_u64(region, 1)\nprint process.advance_ref(region, next, -1) == first\nprint process.advance_ref(region, first + \"00000000000000000\", 0) == first\nprint is_error(before_start())\nprint is_error(past_end())\nprint is_error(foreign())\nprint is_error(missing_region(regions))\nprint is_error(negative_region(regions))\nprint message(missing_region(regions))\n",
+        "requires { process.inspect }\nimport std.process\nfrom std.result import is_error, message\nlet regions = process.images(process.self_pid())\nlet region = regions[0]\nlet first = process.reference(region, process.address_u64(region, 0))\nlet next = process.advance_ref(region, first, 1)\nfn before_start() -> Result<str> = process.advance_ref(region, first, -1)\nfn past_end() -> Result<str> = process.advance_ref(region, first, 9223372036854775807)\nfn foreign() -> Result<str> = process.advance_ref(region, \"wrong\", 1)\nfn missing_region(values: Regions) -> Result<Region> = values[len(values)]\nfn negative_region(values: Regions) -> Result<Region> = values[-1]\nfn bad_region_slice(values: Regions) -> Result<Regions> = values[:len(values) + 1]\nprint len(regions) == process.count(regions)\nprint process.label(region) == process.label(process.at(regions, 0))\nprint process.label(regions[:1][0]) == process.label(region)\nprint len(regions[1:]) + 1 == len(regions)\nprint process.resolve(region, next) == process.address_u64(region, 1)\nprint process.advance_ref(region, next, -1) == first\nprint process.advance_ref(region, first + \"00000000000000000\", 0) == first\nprint is_error(before_start())\nprint is_error(past_end())\nprint is_error(foreign())\nprint is_error(missing_region(regions))\nprint is_error(negative_region(regions))\nprint is_error(bad_region_slice(regions))\nprint message(missing_region(regions))\nprint message(bad_region_slice(regions))\n",
     );
     let expected =
-        b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nregion index out of range\n";
+        b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nregion index out of range\nslice out of range\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
@@ -10280,20 +10280,27 @@ from std.binary import snapshot, hunt
 from std.result import is_error, message
 fn negative(values: Offsets) -> Result<i64> = values[-1]
 fn past(values: Offsets) -> Result<i64> = values[len(values)]
+fn past_slice(values: Offsets) -> Result<Offsets> = values[1:len(values) + 1]
 let values: Offsets = range(2, 5)
 let hits = hunt(snapshot(hex"41 42 41 42"), hex"41 42")
 print values[0]
 print values[2]
 print hits[1]
+print values[1:][0]
+print hits[:1][0]
+print len(values[:])
+print len(values[3:3])
 print is_error(negative(values))
 print is_error(past(values))
 print is_error(past(range(0)))
+print is_error(past_slice(values))
 print message(negative(values))
 print message(past(values))
+print message(past_slice(values))
 "#,
     );
     let expected =
-        b"2\n4\n2\ntrue\ntrue\ntrue\noffset index out of range\noffset index out of range\n";
+        b"2\n4\n2\n3\n0\n3\n0\ntrue\ntrue\ntrue\ntrue\noffset index out of range\noffset index out of range\nslice out of range\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)

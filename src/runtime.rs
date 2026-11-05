@@ -4019,12 +4019,18 @@ impl Runtime {
                             .map_err(&error)?;
                     }
                     match value_type {
-                        Type::List(_) | Type::Bytes | Type::Source | Type::Str | Type::Any => {
+                        Type::List(_)
+                        | Type::Offsets
+                        | Type::Regions
+                        | Type::Bytes
+                        | Type::Source
+                        | Type::Str
+                        | Type::Any => {
                             value_type
                         }
                         _ => {
                             return Err(error(format!(
-                                "slicing expects List, bytes, Source, or str, got {value_type}"
+                                "slicing expects List, Offsets, Regions, bytes, Source, or str, got {value_type}"
                             )))
                         }
                     }
@@ -7818,16 +7824,26 @@ fn slice_value(value: Value, start: Option<Value>, end: Option<Value>) -> Result
         }
         None => match &value {
             Value::List(items, _) => items.len(),
+            Value::Offsets(offsets) => offsets.len(),
+            Value::Regions(regions) => regions.len(),
             Value::Bytes(bytes) => bytes.len(),
             Value::Source(source) => source.bytes().len(),
             Value::Str(text) => text.chars().count(),
-            _ => return Err("slicing expects List, bytes, Source, or str".into()),
+            _ => return Err("slicing expects List, Offsets, Regions, bytes, Source, or str".into()),
         },
     };
     match value {
         Value::List(items, kind) => {
             let section = items.get(start..end).ok_or("slice out of range")?;
             Ok(Value::List(Arc::new(section.to_vec()), kind))
+        }
+        Value::Offsets(offsets) => {
+            let section = offsets.get(start..end).ok_or("slice out of range")?;
+            Ok(Value::Offsets(section.to_vec()))
+        }
+        Value::Regions(regions) => {
+            let section = regions.get(start..end).ok_or("slice out of range")?;
+            Ok(Value::Regions(Arc::new(section.to_vec())))
         }
         Value::Bytes(bytes) => {
             let section = bytes.get(start..end).ok_or("slice out of range")?;
@@ -7852,7 +7868,7 @@ fn slice_value(value: Value, start: Option<Value>, end: Option<Value>) -> Result
                 .ok_or("slice out of range")?;
             Ok(Value::Str(section.to_owned()))
         }
-        _ => Err("slicing expects List, bytes, Source, or str".into()),
+        _ => Err("slicing expects List, Offsets, Regions, bytes, Source, or str".into()),
     }
 }
 
