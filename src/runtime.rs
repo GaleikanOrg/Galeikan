@@ -3998,11 +3998,12 @@ impl Runtime {
                     match list_type {
                         Type::List(Some(kind)) => kind.as_type(),
                         Type::List(None) | Type::Any => Type::Any,
-                        Type::Bytes | Type::Source => Type::Int,
+                        Type::Bytes | Type::Source | Type::Offsets => Type::Int,
+                        Type::Regions => Type::Region,
                         Type::Str => Type::Str,
                         _ => {
                             return Err(error(format!(
-                                "indexing expects List, bytes, Source, or str, got {list_type}"
+                                "indexing expects List, Offsets, Regions, bytes, Source, or str, got {list_type}"
                             )))
                         }
                     }
@@ -7767,6 +7768,21 @@ fn index_value(value: Value, index: Value) -> Result<Value, String> {
                 .cloned()
                 .ok_or_else(|| "list index out of range".into())
         }
+        Value::Offsets(offsets) => {
+            let index = usize::try_from(index).map_err(|_| "offset index out of range")?;
+            let offset = *offsets.get(index).ok_or("offset index out of range")?;
+            Ok(Value::Int(
+                i64::try_from(offset).map_err(|_| "offset out of range")?,
+            ))
+        }
+        Value::Regions(regions) => {
+            let index = usize::try_from(index).map_err(|_| "region index out of range")?;
+            regions
+                .get(index)
+                .cloned()
+                .map(Value::Region)
+                .ok_or_else(|| "region index out of range".into())
+        }
         Value::Bytes(bytes) => {
             let index = usize::try_from(index).map_err(|_| "byte index out of range")?;
             Ok(Value::Int(i64::from(
@@ -7784,7 +7800,7 @@ fn index_value(value: Value, index: Value) -> Result<Value, String> {
             let character = text.chars().nth(index).ok_or("text index out of range")?;
             Ok(Value::Str(character.to_string()))
         }
-        _ => Err("indexing expects List, bytes, Source, or str".into()),
+        _ => Err("indexing expects List, Offsets, Regions, bytes, Source, or str".into()),
     }
 }
 
