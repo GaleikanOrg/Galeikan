@@ -3631,14 +3631,30 @@ impl Codegen {
         caller_scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
         if name == "assert" {
-            let [condition] = args else {
-                return Err("assert expects 1 bool argument".into());
+            let (condition, message) = match args {
+                [condition] => (condition, None),
+                [condition, message] => (condition, Some(message)),
+                _ => return Err("assert expects 1 or 2 arguments".into()),
             };
             if self.expr(condition, caller_scope)? != Scalar::Bool {
                 return Err("assert expects bool".into());
             }
             let passed = self.label();
-            writeln!(self.code, "    test rax, rax\n    jnz {passed}\n    jmp gak_assert_failed\n{passed}:\n    mov eax, 1").unwrap();
+            if let Some(message) = message {
+                let condition_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    condition_slot * 8
+                )
+                .unwrap();
+                if self.expr(message, caller_scope)? != Scalar::Str {
+                    return Err("assert message must be str".into());
+                }
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    jnz {passed}\n    jmp gak_analyze_error_dynamic\n{passed}:\n    mov eax, 1", condition_slot * 8).unwrap();
+            } else {
+                writeln!(self.code, "    test rax, rax\n    jnz {passed}\n    jmp gak_assert_failed\n{passed}:\n    mov eax, 1").unwrap();
+            }
             return Ok(Scalar::Bool);
         }
         if name == "len" {

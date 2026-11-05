@@ -4854,13 +4854,15 @@ impl Runtime {
             return Ok(Value::Int(length as i64));
         }
         if name == "assert" {
-            let [Value::Bool(condition)] = args.as_slice() else {
-                return Err("assert expects 1 bool argument".into());
+            let (condition, message) = match args.as_slice() {
+                [Value::Bool(condition)] => (*condition, None),
+                [Value::Bool(condition), Value::Str(message)] => (*condition, Some(message.as_str())),
+                _ => return Err("assert expects bool and optional str".into()),
             };
-            return if *condition {
+            return if condition {
                 Ok(Value::Bool(true))
             } else {
-                Err("assertion failed".into())
+                Err(message.unwrap_or("assertion failed").into())
             };
         }
         if let Some(record) = module.records.get(name) {
@@ -8081,8 +8083,14 @@ fn is_value_method_receiver(module: &Module, receiver: &str) -> bool {
 
 fn check_function_call(module: &Module, name: &str, args: &[Type]) -> Result<Type, String> {
     if name == "assert" {
-        let [condition] = args else {
-            return Err("assert expects 1 bool argument".into());
+        let condition = match args {
+            [condition] => condition,
+            [condition, message] => {
+                require_type(Type::Str, *message)
+                    .map_err(|_| format!("assert message must be str, got {message}"))?;
+                condition
+            }
+            _ => return Err("assert expects 1 or 2 arguments".into()),
         };
         require_type(Type::Bool, *condition)
             .map_err(|_| format!("assert expects bool, got {condition}"))?;

@@ -10361,7 +10361,7 @@ fn assertions_match_all_engines() {
     let s = Sandbox::new();
     let script = s.write(
         "assertions.gaks",
-        "from std.result import is_error, message\nfn passing() -> bool = assert(2 + 2 == 4)\nfn failing() -> Result<bool> = assert(false)\nprint passing()\nprint is_error(failing())\nprint message(failing())\n",
+        "from std.result import is_error, message\nfn passing() -> bool = assert(2 + 2 == 4)\nfn failing() -> Result<bool> = assert(false)\nfn custom() -> Result<bool> = assert(false, \"invalid marker\")\nprint passing()\nprint assert(true, \"unused\")\nprint is_error(failing())\nprint message(failing())\nprint is_error(custom())\nprint message(custom())\n",
     );
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     let mut outputs = Vec::new();
@@ -10401,8 +10401,9 @@ fn assertions_match_all_engines() {
     );
     assert_eq!(outputs[0], outputs[1]);
     assert_eq!(outputs[0], bundle.stdout);
-    assert!(outputs[0].starts_with(b"true\ntrue\n"));
-    assert!(outputs[0].ends_with(b"assertion failed\n"));
+    assert!(outputs[0].starts_with(b"true\ntrue\ntrue\n"));
+    assert!(String::from_utf8_lossy(&outputs[0]).contains("assertion failed\ntrue\n"));
+    assert!(outputs[0].ends_with(b"invalid marker\n"));
     if gcc_available() {
         let compiled = s.compile(&script);
         assert!(
@@ -10428,4 +10429,12 @@ fn assertions_match_all_engines() {
         .unwrap();
     assert!(!checked.status.success());
     assert!(String::from_utf8_lossy(&checked.stderr).contains("assert expects bool"));
+    let wrong_message = s.write("assert-message-type.gak", "print assert(true, 1)\n");
+    let checked = Command::new(galeikan)
+        .arg("check")
+        .arg(wrong_message)
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("assert message must be str"));
 }
