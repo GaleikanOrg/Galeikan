@@ -3906,23 +3906,24 @@ void *gak_native_formats_clr_module_text(const void *value, int64_t part) {
                      : gak_native_formats_clr_guid(value, (int64_t)mvid);
 }
 
-void *gak_native_formats_clr_type_ref_text(const void *value, int64_t index, int64_t part) {
-    gak_formats_error = NULL;
-    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+static int gak_clr_type_ref_fields(const void *value, int64_t index,
+                                   uint64_t *name, uint64_t *namespace,
+                                   uint64_t *scope) {
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
     GakClrMetadataInfo info = {0};
-    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return 0;
     if (!info.table) {
-        gak_format_fail("PE CLR metadata has no table stream"); return NULL;
+        gak_format_fail("PE CLR metadata has no table stream"); return 0;
     }
     if (info.table_size < 24) {
-        gak_format_fail("PE CLR table stream is shorter than its header"); return NULL;
+        gak_format_fail("PE CLR table stream is shorter than its header"); return 0;
     }
     uint64_t valid = gak_number(info.table, 8, 8, 0);
     unsigned count = 0;
     for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
     uint64_t row_bytes = (uint64_t)count * 4u;
     if (row_bytes > info.table_size - 24u) {
-        gak_format_fail("truncated PE CLR table row counts"); return NULL;
+        gak_format_fail("truncated PE CLR table row counts"); return 0;
     }
     uint64_t rows[64] = {0};
     uint64_t cursor = 24;
@@ -3933,7 +3934,7 @@ void *gak_native_formats_clr_type_ref_text(const void *value, int64_t index, int
         }
     }
     if (index <= 0 || (uint64_t)index > rows[1]) {
-        gak_format_fail("PE CLR TypeRef index out of range"); return NULL;
+        gak_format_fail("PE CLR TypeRef index out of range"); return 0;
     }
     uint64_t strings_width = info.table[6] & 1u ? 4u : 2u;
     uint64_t guid_width = info.table[6] & 2u ? 4u : 2u;
@@ -3944,12 +3945,20 @@ void *gak_native_formats_clr_type_ref_text(const void *value, int64_t index, int
     uint64_t start = cursor + rows[0] * module_size +
         ((uint64_t)index - 1u) * type_ref_size;
     if (start > info.table_size || type_ref_size > info.table_size - start) {
-        gak_format_fail("truncated PE CLR TypeRef row"); return NULL;
+        gak_format_fail("truncated PE CLR TypeRef row"); return 0;
     }
-    uint64_t name = gak_number(info.table, start + scope_width, strings_width, 0);
-    uint64_t namespace = gak_number(info.table, start + scope_width + strings_width,
-                                    strings_width, 0);
-    if (!name) { gak_format_fail("PE CLR TypeRef name is empty"); return NULL; }
+    *name = gak_number(info.table, start + scope_width, strings_width, 0);
+    *namespace = gak_number(info.table, start + scope_width + strings_width,
+                            strings_width, 0);
+    *scope = gak_number(info.table, start, scope_width, 0);
+    if (!*name) { gak_format_fail("PE CLR TypeRef name is empty"); return 0; }
+    return 1;
+}
+
+void *gak_native_formats_clr_type_ref_text(const void *value, int64_t index, int64_t part) {
+    gak_formats_error = NULL;
+    uint64_t name = 0, namespace = 0, scope = 0;
+    if (!gak_clr_type_ref_fields(value, index, &name, &namespace, &scope)) return NULL;
     return gak_native_formats_clr_string(value, (int64_t)(part == 0 ? name : namespace));
 }
 
@@ -4374,13 +4383,67 @@ static void gak_clr_sig_release_box(void *box) {
     free(box);
 }
 
+static int gak_clr_type_ref_full_name_at(const void *value, int64_t row,
+                                         GakClrSigText *out, int64_t *seen,
+                                         unsigned depth) {
+    for (unsigned i = 0; i < depth; i++) {
+        if (seen[i] == row) {
+            gak_format_fail("PE CLR TypeRef resolution cycle"); return 0;
+        }
+    }
+    if (depth == 32) {
+        gak_format_fail("PE CLR TypeRef nesting exceeds 32"); return 0;
+    }
+    seen[depth] = row;
+    uint64_t name = 0, namespace = 0, scope = 0;
+    if (!gak_clr_type_ref_fields(value, row, &name, &namespace, &scope)) return 0;
+    if ((scope & 3u) == 3u) {
+        if ((scope >> 2) == 0) {
+            gak_format_fail("PE CLR TypeRef scope is invalid"); return 0;
+        }
+        if (!gak_clr_type_ref_full_name_at(value, (int64_t)(scope >> 2), out,
+                                            seen, depth + 1) ||
+            !gak_clr_sig_append(out, "/")) return 0;
+    }
+    void *name_box = gak_native_formats_clr_string(value, (int64_t)name);
+    if (!name_box) return 0;
+    void *namespace_box = gak_native_formats_clr_string(value, (int64_t)namespace);
+    if (!namespace_box) { gak_clr_sig_release_box(name_box); return 0; }
+    uint64_t name_size, namespace_size;
+    memcpy(&name_size, name_box, sizeof(name_size));
+    memcpy(&namespace_size, namespace_box, sizeof(namespace_size));
+    int ok = (namespace_size == 0 ||
+              (gak_clr_sig_append_n(out, (const char *)namespace_box + 8,
+                                    (size_t)namespace_size) &&
+               gak_clr_sig_append(out, "."))) &&
+             gak_clr_sig_append_n(out, (const char *)name_box + 8, (size_t)name_size);
+    gak_clr_sig_release_box(namespace_box);
+    gak_clr_sig_release_box(name_box);
+    return ok;
+}
+
+void *gak_native_formats_clr_type_ref_full_name(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    GakClrSigText out = {0};
+    int64_t seen[32] = {0};
+    if (!gak_clr_type_ref_full_name_at(value, index, &out, seen, 0)) return NULL;
+    return gak_format_box(out.data, out.size);
+}
+
 static int gak_clr_sig_resolve_type(const void *value, unsigned table,
                                     int64_t row, GakClrSigText *out) {
-    void *name = table == 1 ? gak_native_formats_clr_type_ref_text(value, row, 0)
-                            : gak_native_formats_clr_type_text(value, row, 0);
+    if (table == 1) {
+        void *full = gak_native_formats_clr_type_ref_full_name(value, row);
+        if (!full) return 0;
+        uint64_t size;
+        memcpy(&size, full, sizeof(size));
+        int ok = gak_clr_sig_append_n(out, (const char *)full + 8, (size_t)size);
+        gak_clr_sig_release_box(full);
+        return ok;
+    }
+    void *name = gak_native_formats_clr_type_text(value, row, 0);
     if (!name) return 0;
-    void *namespace = table == 1 ? gak_native_formats_clr_type_ref_text(value, row, 1)
-                                 : gak_native_formats_clr_type_text(value, row, 1);
+    void *namespace = gak_native_formats_clr_type_text(value, row, 1);
     if (!namespace) { gak_clr_sig_release_box(name); return 0; }
     uint64_t name_size, namespace_size;
     memcpy(&name_size, name, sizeof(name_size));

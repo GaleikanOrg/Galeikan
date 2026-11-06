@@ -4710,6 +4710,20 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_clr_guid\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
                 return Ok(Scalar::Str);
             }
+            ("clr_type_ref_full_name", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.clr_type_ref_full_name expects Format".into());
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8).unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err("formats.clr_type_ref_full_name index must be i64".into());
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_clr_type_ref_full_name\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                return Ok(Scalar::Str);
+            }
             ("clr_type_name" | "clr_type_namespace" | "clr_type_ref_name" | "clr_type_ref_namespace", [report, index]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));

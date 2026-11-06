@@ -1002,7 +1002,7 @@ impl FormatReport {
         self.clr_string(bytes, namespace)
     }
 
-    fn clr_type_ref_indices(&self, bytes: &[u8], index: usize) -> Result<(usize, usize), String> {
+    fn clr_type_ref_indices(&self, bytes: &[u8], index: usize) -> Result<(usize, usize, u64), String> {
         let table = self
             .clr_metadata(bytes)?
             .streams
@@ -1049,20 +1049,54 @@ impl FormatReport {
         }
         let name = number(data, start + scope_width, strings_width, false)? as usize;
         let namespace = number(data, start + scope_width + strings_width, strings_width, false)? as usize;
+        let scope = number(data, start, scope_width, false)?;
         if name == 0 {
             return Err("PE CLR TypeRef name is empty".into());
         }
-        Ok((name, namespace))
+        Ok((name, namespace, scope))
     }
 
     pub fn clr_type_ref_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
-        let (name, _) = self.clr_type_ref_indices(bytes, index)?;
+        let (name, _, _) = self.clr_type_ref_indices(bytes, index)?;
         self.clr_string(bytes, name)
     }
 
     pub fn clr_type_ref_namespace(&self, bytes: &[u8], index: usize) -> Result<String, String> {
-        let (_, namespace) = self.clr_type_ref_indices(bytes, index)?;
+        let (_, namespace, _) = self.clr_type_ref_indices(bytes, index)?;
         self.clr_string(bytes, namespace)
+    }
+
+    pub fn clr_type_ref_full_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let mut seen = Vec::new();
+        let mut parts = Vec::new();
+        let mut current = index;
+        loop {
+            if seen.contains(&current) {
+                return Err("PE CLR TypeRef resolution cycle".into());
+            }
+            if seen.len() == 32 {
+                return Err("PE CLR TypeRef nesting exceeds 32".into());
+            }
+            seen.push(current);
+            let (name, namespace, scope) = self.clr_type_ref_indices(bytes, current)?;
+            let name = self.clr_string(bytes, name)?;
+            let namespace = self.clr_string(bytes, namespace)?;
+            parts.push(if namespace.is_empty() { name } else { format!("{namespace}.{name}") });
+            if scope & 3 != 3 {
+                break;
+            }
+            current = usize::try_from(scope >> 2)
+                .map_err(|_| "PE CLR TypeRef index out of range")?;
+            if current == 0 {
+                return Err("PE CLR TypeRef scope is invalid".into());
+            }
+        }
+        parts.reverse();
+        let full = parts.join("/");
+        if full.len() > 4096 {
+            return Err("PE CLR TypeRef full name exceeds 4096 bytes".into());
+        }
+        Ok(full)
     }
 
     fn clr_method_fields(&self, bytes: &[u8], index: usize) -> Result<(u64, usize, usize), String> {
@@ -1174,16 +1208,17 @@ impl FormatReport {
                     let row = tail[prefix..prefix + digits]
                         .parse::<usize>()
                         .map_err(|_| "PE CLR signature type index out of range")?;
-                    let (name, namespace) = if table == 1 {
-                        (self.clr_type_ref_name(bytes, row)?, self.clr_type_ref_namespace(bytes, row)?)
+                    if table == 1 {
+                        resolved.push_str(&self.clr_type_ref_full_name(bytes, row)?);
                     } else {
-                        (self.clr_type_name(bytes, row)?, self.clr_type_namespace(bytes, row)?)
-                    };
-                    if !namespace.is_empty() {
-                        resolved.push_str(&namespace);
-                        resolved.push('.');
+                        let name = self.clr_type_name(bytes, row)?;
+                        let namespace = self.clr_type_namespace(bytes, row)?;
+                        if !namespace.is_empty() {
+                            resolved.push_str(&namespace);
+                            resolved.push('.');
+                        }
+                        resolved.push_str(&name);
                     }
-                    resolved.push_str(&name);
                     at += prefix + digits;
                     continue;
                 }

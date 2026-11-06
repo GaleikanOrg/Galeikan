@@ -6537,11 +6537,13 @@ impl Runtime {
                     report.clr_type_namespace(source.bytes(), index)?
                 }))
             }
-            ("clr_type_ref_name" | "clr_type_ref_namespace", [Value::Format(source, report), index]) => {
+            ("clr_type_ref_name" | "clr_type_ref_namespace" | "clr_type_ref_full_name", [Value::Format(source, report), index]) => {
                 let index = usize::try_from(index.as_int()?)
                     .map_err(|_| "PE CLR TypeRef index out of range")?;
                 Ok(Value::Str(if name == "clr_type_ref_name" {
                     report.clr_type_ref_name(source.bytes(), index)?
+                } else if name == "clr_type_ref_full_name" {
+                    report.clr_type_ref_full_name(source.bytes(), index)?
                 } else {
                     report.clr_type_ref_namespace(source.bytes(), index)?
                 }))
@@ -8701,7 +8703,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_blob") => (&[Format, Int], Source),
         ("formats", "clr_guid") => (&[Format, Int], Str),
         ("formats", "clr_type_name" | "clr_type_namespace") => (&[Format, Int], Str),
-        ("formats", "clr_type_ref_name" | "clr_type_ref_namespace") => (&[Format, Int], Str),
+        ("formats", "clr_type_ref_name" | "clr_type_ref_namespace" | "clr_type_ref_full_name") => (&[Format, Int], Str),
         ("formats", "clr_method_name") => (&[Format, Int], Str),
         ("formats", "clr_method_signature_text") => (&[Format, Int], Str),
         ("formats", "clr_method_rva") => (&[Format, Int], UInt),
