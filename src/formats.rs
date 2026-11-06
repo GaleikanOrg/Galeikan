@@ -1002,6 +1002,69 @@ impl FormatReport {
         self.clr_string(bytes, namespace)
     }
 
+    fn clr_type_ref_indices(&self, bytes: &[u8], index: usize) -> Result<(usize, usize), String> {
+        let table = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        if table.size < 24 {
+            return Err("PE CLR table stream is shorter than its header".into());
+        }
+        let data = &bytes[table.offset..table.offset + table.size];
+        let valid = number(data, 8, 8, false)?;
+        let row_bytes = valid.count_ones() as usize * 4;
+        if row_bytes > data.len() - 24 {
+            return Err("truncated PE CLR table row counts".into());
+        }
+        let mut rows = [0_u64; 64];
+        let mut cursor = 24;
+        for (table_index, count) in rows.iter_mut().enumerate() {
+            if valid & (1_u64 << table_index) != 0 {
+                *count = number(data, cursor, 4, false)?;
+                cursor += 4;
+            }
+        }
+        if index == 0 || index as u64 > rows[1] {
+            return Err("PE CLR TypeRef index out of range".into());
+        }
+        let strings_width = if data[6] & 1 != 0 { 4 } else { 2 };
+        let guid_width = if data[6] & 2 != 0 { 4 } else { 2 };
+        let scope_width = if [0, 1, 26, 35].iter().any(|&table| rows[table] >= 1 << 14) {
+            4
+        } else {
+            2
+        };
+        let module_size = 2 + strings_width + 3 * guid_width;
+        let type_ref_size = scope_width + 2 * strings_width;
+        let start = rows[0]
+            .checked_mul(module_size as u64)
+            .and_then(|size| size.checked_add((index as u64 - 1) * type_ref_size as u64))
+            .and_then(|size| usize::try_from(size).ok())
+            .and_then(|size| cursor.checked_add(size))
+            .ok_or("PE CLR TypeRef row outside address space")?;
+        if start > data.len() || type_ref_size > data.len() - start {
+            return Err("truncated PE CLR TypeRef row".into());
+        }
+        let name = number(data, start + scope_width, strings_width, false)? as usize;
+        let namespace = number(data, start + scope_width + strings_width, strings_width, false)? as usize;
+        if name == 0 {
+            return Err("PE CLR TypeRef name is empty".into());
+        }
+        Ok((name, namespace))
+    }
+
+    pub fn clr_type_ref_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (name, _) = self.clr_type_ref_indices(bytes, index)?;
+        self.clr_string(bytes, name)
+    }
+
+    pub fn clr_type_ref_namespace(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (_, namespace) = self.clr_type_ref_indices(bytes, index)?;
+        self.clr_string(bytes, namespace)
+    }
+
     fn clr_method_fields(&self, bytes: &[u8], index: usize) -> Result<(u64, usize, usize), String> {
         let table = self
             .clr_metadata(bytes)?
@@ -1093,7 +1156,45 @@ impl FormatReport {
 
     pub fn clr_method_signature_text(&self, bytes: &[u8], index: usize) -> Result<String, String> {
         let (start, end, _) = self.clr_method_signature_range(bytes, index)?;
-        crate::clr_signature::format_method(&bytes[start..end])
+        let text = crate::clr_signature::format_method(&bytes[start..end])?;
+        let mut resolved = String::with_capacity(text.len());
+        let mut at = 0;
+        while at < text.len() {
+            let tail = &text[at..];
+            let table = if tail.starts_with("TypeDef#") {
+                Some((2, "TypeDef#".len()))
+            } else if tail.starts_with("TypeRef#") {
+                Some((1, "TypeRef#".len()))
+            } else {
+                None
+            };
+            if let Some((table, prefix)) = table {
+                let digits = tail[prefix..].bytes().take_while(u8::is_ascii_digit).count();
+                if digits != 0 {
+                    let row = tail[prefix..prefix + digits]
+                        .parse::<usize>()
+                        .map_err(|_| "PE CLR signature type index out of range")?;
+                    let (name, namespace) = if table == 1 {
+                        (self.clr_type_ref_name(bytes, row)?, self.clr_type_ref_namespace(bytes, row)?)
+                    } else {
+                        (self.clr_type_name(bytes, row)?, self.clr_type_namespace(bytes, row)?)
+                    };
+                    if !namespace.is_empty() {
+                        resolved.push_str(&namespace);
+                        resolved.push('.');
+                    }
+                    resolved.push_str(&name);
+                    at += prefix + digits;
+                    continue;
+                }
+            }
+            resolved.push(text.as_bytes()[at] as char);
+            at += 1;
+        }
+        if resolved.len() > 4096 {
+            return Err("PE CLR method signature text exceeds 4096 bytes".into());
+        }
+        Ok(resolved)
     }
 
     pub fn summary(&self) -> String {

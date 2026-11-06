@@ -4710,7 +4710,7 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_clr_guid\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
                 return Ok(Scalar::Str);
             }
-            ("clr_type_name" | "clr_type_namespace", [report, index]) => {
+            ("clr_type_name" | "clr_type_namespace" | "clr_type_ref_name" | "clr_type_ref_namespace", [report, index]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));
                 }
@@ -4721,9 +4721,14 @@ impl Codegen {
                     return Err(format!("formats.{name} index must be i64"));
                 }
                 self.uses_formats = true;
-                let part = if name == "clr_type_name" { 0 } else { 1 };
+                let part = if name == "clr_type_name" || name == "clr_type_ref_name" { 0 } else { 1 };
+                let helper = if name.starts_with("clr_type_ref_") {
+                    "gak_native_formats_clr_type_ref_text"
+                } else {
+                    "gak_native_formats_clr_type_text"
+                };
                 let ready = self.label();
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    call gak_native_formats_clr_type_text\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    call {helper}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Str);
             }
             ("clr_method_name" | "clr_method_rva" | "clr_method_signature" | "clr_method_signature_text", [report, index]) => {

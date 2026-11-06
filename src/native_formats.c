@@ -3906,6 +3906,53 @@ void *gak_native_formats_clr_module_text(const void *value, int64_t part) {
                      : gak_native_formats_clr_guid(value, (int64_t)mvid);
 }
 
+void *gak_native_formats_clr_type_ref_text(const void *value, int64_t index, int64_t part) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.table) {
+        gak_format_fail("PE CLR metadata has no table stream"); return NULL;
+    }
+    if (info.table_size < 24) {
+        gak_format_fail("PE CLR table stream is shorter than its header"); return NULL;
+    }
+    uint64_t valid = gak_number(info.table, 8, 8, 0);
+    unsigned count = 0;
+    for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
+    uint64_t row_bytes = (uint64_t)count * 4u;
+    if (row_bytes > info.table_size - 24u) {
+        gak_format_fail("truncated PE CLR table row counts"); return NULL;
+    }
+    uint64_t rows[64] = {0};
+    uint64_t cursor = 24;
+    for (unsigned bit = 0; bit < 64; bit++) {
+        if ((valid >> bit) & 1u) {
+            rows[bit] = gak_number(info.table, cursor, 4, 0);
+            cursor += 4;
+        }
+    }
+    if (index <= 0 || (uint64_t)index > rows[1]) {
+        gak_format_fail("PE CLR TypeRef index out of range"); return NULL;
+    }
+    uint64_t strings_width = info.table[6] & 1u ? 4u : 2u;
+    uint64_t guid_width = info.table[6] & 2u ? 4u : 2u;
+    uint64_t scope_width = rows[0] >= (1u << 14) || rows[1] >= (1u << 14) ||
+        rows[26] >= (1u << 14) || rows[35] >= (1u << 14) ? 4u : 2u;
+    uint64_t module_size = 2u + strings_width + 3u * guid_width;
+    uint64_t type_ref_size = scope_width + 2u * strings_width;
+    uint64_t start = cursor + rows[0] * module_size +
+        ((uint64_t)index - 1u) * type_ref_size;
+    if (start > info.table_size || type_ref_size > info.table_size - start) {
+        gak_format_fail("truncated PE CLR TypeRef row"); return NULL;
+    }
+    uint64_t name = gak_number(info.table, start + scope_width, strings_width, 0);
+    uint64_t namespace = gak_number(info.table, start + scope_width + strings_width,
+                                    strings_width, 0);
+    if (!name) { gak_format_fail("PE CLR TypeRef name is empty"); return NULL; }
+    return gak_native_formats_clr_string(value, (int64_t)(part == 0 ? name : namespace));
+}
+
 void *gak_native_formats_clr_type_text(const void *value, int64_t index, int64_t part) {
     gak_formats_error = NULL;
     if (!value) { gak_format_fail("invalid Format"); return NULL; }
@@ -4319,6 +4366,67 @@ static int gak_clr_sig_method(GakClrSig *sig, GakClrSigText *out,
         gak_clr_sig_append_n(out, result.data, result.size);
 }
 
+static void gak_clr_sig_release_box(void *box) {
+    if (!box) return;
+    uint64_t size;
+    memcpy(&size, box, sizeof(size));
+    format_memory -= (size_t)size + 8u;
+    free(box);
+}
+
+static int gak_clr_sig_resolve_type(const void *value, unsigned table,
+                                    int64_t row, GakClrSigText *out) {
+    void *name = table == 1 ? gak_native_formats_clr_type_ref_text(value, row, 0)
+                            : gak_native_formats_clr_type_text(value, row, 0);
+    if (!name) return 0;
+    void *namespace = table == 1 ? gak_native_formats_clr_type_ref_text(value, row, 1)
+                                 : gak_native_formats_clr_type_text(value, row, 1);
+    if (!namespace) { gak_clr_sig_release_box(name); return 0; }
+    uint64_t name_size, namespace_size;
+    memcpy(&name_size, name, sizeof(name_size));
+    memcpy(&namespace_size, namespace, sizeof(namespace_size));
+    int ok = (namespace_size == 0 ||
+              (gak_clr_sig_append_n(out, (const char *)namespace + 8, (size_t)namespace_size) &&
+               gak_clr_sig_append(out, "."))) &&
+             gak_clr_sig_append_n(out, (const char *)name + 8, (size_t)name_size);
+    gak_clr_sig_release_box(namespace);
+    gak_clr_sig_release_box(name);
+    return ok;
+}
+
+static int gak_clr_sig_resolve_types(const void *value, GakClrSigText *out) {
+    GakClrSigText resolved = {0};
+    for (size_t at = 0; at < out->size;) {
+        unsigned table = 0;
+        size_t prefix = 0;
+        if (out->size - at >= 8 && !memcmp(out->data + at, "TypeDef#", 8)) {
+            table = 2; prefix = 8;
+        } else if (out->size - at >= 8 && !memcmp(out->data + at, "TypeRef#", 8)) {
+            table = 1; prefix = 8;
+        }
+        if (table && at + prefix < out->size &&
+            out->data[at + prefix] >= '0' && out->data[at + prefix] <= '9') {
+            uint64_t row = 0;
+            size_t cursor = at + prefix;
+            while (cursor < out->size && out->data[cursor] >= '0' &&
+                   out->data[cursor] <= '9') {
+                row = row * 10u + (unsigned)(out->data[cursor] - '0');
+                if (row > INT64_MAX) {
+                    gak_format_fail("PE CLR signature type index out of range"); return 0;
+                }
+                cursor++;
+            }
+            if (!gak_clr_sig_resolve_type(value, table, (int64_t)row, &resolved)) return 0;
+            at = cursor;
+        } else {
+            if (!gak_clr_sig_append_n(&resolved, out->data + at, 1)) return 0;
+            at++;
+        }
+    }
+    *out = resolved;
+    return 1;
+}
+
 void *gak_native_formats_clr_method_signature_text(const void *value, int64_t index) {
     gak_formats_error = NULL;
     GakFormatRange *range = gak_native_formats_clr_method_signature(value, index);
@@ -4337,6 +4445,7 @@ void *gak_native_formats_clr_method_signature_text(const void *value, int64_t in
     if (sig.at != sig.size) {
         gak_format_fail("trailing PE CLR method signature bytes"); return NULL;
     }
+    if (!gak_clr_sig_resolve_types(value, &out)) return NULL;
     return gak_format_box(out.data, out.size);
 }
 
