@@ -4272,7 +4272,9 @@ static int gak_clr_sig_method(GakClrSig *sig, GakClrSigText *out,
     uint8_t flags;
     uint32_t generics = 0, params;
     if (!gak_clr_sig_byte(sig, &flags)) return 0;
-    if ((flags & 0x80) || ((flags & 0x0f) != 0 && (flags & 0x0f) != 5) ||
+    unsigned convention = flags & 0x0f;
+    if ((flags & 0x80) || (fnptr ? convention > 5 :
+        (convention != 0 && convention != 5)) ||
         ((flags & 0x40) && !(flags & 0x20))) {
         gak_format_fail("invalid PE CLR method calling convention"); return 0;
     }
@@ -4288,7 +4290,10 @@ static int gak_clr_sig_method(GakClrSig *sig, GakClrSigText *out,
     if (!gak_clr_sig_type(sig, &result, depth + 1, 1, 1)) return 0;
     if ((flags & 0x40) && !gak_clr_sig_append(out, "explicit ")) return 0;
     if ((flags & 0x20) && !gak_clr_sig_append(out, "instance ")) return 0;
-    if ((flags & 0x0f) == 5 && !gak_clr_sig_append(out, "vararg ")) return 0;
+    const char *calling = convention == 1 ? "cdecl " :
+        convention == 2 ? "stdcall " : convention == 3 ? "thiscall " :
+        convention == 4 ? "fastcall " : convention == 5 ? "vararg " : "";
+    if (!gak_clr_sig_append(out, calling)) return 0;
     if (fnptr && !gak_clr_sig_append(out, "fn")) return 0;
     if (generics) {
         if (!gak_clr_sig_append(out, "generic<M0")) return 0;
@@ -4297,8 +4302,17 @@ static int gak_clr_sig_method(GakClrSig *sig, GakClrSigText *out,
         if (!gak_clr_sig_append(out, ">")) return 0;
     }
     if (!gak_clr_sig_append(out, "(")) return 0;
+    int sentinel = 0;
     for (uint32_t i = 0; i < params; i++) {
-        if (i && !gak_clr_sig_append(out, ", ")) return 0;
+        if (sig->at < sig->size && sig->data[sig->at] == 0x41) {
+            if (!fnptr || (convention != 1 && convention != 5) || sentinel) {
+                gak_format_fail("invalid PE CLR signature sentinel"); return 0;
+            }
+            sig->at++;
+            if (i && !gak_clr_sig_append(out, ", ")) return 0;
+            if (!gak_clr_sig_append(out, "..., ")) return 0;
+            sentinel = 1;
+        } else if (i && !gak_clr_sig_append(out, ", ")) return 0;
         if (!gak_clr_sig_type(sig, out, depth + 1, 0, 1)) return 0;
     }
     return gak_clr_sig_append(out, ") -> ") &&
@@ -4312,8 +4326,8 @@ void *gak_native_formats_clr_method_signature_text(const void *value, int64_t in
     size_t size = (size_t)(range->end - range->start);
     const GakSourceHead *source = range->source;
     const uint8_t *data = source->backing + 8 + source->start + range->start;
-    free(range);
     format_memory -= sizeof(*range);
+    free(range);
     if (size > 16u * 1024u) {
         gak_format_fail("PE CLR method signature exceeds 16 KiB"); return NULL;
     }

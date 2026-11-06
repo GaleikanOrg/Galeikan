@@ -198,8 +198,10 @@ impl Decoder<'_> {
             return Err("PE CLR method signature nesting exceeds 16");
         }
         let flags = self.byte()?;
+        let convention = flags & 0x0f;
         if flags & 0x80 != 0
-            || !matches!(flags & 0x0f, 0 | 5)
+            || (fnptr && convention > 5)
+            || (!fnptr && !matches!(convention, 0 | 5))
             || (flags & 0x40 != 0 && flags & 0x20 == 0)
         {
             return Err("invalid PE CLR method calling convention");
@@ -224,9 +226,14 @@ impl Decoder<'_> {
         if flags & 0x20 != 0 {
             out.push_str("instance ");
         }
-        if flags & 0x0f == 5 {
-            out.push_str("vararg ");
-        }
+        out.push_str(match convention {
+            1 => "cdecl ",
+            2 => "stdcall ",
+            3 => "thiscall ",
+            4 => "fastcall ",
+            5 => "vararg ",
+            _ => "",
+        });
         if fnptr {
             out.push_str("fn");
         }
@@ -239,8 +246,19 @@ impl Decoder<'_> {
             out.push('>');
         }
         out.push('(');
+        let mut sentinel = false;
         for n in 0..params {
-            if n != 0 {
+            if self.data.get(self.at) == Some(&0x41) {
+                if !fnptr || !matches!(convention, 1 | 5) || sentinel {
+                    return Err("invalid PE CLR signature sentinel");
+                }
+                self.at += 1;
+                if n != 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("..., ");
+                sentinel = true;
+            } else if n != 0 {
                 out.push_str(", ");
             }
             self.ty(out, depth + 1, false, true)?;
@@ -291,5 +309,23 @@ mod tests {
         nested.push(8);
         assert!(format_method(&nested).is_err());
         assert!(format_method(&vec![0; 16 * 1024 + 1]).is_err());
+    }
+
+    #[test]
+    fn decodes_function_pointer_conventions_and_varargs() {
+        assert_eq!(
+            format_method(&[0, 1, 1, 0x1b, 1, 1, 1, 8]).unwrap(),
+            "(cdecl fn(i32) -> void) -> void"
+        );
+        assert_eq!(
+            format_method(&[0, 1, 1, 0x1b, 5, 2, 1, 8, 0x41, 0x0e]).unwrap(),
+            "(vararg fn(i32, ..., string) -> void) -> void"
+        );
+        assert_eq!(
+            format_method(&[0, 1, 1, 0x1b, 1, 2, 1, 8, 0x41, 0x0e]).unwrap(),
+            "(cdecl fn(i32, ..., string) -> void) -> void"
+        );
+        assert!(format_method(&[0, 1, 1, 0x1b, 0, 2, 1, 8, 0x41, 0x0e]).is_err());
+        assert!(format_method(&[5, 2, 1, 8, 0x41, 0x0e]).is_err());
     }
 }
