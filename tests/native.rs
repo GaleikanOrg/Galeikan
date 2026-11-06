@@ -2423,6 +2423,82 @@ fn native_results_match_vm_for_construction_recovery_and_propagation() {
 }
 
 #[test]
+fn pe_tls_and_clr_signals_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x98 + 0xf0];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x98 + 108..0x98 + 112].copy_from_slice(&15_u32.to_le_bytes());
+    let tls = 0x98 + 112 + 9 * 8;
+    let clr = 0x98 + 112 + 14 * 8;
+    pe[tls..tls + 4].copy_from_slice(&0x1100_u32.to_le_bytes());
+    pe[tls + 4..tls + 8].copy_from_slice(&24_u32.to_le_bytes());
+    pe[clr..clr + 4].copy_from_slice(&0x1200_u32.to_le_bytes());
+    pe[clr + 4..clr + 8].copy_from_slice(&72_u32.to_le_bytes());
+    let mut absent = pe.clone();
+    absent[tls..tls + 8].fill(0);
+    absent[clr..clr + 8].fill(0);
+    let mut incomplete = pe.clone();
+    incomplete[tls + 4..tls + 8].fill(0);
+    incomplete[clr..clr + 4].fill(0);
+    let to_hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let hex = to_hex(&pe);
+    let absent_hex = to_hex(&absent);
+    let incomplete_hex = to_hex(&incomplete);
+    let script = s.write(
+        "pe-directories.gak",
+        &format!("from std.binary import from_hex, snapshot\nfrom std.formats import probe, signal\nfrom std.audit import signal as audit_signal\nlet report = probe(snapshot(from_hex(\"{hex}\")))\nlet absent = probe(snapshot(from_hex(\"{absent_hex}\")))\nlet incomplete = probe(snapshot(from_hex(\"{incomplete_hex}\")))\nprint signal(report, \"pe.tls_directory\")\nprint signal(report, \"pe.clr_directory\")\nprint signal(absent, \"pe.tls_directory\")\nprint signal(absent, \"pe.clr_directory\")\nprint signal(incomplete, \"pe.tls_directory\")\nprint signal(incomplete, \"pe.clr_directory\")\nimpact audit_signal(report, \"pe.tls_directory\", \"present\", \"tls\")\n"),
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output
+            .stdout
+            .starts_with(b"present\npresent\nabsent\nabsent\nunknown\nunknown\n"));
+        if let Some(reference) = &expected {
+            assert_eq!(&output.stdout, reference);
+        } else {
+            expected = Some(output.stdout);
+        }
+    }
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected.unwrap());
+    }
+}
+
+#[test]
 fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
     if !gcc_available() {
         return;

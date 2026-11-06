@@ -255,6 +255,8 @@ pub struct FormatReport {
     pe_relocation_directory: Result<Option<(u64, u64)>, String>,
     pe_certificate_directory: Result<Option<(u64, u64)>, String>,
     pe_debug_directory: Result<Option<(u64, u64)>, String>,
+    pe_tls_directory: Result<Option<NumericField>, String>,
+    pe_clr_directory: Result<Option<NumericField>, String>,
     pe_thunk_width: usize,
     pe_dependencies: Arc<OnceLock<Result<Vec<String>, String>>>,
     pe_imports: Arc<OnceLock<Result<Vec<ImportInfo>, String>>>,
@@ -400,6 +402,22 @@ impl FormatReport {
                     "absent"
                 }
             }
+            "pe.tls_directory" | "pe.clr_directory" => {
+                if !pe {
+                    "not_applicable"
+                } else {
+                    let directory = if name == "pe.tls_directory" {
+                        &self.pe_tls_directory
+                    } else {
+                        &self.pe_clr_directory
+                    };
+                    match directory {
+                        Ok(Some(_)) => "present",
+                        Ok(None) => "absent",
+                        Err(_) => "unknown",
+                    }
+                }
+            }
             "elf.et_dyn" => {
                 if pe {
                     "not_applicable"
@@ -482,6 +500,8 @@ impl FormatReport {
                 .iter()
                 .find(|section| section.writable && section.executable)
                 .map(|section| section.flags_field),
+            "pe.tls_directory" => self.pe_tls_directory.as_ref().ok().copied().flatten(),
+            "pe.clr_directory" => self.pe_clr_directory.as_ref().ok().copied().flatten(),
             "elf.et_dyn" => self.field("file_type"),
             "elf.gnu_stack_nx" => self.field("gnu_stack_flags"),
             "elf.bind_now" => self.elf_bind_now.field(),
@@ -2477,6 +2497,40 @@ fn parse_elf_bind_now(
     }
 }
 
+fn pe_directory_indicator(
+    bytes: &[u8],
+    optional: usize,
+    optional_size: usize,
+    count_offset: usize,
+    first_directory_offset: usize,
+    index: usize,
+    name: &str,
+) -> Result<Option<NumericField>, String> {
+    if optional_size < count_offset + 4 {
+        return Err("PE optional header has no data-directory count".into());
+    }
+    if number(bytes, optional + count_offset, 4, false)? <= index as u64 {
+        return Ok(None);
+    }
+    let directory_offset = first_directory_offset + index * 8;
+    if optional_size < directory_offset + 8 {
+        return Err(format!("PE {name} directory lies outside optional header"));
+    }
+    let offset = optional + directory_offset;
+    let rva = number(bytes, offset, 4, false)?;
+    let size = number(bytes, offset + 4, 4, false)?;
+    match (rva, size) {
+        (0, 0) => Ok(None),
+        (0, _) | (_, 0) => Err(format!("incomplete PE {name} directory")),
+        _ => Ok(Some(NumericField {
+            offset,
+            width: 4,
+            value: rva,
+            decoder: "u32le",
+        })),
+    }
+}
+
 fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
     span(bytes, 0, 64)?;
     let pe_offset = usize::try_from(number(bytes, 0x3c, 4, false)?)
@@ -2650,6 +2704,24 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
             _ => Ok(Some((rva, size))),
         }
     })();
+    let pe_tls_directory = pe_directory_indicator(
+        bytes,
+        optional,
+        optional_size,
+        directory_count_offset,
+        export_directory_offset,
+        9,
+        "TLS",
+    );
+    let pe_clr_directory = pe_directory_indicator(
+        bytes,
+        optional,
+        optional_size,
+        directory_count_offset,
+        export_directory_offset,
+        14,
+        "CLR",
+    );
     let entry = number(bytes, optional + 16, 4, false)?;
     let table_size = usize::from(sections)
         .checked_mul(40)
@@ -2748,6 +2820,8 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_relocation_directory,
         pe_certificate_directory,
         pe_debug_directory,
+        pe_tls_directory,
+        pe_clr_directory,
         pe_thunk_width,
         pe_dependencies: Arc::new(OnceLock::new()),
         pe_imports: Arc::new(OnceLock::new()),
@@ -3182,6 +3256,8 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_relocation_directory: Ok(None),
         pe_certificate_directory: Ok(None),
         pe_debug_directory: Ok(None),
+        pe_tls_directory: Ok(None),
+        pe_clr_directory: Ok(None),
         pe_thunk_width: 0,
         pe_dependencies: Arc::new(OnceLock::new()),
         pe_imports: Arc::new(OnceLock::new()),
@@ -4214,6 +4290,40 @@ mod tests {
             probe(&pe32).unwrap().signal("pe.high_entropy_va").unwrap(),
             "not_applicable"
         );
+    }
+
+    #[test]
+    fn pe_tls_and_clr_directory_signals_keep_header_evidence() {
+        for plus in [false, true] {
+            let mut bytes = pe_with_exports(plus);
+            let first = if plus { 112 } else { 96 };
+            let count = if plus { 108 } else { 92 };
+            bytes[0x98 + count..0x98 + count + 4].copy_from_slice(&15_u32.to_le_bytes());
+            let tls = 0x98 + first + 9 * 8;
+            let clr = 0x98 + first + 14 * 8;
+            bytes[tls..tls + 4].copy_from_slice(&0x1100_u32.to_le_bytes());
+            bytes[tls + 4..tls + 8].copy_from_slice(&24_u32.to_le_bytes());
+            bytes[clr..clr + 4].copy_from_slice(&0x1200_u32.to_le_bytes());
+            bytes[clr + 4..clr + 8].copy_from_slice(&72_u32.to_le_bytes());
+            let report = probe(&bytes).unwrap();
+            assert_eq!(report.signal("pe.tls_directory").unwrap(), "present");
+            assert_eq!(report.signal("pe.clr_directory").unwrap(), "present");
+            let evidence = report.signal_field("pe.tls_directory").unwrap();
+            assert_eq!(
+                (evidence.offset, evidence.width, evidence.value),
+                (tls, 4, 0x1100)
+            );
+            let evidence = report.signal_field("pe.clr_directory").unwrap();
+            assert_eq!(
+                (evidence.offset, evidence.width, evidence.value),
+                (clr, 4, 0x1200)
+            );
+            bytes[tls + 4..tls + 8].fill(0);
+            bytes[clr..clr + 8].fill(0);
+            let incomplete = probe(&bytes).unwrap();
+            assert_eq!(incomplete.signal("pe.tls_directory").unwrap(), "unknown");
+            assert_eq!(incomplete.signal("pe.clr_directory").unwrap(), "absent");
+        }
     }
 
     #[test]

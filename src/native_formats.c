@@ -3437,6 +3437,33 @@ static const void *gak_bind_now_status(const GakFormat *format) {
     return gak_format_status(format->bind_now == 2);
 }
 
+/* -1 = not applicable, 0 = absent, 1 = declared, 2 = incomplete metadata. */
+static int gak_pe_directory_status(const GakFormat *format, unsigned index,
+                                   uint64_t *field_at, uint64_t *field_value) {
+    if (format->kind != 1) return -1;
+    const GakSourceHead *source = format->source;
+    uint64_t length = source->end - source->start;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    if (format->entry_at < 20) return 2;
+    uint64_t optional = format->entry_at - 16;
+    if (!gak_span(length, optional - 4, 2)) return 2;
+    uint64_t optional_size = gak_number(bytes, optional - 4, 2, 0);
+    uint64_t count_offset = format->bits == 32 ? 92 : 108;
+    uint64_t first_offset = format->bits == 32 ? 96 : 112;
+    if (optional_size < count_offset + 4 ||
+        !gak_span(length, optional + count_offset, 4)) return 2;
+    if (gak_number(bytes, optional + count_offset, 4, 0) <= index) return 0;
+    uint64_t entry = first_offset + (uint64_t)index * 8;
+    if (optional_size < entry + 8 || !gak_span(length, optional + entry, 8)) return 2;
+    uint64_t rva = gak_number(bytes, optional + entry, 4, 0);
+    uint64_t size = gak_number(bytes, optional + entry + 4, 4, 0);
+    if (!rva && !size) return 0;
+    if (!rva || !size) return 2;
+    if (field_at) *field_at = optional + entry;
+    if (field_value) *field_value = rva;
+    return 1;
+}
+
 const void *gak_native_formats_signal(const void *value, const void *name) {
     const GakFormat *format = value;
     gak_formats_error = NULL;
@@ -3457,6 +3484,13 @@ const void *gak_native_formats_signal(const void *value, const void *name) {
     if (gak_format_name(name, "pe.section_wx")) {
         return format->kind == 1 ? gak_format_status(format->section_wx != 0) :
                                    (const void *)&text_not_applicable;
+    }
+    if (gak_format_name(name, "pe.tls_directory") ||
+        gak_format_name(name, "pe.clr_directory")) {
+        unsigned index = gak_format_name(name, "pe.tls_directory") ? 9u : 14u;
+        int status = gak_pe_directory_status(format, index, NULL, NULL);
+        return status == -1 ? (const void *)&text_not_applicable :
+               status == 2 ? (const void *)&text_unknown : gak_format_status(status == 1);
     }
     if (gak_format_name(name, "elf.et_dyn")) {
         if (format->kind == 1) return &text_not_applicable;
@@ -3517,6 +3551,11 @@ void *gak_native_formats_signal_field(const void *value, const void *name) {
             }
         }
         if (!width) return NULL;
+    } else if (gak_format_name(name, "pe.tls_directory") ||
+               gak_format_name(name, "pe.clr_directory")) {
+        unsigned index = gak_format_name(name, "pe.tls_directory") ? 9u : 14u;
+        if (gak_pe_directory_status(format, index, &offset, &number) != 1) return NULL;
+        width = 4;
     } else if (gak_format_name(name, "elf.et_dyn")) {
         if (format->kind != 2) return NULL;
         offset = 16; width = 2; number = format->file_type;
