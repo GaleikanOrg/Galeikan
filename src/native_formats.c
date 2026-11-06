@@ -3656,6 +3656,8 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
     if (info->count > 64) {
         gak_format_fail("PE CLR metadata stream count exceeds 64"); goto cleanup;
     }
+    const uint8_t *seen_names[64] = {0};
+    uint64_t seen_lengths[64] = {0};
     uint64_t cursor = headers + 4;
     for (uint64_t index = 0; index < info->count; index++) {
         if (cursor > root_size || root_size - cursor < 8) {
@@ -3678,6 +3680,14 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
                 gak_format_fail("invalid PE CLR stream name"); goto cleanup;
             }
         }
+        for (uint64_t previous = 0; previous < index; previous++) {
+            if (seen_lengths[previous] == name_len &&
+                memcmp(seen_names[previous], data + name_at, (size_t)name_len) == 0) {
+                gak_format_fail("duplicate PE CLR stream name"); goto cleanup;
+            }
+        }
+        seen_names[index] = data + name_at;
+        seen_lengths[index] = name_len;
         uint64_t padded = (name_len + 4) & ~3u;
         if (padded > available) {
             gak_format_fail("truncated PE CLR stream name"); goto cleanup;

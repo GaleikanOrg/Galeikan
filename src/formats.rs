@@ -736,6 +736,11 @@ impl FormatReport {
             {
                 return Err("invalid PE CLR stream name".into());
             }
+            let name = std::str::from_utf8(&data[name_start..name_start + name_len])
+                .map_err(|_| "invalid PE CLR stream name")?;
+            if streams.iter().any(|stream: &ClrStream| stream.name == name) {
+                return Err("duplicate PE CLR stream name".into());
+            }
             let padded_name = (name_len + 1 + 3) & !3;
             cursor = name_start
                 .checked_add(padded_name)
@@ -747,8 +752,7 @@ impl FormatReport {
                 .checked_add(relative as u64)
                 .ok_or("PE CLR stream RVA overflow")?;
             streams.push(ClrStream {
-                name: String::from_utf8(data[name_start..name_start + name_len].to_vec())
-                    .map_err(|_| "invalid PE CLR stream name")?,
+                name: name.to_owned(),
                 rva,
                 size: stream_size,
                 offset: start + relative,
