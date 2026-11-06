@@ -1091,6 +1091,11 @@ impl FormatReport {
         self.clr_blob_range(bytes, signature)
     }
 
+    pub fn clr_method_signature_text(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (start, end, _) = self.clr_method_signature_range(bytes, index)?;
+        crate::clr_signature::format_method(&bytes[start..end])
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

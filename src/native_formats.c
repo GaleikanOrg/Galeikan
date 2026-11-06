@@ -1411,8 +1411,8 @@ static int gak_dependency_map(const GakFormat *format, int pe, uint64_t address,
                                : gak_elf_va(format, address, length);
     if (!range) return 0;
     *start = range->start;
-    free(range);
     format_memory -= sizeof(*range);
+    free(range);
     return 1;
 }
 
@@ -4047,6 +4047,283 @@ void *gak_native_formats_clr_method_signature(const void *value, int64_t index) 
         gak_format_fail("PE CLR MethodDef signature is empty"); return NULL;
     }
     return gak_native_formats_clr_blob(value, (int64_t)signature);
+}
+
+typedef struct {
+    const uint8_t *data;
+    size_t size;
+    size_t at;
+} GakClrSig;
+
+typedef struct {
+    char data[4096];
+    size_t size;
+} GakClrSigText;
+
+static int gak_clr_sig_append_n(GakClrSigText *out, const char *text, size_t size) {
+    if (size > sizeof(out->data) - out->size) {
+        gak_format_fail("PE CLR method signature text exceeds 4096 bytes"); return 0;
+    }
+    memcpy(out->data + out->size, text, size);
+    out->size += size;
+    return 1;
+}
+
+static int gak_clr_sig_append(GakClrSigText *out, const char *text) {
+    return gak_clr_sig_append_n(out, text, strlen(text));
+}
+
+static int gak_clr_sig_number(GakClrSigText *out, uint32_t number) {
+    char text[16];
+    int size = snprintf(text, sizeof(text), "%u", number);
+    return size > 0 && (size_t)size < sizeof(text) &&
+        gak_clr_sig_append_n(out, text, (size_t)size);
+}
+
+static int gak_clr_sig_byte(GakClrSig *sig, uint8_t *value) {
+    if (sig->at >= sig->size) {
+        gak_format_fail("truncated PE CLR method signature"); return 0;
+    }
+    *value = sig->data[sig->at++];
+    return 1;
+}
+
+static int gak_clr_sig_compressed(GakClrSig *sig, uint32_t *value, int canonical) {
+    uint8_t first, next;
+    if (!gak_clr_sig_byte(sig, &first)) return 0;
+    unsigned width;
+    if (!(first & 0x80)) {
+        *value = first; width = 1;
+    } else if ((first & 0xc0) == 0x80) {
+        if (!gak_clr_sig_byte(sig, &next)) return 0;
+        *value = ((uint32_t)(first & 0x3f) << 8) | next; width = 2;
+    } else if ((first & 0xe0) == 0xc0) {
+        *value = (uint32_t)(first & 0x1f) << 24; width = 4;
+        if (!gak_clr_sig_byte(sig, &next)) return 0;
+        *value |= (uint32_t)next << 16;
+        if (!gak_clr_sig_byte(sig, &next)) return 0;
+        *value |= (uint32_t)next << 8;
+        if (!gak_clr_sig_byte(sig, &next)) return 0;
+        *value |= next;
+    } else {
+        gak_format_fail("invalid PE CLR compressed signature integer"); return 0;
+    }
+    if (canonical && ((width == 2 && *value < 128) ||
+                      (width == 4 && *value < 0x4000))) {
+        gak_format_fail("noncanonical PE CLR compressed signature integer"); return 0;
+    }
+    return 1;
+}
+
+static int gak_clr_sig_signed(GakClrSig *sig, int32_t *value) {
+    size_t start = sig->at;
+    uint32_t raw;
+    if (!gak_clr_sig_compressed(sig, &raw, 0)) return 0;
+    unsigned bits = sig->at - start == 1 ? 6u : sig->at - start == 2 ? 13u : 28u;
+    *value = (int32_t)(raw >> 1) - ((raw & 1u) ? (int32_t)(1u << bits) : 0);
+    if ((bits == 13 && *value >= -64 && *value <= 63) ||
+        (bits == 28 && *value >= -8192 && *value <= 8191)) {
+        gak_format_fail("noncanonical PE CLR compressed signature integer"); return 0;
+    }
+    return 1;
+}
+
+static int gak_clr_sig_signed_number(GakClrSigText *out, int32_t number) {
+    char text[16];
+    int size = snprintf(text, sizeof(text), "%d", number);
+    return size > 0 && (size_t)size < sizeof(text) &&
+        gak_clr_sig_append_n(out, text, (size_t)size);
+}
+
+static int gak_clr_sig_token(GakClrSig *sig, GakClrSigText *out) {
+    uint32_t coded;
+    if (!gak_clr_sig_compressed(sig, &coded, 1)) return 0;
+    const char *table;
+    switch (coded & 3u) {
+        case 0: table = "TypeDef#"; break;
+        case 1: table = "TypeRef#"; break;
+        case 2: table = "TypeSpec#"; break;
+        default: gak_format_fail("invalid PE CLR signature type token"); return 0;
+    }
+    if (!(coded >> 2)) {
+        gak_format_fail("invalid PE CLR signature type token"); return 0;
+    }
+    return gak_clr_sig_append(out, table) && gak_clr_sig_number(out, coded >> 2);
+}
+
+static int gak_clr_sig_method(GakClrSig *, GakClrSigText *, unsigned, int);
+
+static int gak_clr_sig_type(GakClrSig *sig, GakClrSigText *out, unsigned depth,
+                             int allow_void, int allow_byref) {
+    if (depth > 16) {
+        gak_format_fail("PE CLR method signature nesting exceeds 16"); return 0;
+    }
+    while (sig->at < sig->size &&
+           (sig->data[sig->at] == 0x1f || sig->data[sig->at] == 0x20)) {
+        uint8_t modifier;
+        if (!gak_clr_sig_byte(sig, &modifier) ||
+            !gak_clr_sig_append(out, modifier == 0x1f ? "modreq<" : "modopt<") ||
+            !gak_clr_sig_token(sig, out) || !gak_clr_sig_append(out, "> ")) return 0;
+    }
+    uint8_t code;
+    if (!gak_clr_sig_byte(sig, &code)) return 0;
+    const char *simple = NULL;
+    switch (code) {
+        case 0x01: if (allow_void) simple = "void"; break;
+        case 0x02: simple = "bool"; break;
+        case 0x03: simple = "char"; break;
+        case 0x04: simple = "i8"; break;
+        case 0x05: simple = "u8"; break;
+        case 0x06: simple = "i16"; break;
+        case 0x07: simple = "u16"; break;
+        case 0x08: simple = "i32"; break;
+        case 0x09: simple = "u32"; break;
+        case 0x0a: simple = "i64"; break;
+        case 0x0b: simple = "u64"; break;
+        case 0x0c: simple = "f32"; break;
+        case 0x0d: simple = "f64"; break;
+        case 0x0e: simple = "string"; break;
+        case 0x16: if (allow_byref) simple = "typedref"; break;
+        case 0x18: simple = "isize"; break;
+        case 0x19: simple = "usize"; break;
+        case 0x1c: simple = "object"; break;
+        default: break;
+    }
+    if (simple) return gak_clr_sig_append(out, simple);
+    if (code == 0x0f || code == 0x10 || code == 0x1d) {
+        if (code == 0x10 && !allow_byref) goto unsupported;
+        const char *label = code == 0x0f ? "ptr<" :
+                            code == 0x10 ? "ref<" : "vector<";
+        return gak_clr_sig_append(out, label) &&
+            gak_clr_sig_type(sig, out, depth + 1, code == 0x0f, 0) &&
+            gak_clr_sig_append(out, ">");
+    }
+    if (code == 0x11 || code == 0x12) {
+        return gak_clr_sig_append(out, code == 0x11 ? "value<" : "class<") &&
+            gak_clr_sig_token(sig, out) && gak_clr_sig_append(out, ">");
+    }
+    if (code == 0x13 || code == 0x1e) {
+        uint32_t number;
+        return gak_clr_sig_append(out, code == 0x13 ? "T" : "M") &&
+            gak_clr_sig_compressed(sig, &number, 1) && gak_clr_sig_number(out, number);
+    }
+    if (code == 0x14) {
+        uint32_t rank, sizes, bounds, ignored;
+        if (!gak_clr_sig_append(out, "array<") ||
+            !gak_clr_sig_type(sig, out, depth + 1, 0, 0) ||
+            !gak_clr_sig_compressed(sig, &rank, 1)) return 0;
+        if (rank == 0 || rank > 32) {
+            gak_format_fail("invalid PE CLR signature array rank"); return 0;
+        }
+        if (!gak_clr_sig_compressed(sig, &sizes, 1)) return 0;
+        if (sizes > rank) {
+            gak_format_fail("invalid PE CLR signature array shape"); return 0;
+        }
+        if (!gak_clr_sig_append(out, ", sizes=[")) return 0;
+        for (uint32_t i = 0; i < sizes; i++) {
+            if ((i && !gak_clr_sig_append(out, ", ")) ||
+                !gak_clr_sig_compressed(sig, &ignored, 1) ||
+                !gak_clr_sig_number(out, ignored)) return 0;
+        }
+        if (!gak_clr_sig_append(out, "]")) return 0;
+        if (!gak_clr_sig_compressed(sig, &bounds, 1)) return 0;
+        if (bounds > rank) {
+            gak_format_fail("invalid PE CLR signature array shape"); return 0;
+        }
+        if (!gak_clr_sig_append(out, ", lower=[")) return 0;
+        for (uint32_t i = 0; i < bounds; i++) {
+            int32_t lower;
+            if ((i && !gak_clr_sig_append(out, ", ")) ||
+                !gak_clr_sig_signed(sig, &lower) ||
+                !gak_clr_sig_signed_number(out, lower)) return 0;
+        }
+        if (!gak_clr_sig_append(out, "]")) return 0;
+        return gak_clr_sig_append(out, ", rank=") &&
+            gak_clr_sig_number(out, rank) && gak_clr_sig_append(out, ">");
+    }
+    if (code == 0x15) {
+        uint8_t kind;
+        uint32_t count;
+        if (!gak_clr_sig_byte(sig, &kind)) return 0;
+        if (kind != 0x11 && kind != 0x12) {
+            gak_format_fail("invalid PE CLR generic instance kind"); return 0;
+        }
+        if (!gak_clr_sig_append(out, kind == 0x11 ? "value<" : "class<") ||
+            !gak_clr_sig_token(sig, out) ||
+            !gak_clr_sig_compressed(sig, &count, 1)) return 0;
+        if (count == 0 || count > 64) {
+            gak_format_fail("invalid PE CLR generic argument count"); return 0;
+        }
+        for (uint32_t i = 0; i < count; i++)
+            if (!gak_clr_sig_append(out, ", ") ||
+                !gak_clr_sig_type(sig, out, depth + 1, 0, 0)) return 0;
+        return gak_clr_sig_append(out, ">");
+    }
+    if (code == 0x1b) return gak_clr_sig_method(sig, out, depth + 1, 1);
+unsupported:
+    gak_format_fail("unsupported PE CLR method signature element"); return 0;
+}
+
+static int gak_clr_sig_method(GakClrSig *sig, GakClrSigText *out,
+                               unsigned depth, int fnptr) {
+    if (depth > 16) {
+        gak_format_fail("PE CLR method signature nesting exceeds 16"); return 0;
+    }
+    uint8_t flags;
+    uint32_t generics = 0, params;
+    if (!gak_clr_sig_byte(sig, &flags)) return 0;
+    if ((flags & 0x80) || ((flags & 0x0f) != 0 && (flags & 0x0f) != 5) ||
+        ((flags & 0x40) && !(flags & 0x20))) {
+        gak_format_fail("invalid PE CLR method calling convention"); return 0;
+    }
+    if ((flags & 0x10) && !gak_clr_sig_compressed(sig, &generics, 1)) return 0;
+    if ((flags & 0x10) && (generics == 0 || generics > 64)) {
+        gak_format_fail("invalid PE CLR generic parameter count"); return 0;
+    }
+    if (!gak_clr_sig_compressed(sig, &params, 1)) return 0;
+    if (params > 128) {
+        gak_format_fail("PE CLR method parameter count exceeds 128"); return 0;
+    }
+    GakClrSigText result = {0};
+    if (!gak_clr_sig_type(sig, &result, depth + 1, 1, 1)) return 0;
+    if ((flags & 0x40) && !gak_clr_sig_append(out, "explicit ")) return 0;
+    if ((flags & 0x20) && !gak_clr_sig_append(out, "instance ")) return 0;
+    if ((flags & 0x0f) == 5 && !gak_clr_sig_append(out, "vararg ")) return 0;
+    if (fnptr && !gak_clr_sig_append(out, "fn")) return 0;
+    if (generics) {
+        if (!gak_clr_sig_append(out, "generic<M0")) return 0;
+        for (uint32_t i = 1; i < generics; i++)
+            if (!gak_clr_sig_append(out, ", M") || !gak_clr_sig_number(out, i)) return 0;
+        if (!gak_clr_sig_append(out, ">")) return 0;
+    }
+    if (!gak_clr_sig_append(out, "(")) return 0;
+    for (uint32_t i = 0; i < params; i++) {
+        if (i && !gak_clr_sig_append(out, ", ")) return 0;
+        if (!gak_clr_sig_type(sig, out, depth + 1, 0, 1)) return 0;
+    }
+    return gak_clr_sig_append(out, ") -> ") &&
+        gak_clr_sig_append_n(out, result.data, result.size);
+}
+
+void *gak_native_formats_clr_method_signature_text(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    GakFormatRange *range = gak_native_formats_clr_method_signature(value, index);
+    if (!range) return NULL;
+    size_t size = (size_t)(range->end - range->start);
+    const GakSourceHead *source = range->source;
+    const uint8_t *data = source->backing + 8 + source->start + range->start;
+    free(range);
+    format_memory -= sizeof(*range);
+    if (size > 16u * 1024u) {
+        gak_format_fail("PE CLR method signature exceeds 16 KiB"); return NULL;
+    }
+    GakClrSig sig = {data, size, 0};
+    GakClrSigText out = {0};
+    if (!gak_clr_sig_method(&sig, &out, 0, 0)) return NULL;
+    if (sig.at != sig.size) {
+        gak_format_fail("trailing PE CLR method signature bytes"); return NULL;
+    }
+    return gak_format_box(out.data, out.size);
 }
 
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,

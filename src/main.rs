@@ -1,6 +1,7 @@
 mod asm;
 mod bytecode;
 mod bytes;
+mod clr_signature;
 mod case;
 mod file_access;
 mod formats;
