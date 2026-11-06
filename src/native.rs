@@ -1312,6 +1312,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     };
     let call_runtime_path = scratch.write("native_call.c", include_str!("native_call.c"))?;
     let mut compiler = Command::new("gcc");
+    compiler.arg("-fstack-protector-strong");
     if cfg!(windows) {
         compiler.arg("-Wl,--dynamicbase,--nxcompat,--high-entropy-va");
     } else {
