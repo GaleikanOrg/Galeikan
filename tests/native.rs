@@ -2499,6 +2499,94 @@ fn pe_tls_and_clr_signals_match_all_execution_modes() {
 }
 
 #[test]
+fn pe_tls_callbacks_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x400];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    let base = 0x140000000_u64;
+    pe[0x98 + 24..0x98 + 32].copy_from_slice(&base.to_le_bytes());
+    pe[0x98 + 60..0x98 + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x98 + 108..0x98 + 112].copy_from_slice(&10_u32.to_le_bytes());
+    let directory = 0x98 + 112 + 9 * 8;
+    pe[directory..directory + 4].copy_from_slice(&0x1040_u32.to_le_bytes());
+    pe[directory + 4..directory + 8].copy_from_slice(&40_u32.to_le_bytes());
+    let section = 0x98 + 0xf0;
+    pe[section + 8..section + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 12..section + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section + 16..section + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x240 + 24..0x240 + 32].copy_from_slice(&(base + 0x1080).to_le_bytes());
+    pe[0x280..0x288].copy_from_slice(&(base + 0x1100).to_le_bytes());
+    pe[0x288..0x290].copy_from_slice(&(base + 0x1200).to_le_bytes());
+    let hex = pe
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let script = s.write(
+        "tls-callbacks.gaks",
+        &format!("from std.binary import from_hex, snapshot\nfrom std.formats import probe, tls_callback_count, tls_callback_address_u64\nfrom std.result import is_error\nfn missing(report: Format) -> Result<u64> = tls_callback_address_u64(report, 2)\nlet report = probe(snapshot(from_hex(\"{hex}\")))\nprint tls_callback_count(report)\nprint tls_callback_address_u64(report, 0)\nprint tls_callback_address_u64(report, 1)\nprint is_error(missing(report))\n"),
+    );
+    let expected = format!("2\n{}\n{}\ntrue\n", base + 0x1100, base + 0x1200);
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected.as_bytes());
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
     if !gcc_available() {
         return;

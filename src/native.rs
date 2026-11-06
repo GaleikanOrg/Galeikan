@@ -4605,14 +4605,38 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_certificate_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
                 return Ok(Scalar::Int);
             }
-            ("debug_count", [report]) => {
+            ("debug_count" | "tls_callback_count", [report]) => {
                 if self.expr(report, scope)? != Scalar::Format {
-                    return Err("formats.debug_count expects Format".into());
+                    return Err(format!("formats.{name} expects Format"));
                 }
                 self.uses_formats = true;
                 let ready = self.label();
-                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_debug_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                let target = if name == "debug_count" {
+                    "gak_native_formats_debug_count"
+                } else {
+                    "gak_native_formats_tls_callback_count"
+                };
+                writeln!(self.code, "    mov {}, rax\n    call {target}\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
                 return Ok(Scalar::Int);
+            }
+            ("tls_callback_address_u64", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.tls_callback_address_u64 expects Format".into());
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err("formats.tls_callback_address_u64 index must be i64".into());
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_tls_callback_address_u64\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                return Ok(Scalar::UInt);
             }
             (
                 "debug_data" | "debug_size" | "debug_timestamp" | "debug_kind" | "debug_type"

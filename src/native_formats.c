@@ -3464,6 +3464,86 @@ static int gak_pe_directory_status(const GakFormat *format, unsigned index,
     return 1;
 }
 
+static int gak_pe_tls_number(const GakFormat *format, uint64_t rva,
+                             unsigned width, uint64_t *value) {
+    GakFormatRange *range = gak_pe_rva(format, rva, width);
+    if (!range) return 0;
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    *value = gak_number(bytes, range->start, width, 0);
+    free(range);
+    format_memory -= sizeof(GakFormatRange);
+    return 1;
+}
+
+static int gak_pe_tls_scan(const GakFormat *format, int64_t selected,
+                            uint64_t *count, uint64_t *address) {
+    if (format->kind != 1) {
+        gak_format_fail("PE TLS callbacks require a PE image"); return 0;
+    }
+    uint64_t directory_at = 0, directory_rva = 0;
+    int status = gak_pe_directory_status(format, 9u, &directory_at, &directory_rva);
+    *count = 0;
+    if (status == 0) return 1;
+    if (status != 1) {
+        gak_format_fail("incomplete PE TLS directory"); return 0;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    unsigned width = format->bits == 32 ? 4u : 8u;
+    unsigned required = width == 4 ? 24u : 40u;
+    uint64_t declared_size = gak_number(bytes, directory_at + 4, 4, 0);
+    if (declared_size < required) {
+        gak_format_fail("PE TLS directory is shorter than its header"); return 0;
+    }
+    GakFormatRange *header = gak_pe_rva(format, directory_rva, required);
+    if (!header) return 0;
+    uint64_t callbacks_va = gak_number(bytes, header->start + 3u * width, width, 0);
+    free(header);
+    format_memory -= sizeof(GakFormatRange);
+    if (!callbacks_va) return 1;
+    uint64_t image_base = 0;
+    if (!gak_pe_image_base(format, &image_base)) return 0;
+    if (callbacks_va < image_base) {
+        gak_format_fail("PE TLS callback table VA is below image base"); return 0;
+    }
+    uint64_t table_rva = callbacks_va - image_base;
+    for (uint64_t index = 0; index <= 1024u; index++) {
+        if (table_rva > UINT64_MAX - index * width) {
+            gak_format_fail("PE TLS callback table RVA overflow"); return 0;
+        }
+        uint64_t callback = 0;
+        if (!gak_pe_tls_number(format, table_rva + index * width, width, &callback)) return 0;
+        if (!callback) return 1;
+        if (index == 1024u) {
+            gak_format_fail("PE TLS callback table exceeds 1024 entries"); return 0;
+        }
+        if (selected >= 0 && index == (uint64_t)selected) *address = callback;
+        (*count)++;
+    }
+    return 1;
+}
+
+int64_t gak_native_formats_tls_callback_count(const void *value) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return -1; }
+    uint64_t count = 0, ignored = 0;
+    if (!gak_pe_tls_scan(value, -1, &count, &ignored)) return -1;
+    return (int64_t)count;
+}
+
+uint64_t gak_native_formats_tls_callback_address_u64(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    if (index < 0) { gak_format_fail("TLS callback index out of range"); return 0; }
+    uint64_t count = 0, address = 0;
+    if (!gak_pe_tls_scan(value, index, &count, &address)) return 0;
+    if ((uint64_t)index >= count) {
+        gak_format_fail("TLS callback index out of range"); return 0;
+    }
+    return address;
+}
+
 const void *gak_native_formats_signal(const void *value, const void *name) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

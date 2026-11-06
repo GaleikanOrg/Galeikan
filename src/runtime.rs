@@ -6481,6 +6481,17 @@ impl Runtime {
                 i64::try_from(report.debug_entries(source.bytes())?.len())
                     .map_err(|_| "debug count outside i64 range")?,
             )),
+            ("tls_callback_count", [Value::Format(source, report)]) => Ok(Value::Int(
+                i64::try_from(report.tls_callbacks(source.bytes())?.len())
+                    .map_err(|_| "TLS callback count outside i64 range")?,
+            )),
+            ("tls_callback_address_u64", [Value::Format(source, report), index]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "TLS callback index out of range")?;
+                Ok(Value::UInt(*report.tls_callbacks(source.bytes())?
+                    .get(index)
+                    .ok_or("TLS callback index out of range")?))
+            }
             (
                 "debug_data" | "debug_size" | "debug_timestamp" | "debug_kind" | "debug_type"
                 | "debug_pdb_path" | "debug_pdb_guid" | "debug_pdb_age",
@@ -8505,6 +8516,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "export_count") => (&[Format], Int),
         ("formats", "certificate_count") => (&[Format], Int),
         ("formats", "debug_count") => (&[Format], Int),
+        ("formats", "tls_callback_count") => (&[Format], Int),
         ("formats", "symbol_count" | "static_symbol_count") => (&[Format], Int),
         ("formats", "relocation_count") => (&[Format], Int),
         ("formats", "relocation_location") => (&[Format], Str),
@@ -8552,6 +8564,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         }
         ("formats", "debug_type" | "debug_pdb_path" | "debug_pdb_guid") => (&[Format, Int], Str),
         ("formats", "debug_data") => (&[Format, Int], Source),
+        ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
         (
             "formats",
             "relocation_rva" | "relocation_type" | "relocation_symbol" | "relocation_addend",

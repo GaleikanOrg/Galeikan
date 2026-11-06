@@ -211,6 +211,7 @@ const MAX_CERTIFICATES: usize = 4096;
 const MAX_DEBUG_DIRECTORY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DEBUG_ENTRIES: usize = 4096;
 const MAX_DEBUG_DATA_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TLS_CALLBACKS: usize = 1024;
 const MAX_PDB_PATH_BYTES: usize = 4096;
 const MAX_ELF_NOTE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ELF_NOTE_ENTRIES: usize = 100_000;
@@ -256,6 +257,7 @@ pub struct FormatReport {
     pe_certificate_directory: Result<Option<(u64, u64)>, String>,
     pe_debug_directory: Result<Option<(u64, u64)>, String>,
     pe_tls_directory: Result<Option<NumericField>, String>,
+    pe_tls_callbacks: Arc<OnceLock<Result<Vec<u64>, String>>>,
     pe_clr_directory: Result<Option<NumericField>, String>,
     pe_thunk_width: usize,
     pe_dependencies: Arc<OnceLock<Result<Vec<String>, String>>>,
@@ -507,6 +509,60 @@ impl FormatReport {
             "elf.bind_now" => self.elf_bind_now.field(),
             _ => None,
         }
+    }
+
+    pub fn tls_callbacks(&self, bytes: &[u8]) -> Result<&[u64], String> {
+        self.pe_tls_callbacks
+            .get_or_init(|| self.parse_pe_tls_callbacks(bytes))
+            .as_ref()
+            .map(Vec::as_slice)
+            .map_err(Clone::clone)
+    }
+
+    fn parse_pe_tls_callbacks(&self, bytes: &[u8]) -> Result<Vec<u64>, String> {
+        if self.kind() != "pe" {
+            return Err("PE TLS callbacks require a PE image".into());
+        }
+        let directory = match &self.pe_tls_directory {
+            Ok(Some(field)) => field,
+            Ok(None) => return Ok(Vec::new()),
+            Err(error) => return Err(error.clone()),
+        };
+        let width = if self.name == "PE32" { 4 } else { 8 };
+        let required = if width == 4 { 24 } else { 40 };
+        let declared_size = number(bytes, directory.offset + 4, 4, false)?;
+        if declared_size < required {
+            return Err("PE TLS directory is shorter than its header".into());
+        }
+        let (start, _) = self.pe_rva_range(bytes.len(), directory.value, required as usize)?;
+        let callbacks_va = number(bytes, start + 3 * width, width, false)?;
+        if callbacks_va == 0 {
+            return Ok(Vec::new());
+        }
+        let image_base = self.pe_image_base()?;
+        let callbacks_rva = callbacks_va
+            .checked_sub(image_base)
+            .ok_or("PE TLS callback table VA is below image base")?;
+        let mut callbacks = Vec::new();
+        for index in 0..=MAX_TLS_CALLBACKS {
+            let entry_rva = callbacks_rva
+                .checked_add((index * width) as u64)
+                .ok_or("PE TLS callback table RVA overflow")?;
+            let (entry, _) = self
+                .pe_rva_range(bytes.len(), entry_rva, width)
+                .map_err(|error| format!("PE TLS callback table: {error}"))?;
+            let address = number(bytes, entry, width, false)?;
+            if address == 0 {
+                return Ok(callbacks);
+            }
+            if index == MAX_TLS_CALLBACKS {
+                return Err(format!(
+                    "PE TLS callback table exceeds {MAX_TLS_CALLBACKS} entries"
+                ));
+            }
+            callbacks.push(address);
+        }
+        unreachable!()
     }
 
     pub fn summary(&self) -> String {
@@ -2821,6 +2877,7 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_certificate_directory,
         pe_debug_directory,
         pe_tls_directory,
+        pe_tls_callbacks: Arc::new(OnceLock::new()),
         pe_clr_directory,
         pe_thunk_width,
         pe_dependencies: Arc::new(OnceLock::new()),
@@ -3257,6 +3314,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_certificate_directory: Ok(None),
         pe_debug_directory: Ok(None),
         pe_tls_directory: Ok(None),
+        pe_tls_callbacks: Arc::new(OnceLock::new()),
         pe_clr_directory: Ok(None),
         pe_thunk_width: 0,
         pe_dependencies: Arc::new(OnceLock::new()),
@@ -4323,6 +4381,51 @@ mod tests {
             let incomplete = probe(&bytes).unwrap();
             assert_eq!(incomplete.signal("pe.tls_directory").unwrap(), "unknown");
             assert_eq!(incomplete.signal("pe.clr_directory").unwrap(), "absent");
+        }
+    }
+
+    #[test]
+    fn pe_tls_callbacks_map_va_table_and_reject_bad_bounds() {
+        for plus in [false, true] {
+            let mut bytes = pe_with_exports(plus);
+            let optional = 0x98;
+            let first = if plus { 112 } else { 96 };
+            let count = if plus { 108 } else { 92 };
+            let width = if plus { 8 } else { 4 };
+            let base = if plus { 0x140000000_u64 } else { 0x400000_u64 };
+            let base_at = optional + if plus { 24 } else { 28 };
+            bytes[base_at..base_at + width].copy_from_slice(&base.to_le_bytes()[..width]);
+            bytes[optional + count..optional + count + 4].copy_from_slice(&10_u32.to_le_bytes());
+            let directory = optional + first + 9 * 8;
+            bytes[directory..directory + 4].copy_from_slice(&0x1040_u32.to_le_bytes());
+            let size = if plus { 40_u32 } else { 24_u32 };
+            bytes[directory + 4..directory + 8].copy_from_slice(&size.to_le_bytes());
+            let callbacks_at = 0x240 + 3 * width;
+            bytes[callbacks_at..callbacks_at + width]
+                .copy_from_slice(&(base + 0x1080).to_le_bytes()[..width]);
+            for (index, address) in [base + 0x1100, base + 0x1200, 0].into_iter().enumerate() {
+                let at = 0x280 + index * width;
+                bytes[at..at + width].copy_from_slice(&address.to_le_bytes()[..width]);
+            }
+            let report = probe(&bytes).unwrap();
+            assert_eq!(
+                report.tls_callbacks(&bytes).unwrap(),
+                [base + 0x1100, base + 0x1200]
+            );
+            bytes[directory + 4..directory + 8].copy_from_slice(&(size - 1).to_le_bytes());
+            assert!(probe(&bytes)
+                .unwrap()
+                .tls_callbacks(&bytes)
+                .unwrap_err()
+                .contains("shorter"));
+            bytes[directory + 4..directory + 8].copy_from_slice(&size.to_le_bytes());
+            bytes[callbacks_at..callbacks_at + width]
+                .copy_from_slice(&(base - 1).to_le_bytes()[..width]);
+            assert!(probe(&bytes)
+                .unwrap()
+                .tls_callbacks(&bytes)
+                .unwrap_err()
+                .contains("below image base"));
         }
     }
 
