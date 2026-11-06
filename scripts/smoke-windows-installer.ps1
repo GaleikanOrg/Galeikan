@@ -129,8 +129,17 @@ if (-not (Test-Path -LiteralPath $installedLogo) -or
 }
 $langIcon = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Lang\DefaultIcon').GetValue('')
 $scriptIcon = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Script\DefaultIcon').GetValue('')
-if ($langIcon -ne (Join-Path $smokeRoot 'icons\galeikan.ico') -or $scriptIcon -ne $langIcon) {
+$bundleIcon = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\DefaultIcon').GetValue('')
+if ($langIcon -ne (Join-Path $smokeRoot 'icons\galeikan.ico') -or $scriptIcon -ne $langIcon -or $bundleIcon -ne $langIcon) {
     throw 'Installed Galeikan file type icon registration is invalid'
+}
+$bundleAssociation = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\.gakb').GetValue('')
+$bundleCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\open\command').GetValue('')
+$bundleRunCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\run\command').GetValue('')
+if ($bundleAssociation -ne 'Galeikan.Bundle' -or
+    -not $bundleCommand.Contains('"' + $binary + '" inspect "%1"') -or
+    $bundleRunCommand -ne ('"' + $binary + '" exec "%1"')) {
+    throw 'Installed Galeikan bytecode bundle association is invalid'
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
 if ($productName -ne 'Galeikan 0.1.0 Preview 2') { throw 'Installed product name is not Galeikan' }
@@ -160,6 +169,10 @@ if ($LASTEXITCODE -ne 0 -or ($gaksOutput -join "`n") -ne '42') { throw 'Installe
 & $binary build $gaks
 if ($LASTEXITCODE -ne 0) { throw 'Installed .gaks bundle build failed' }
 $gaksBundle = [System.IO.Path]::ChangeExtension($gaks, '.gakb')
+$bundleInfo = & $binary inspect $gaksBundle
+if ($LASTEXITCODE -ne 0 -or ($bundleInfo -join "`n") -notmatch 'Checksum: valid') {
+    throw 'Installed .gaks bundle inspection failed'
+}
 $gaksOutput = & $binary exec $gaksBundle
 if ($LASTEXITCODE -ne 0 -or ($gaksOutput -join "`n") -ne '42') { throw 'Installed .gaks bundle failed' }
 & $binary compile $gaks
@@ -626,6 +639,8 @@ $registryEnvironment.Dispose()
 if ($uninstalledUserPath -cne $originalUserPath) { throw 'Uninstaller did not restore the user PATH' }
 if ((Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Lang') -or
     (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Script') -or
+    (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle') -or
+    (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\.gakb') -or
     (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan')) {
     throw 'Uninstaller left Galeikan file type registrations'
 }

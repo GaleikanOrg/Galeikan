@@ -94,6 +94,20 @@ Section "Galeikan CLI" SEC_CLI
     WriteRegStr HKCU "Software\Classes\.gaks" "" "Galeikan.Script"
     WriteRegDWORD HKCU "Software\Galeikan\Associations" ".gaks" 1
   gaks_association_done:
+
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle" "" "Galeikan bytecode bundle (.gakb)"
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\DefaultIcon" "" "$INSTDIR\icons\galeikan.ico"
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\open" "" "Inspect with Galeikan"
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\open\command" "" '"$SYSDIR\cmd.exe" /k ""$INSTDIR\galeikan.exe" inspect "%1""'
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\run" "" "Run with Galeikan"
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\run\command" "" '"$INSTDIR\galeikan.exe" exec "%1"'
+  WriteRegStr HKCU "Software\Classes\.gakb\OpenWithProgids" "Galeikan.Bundle" ""
+  StrCpy $0 ""
+  ReadRegStr $0 HKCU "Software\Classes\.gakb" ""
+  StrCmp $0 "" 0 gakb_association_done
+    WriteRegStr HKCU "Software\Classes\.gakb" "" "Galeikan.Bundle"
+    WriteRegDWORD HKCU "Software\Galeikan\Associations" ".gakb" 1
+  gakb_association_done:
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -154,14 +168,27 @@ Section "Uninstall"
       DeleteRegValue HKCU "Software\Classes\.gaks" ""
     DeleteRegValue HKCU "Software\Galeikan\Associations" ".gaks"
   gaks_cleanup_done:
+  StrCpy $1 0
+  ReadRegDWORD $1 HKCU "Software\Galeikan\Associations" ".gakb"
+  StrCmp $1 1 0 gakb_cleanup_done
+    StrCpy $0 ""
+    ReadRegStr $0 HKCU "Software\Classes\.gakb" ""
+    StrCmp $0 "Galeikan.Bundle" 0 +2
+      DeleteRegValue HKCU "Software\Classes\.gakb" ""
+    DeleteRegValue HKCU "Software\Galeikan\Associations" ".gakb"
+  gakb_cleanup_done:
   DeleteRegValue HKCU "Software\Classes\.gak\OpenWithProgids" "Galeikan.Lang"
   DeleteRegValue HKCU "Software\Classes\.gaks\OpenWithProgids" "Galeikan.Script"
+  DeleteRegValue HKCU "Software\Classes\.gakb\OpenWithProgids" "Galeikan.Bundle"
   DeleteRegKey /ifempty HKCU "Software\Classes\.gak\OpenWithProgids"
   DeleteRegKey /ifempty HKCU "Software\Classes\.gaks\OpenWithProgids"
+  DeleteRegKey /ifempty HKCU "Software\Classes\.gakb\OpenWithProgids"
   DeleteRegKey /ifempty HKCU "Software\Classes\.gak"
   DeleteRegKey /ifempty HKCU "Software\Classes\.gaks"
+  DeleteRegKey /ifempty HKCU "Software\Classes\.gakb"
   DeleteRegKey HKCU "Software\Classes\Galeikan.Lang"
   DeleteRegKey HKCU "Software\Classes\Galeikan.Script"
+  DeleteRegKey HKCU "Software\Classes\Galeikan.Bundle"
   DeleteRegKey /ifempty HKCU "Software\Galeikan\Associations"
   DeleteRegKey /ifempty HKCU "Software\Galeikan"
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'

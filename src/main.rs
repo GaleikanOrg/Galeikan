@@ -23,6 +23,7 @@ fn usage() -> &'static str {
         "  galeikan check <source.gak|source.gaks>\n",
         "  galeikan run <source.gak|source.gaks> [--engine ast|vm] [--case <output.json>] [permissions] [-- <script-args>...]\n",
         "  galeikan build <source.gak|source.gaks>\n",
+        "  galeikan inspect <file.gakb>\n",
         "  galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...]\n",
         "  galeikan compile <source.gak|source.gaks>\n",
         "  galeikan call <source.gak|source.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...]\n",
@@ -123,6 +124,16 @@ fn main() {
     if args.len() == 2 && args[0] == "build" {
         match runtime::build(&PathBuf::from(&args[1])) {
             Ok(path) => println!("{}", path.display()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if args.len() == 2 && args[0] == "inspect" {
+        match runtime::inspect_bundle(&PathBuf::from(&args[1])) {
+            Ok(info) => print_cli_info(&info),
             Err(error) => {
                 eprintln!("{error}");
                 std::process::exit(1);

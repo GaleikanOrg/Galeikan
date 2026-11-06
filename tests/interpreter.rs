@@ -9,6 +9,38 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn inspect_bundle_verifies_checksum_without_running_code() {
+    let s = Sandbox::new();
+    let script = s.write("inspect.gak", "print \"should-not-run\"\n");
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    let bundle = script.with_extension("gakb");
+    let inspected = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("inspect")
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{}", stderr(&inspected));
+    assert!(stdout(&inspected).contains("Checksum: valid"));
+    assert!(!stdout(&inspected).contains("should-not-run"));
+
+    let mut bytes = fs::read(&bundle).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs::write(&bundle, bytes).unwrap();
+    let corrupted = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("inspect")
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(!corrupted.status.success());
+    assert!(stderr(&corrupted).contains("checksum mismatch"));
+}
+
+#[test]
 fn register_and_flag_access_match_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(

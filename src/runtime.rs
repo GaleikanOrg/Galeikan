@@ -2029,6 +2029,20 @@ pub fn exec(artifact: &Path, options: RunOptions) -> Result<(), String> {
     runtime.run_root(&root)
 }
 
+pub fn inspect_bundle(artifact: &Path) -> Result<String, String> {
+    let (_, _, bundle, bytes) = read_bundle(artifact)?;
+    if !(15..=24).contains(&bundle.version) {
+        return Err("unsupported GAKB format version".into());
+    }
+    Ok(format!(
+        "Galeikan bytecode bundle\nFormat version: {}\nModules: {}\nFunctions: {}\nBytes: {}\nChecksum: valid",
+        bundle.version,
+        bundle.modules.len(),
+        bundle.modules.iter().map(|module| module.functions.len()).sum::<usize>(),
+        bytes.len()
+    ))
+}
+
 fn read_bundle(artifact: &Path) -> Result<(PathBuf, PathBuf, Bundle, Vec<u8>), String> {
     let path = artifact
         .canonicalize()
