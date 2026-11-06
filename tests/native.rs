@@ -2682,6 +2682,108 @@ fn pe_clr_header_fields_match_all_execution_modes() {
 }
 
 #[test]
+fn pe_clr_metadata_streams_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x400];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x98 + 60..0x98 + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x98 + 108..0x98 + 112].copy_from_slice(&15_u32.to_le_bytes());
+    let directory = 0x98 + 112 + 14 * 8;
+    pe[directory..directory + 4].copy_from_slice(&0x10c0_u32.to_le_bytes());
+    pe[directory + 4..directory + 8].copy_from_slice(&72_u32.to_le_bytes());
+    let section = 0x98 + 0xf0;
+    pe[section + 8..section + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 12..section + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section + 16..section + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x2c0..0x2c4].copy_from_slice(&72_u32.to_le_bytes());
+    pe[0x2c8..0x2cc].copy_from_slice(&0x1100_u32.to_le_bytes());
+    pe[0x2cc..0x2d0].copy_from_slice(&0x100_u32.to_le_bytes());
+    pe[0x300..0x304].copy_from_slice(b"BSJB");
+    pe[0x30c..0x310].copy_from_slice(&12_u32.to_le_bytes());
+    pe[0x310..0x31b].copy_from_slice(b"v4.0.30319\0");
+    pe[0x31e..0x320].copy_from_slice(&2_u16.to_le_bytes());
+    pe[0x320..0x324].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x324..0x328].copy_from_slice(&4_u32.to_le_bytes());
+    pe[0x328..0x32c].copy_from_slice(b"#~\0\0");
+    pe[0x32c..0x330].copy_from_slice(&0x90_u32.to_le_bytes());
+    pe[0x330..0x334].copy_from_slice(&8_u32.to_le_bytes());
+    pe[0x334..0x340].copy_from_slice(b"#Strings\0\0\0\0");
+    pe[0x380..0x384].copy_from_slice(&[0, 2, 0, 1]);
+    pe[0x390..0x395].copy_from_slice(b"\0Foo\0");
+    let mut malformed = pe.clone();
+    malformed[0x32c..0x330].copy_from_slice(&0xff_u32.to_le_bytes());
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let script = s.write(
+        "clr-streams.gaks",
+        &format!("from std.binary import from_hex, snapshot, read_cstring, size\nfrom std.formats import probe, clr_metadata_version, clr_stream_count, clr_stream_name, clr_stream_rva, clr_stream_size, clr_stream_data\nfrom std.result import is_error\nfn invalid(report: Format) -> Result<i64> = clr_stream_count(report)\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet broken = probe(snapshot(from_hex(\"{}\")))\nprint clr_metadata_version(report)\nprint clr_stream_count(report)\nprint clr_stream_name(report, 0)\nprint clr_stream_rva(report, 0)\nprint clr_stream_size(report, 0)\nprint size(clr_stream_data(report, 0))\nprint clr_stream_name(report, 1)\nprint read_cstring(clr_stream_data(report, 1), 1, 7)\nprint is_error(invalid(broken))\n", hex(&pe), hex(&malformed)),
+    );
+    let expected = b"v4.0.30319\n2\n#~\n4480\n4\n4\n#Strings\nFoo\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
     if !gcc_available() {
         return;

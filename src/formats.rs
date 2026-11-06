@@ -259,6 +259,7 @@ pub struct FormatReport {
     pe_tls_directory: Result<Option<NumericField>, String>,
     pe_tls_callbacks: Arc<OnceLock<Result<Vec<u64>, String>>>,
     pe_clr_directory: Result<Option<NumericField>, String>,
+    pe_clr_metadata: Arc<OnceLock<Result<ClrMetadata, String>>>,
     pe_thunk_width: usize,
     pe_dependencies: Arc<OnceLock<Result<Vec<String>, String>>>,
     pe_imports: Arc<OnceLock<Result<Vec<ImportInfo>, String>>>,
@@ -268,6 +269,18 @@ pub struct FormatReport {
     pe_relocations: Arc<OnceLock<Result<Vec<RelocationInfo>, String>>>,
     pe_certificates: Arc<OnceLock<Result<Vec<CertificateInfo>, String>>>,
     pe_debug_entries: Arc<OnceLock<Result<Vec<DebugInfo>, String>>>,
+}
+
+pub struct ClrStream {
+    pub name: String,
+    pub rva: u64,
+    pub size: usize,
+    pub offset: usize,
+}
+
+pub struct ClrMetadata {
+    pub version: String,
+    pub streams: Vec<ClrStream>,
 }
 
 impl FormatReport {
@@ -593,6 +606,95 @@ impl FormatReport {
             _ => return Err("unknown PE CLR field".into()),
         };
         number(bytes, start + offset, width, false)
+    }
+
+    pub fn clr_metadata(&self, bytes: &[u8]) -> Result<&ClrMetadata, String> {
+        self.pe_clr_metadata
+            .get_or_init(|| self.parse_clr_metadata(bytes))
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    fn parse_clr_metadata(&self, bytes: &[u8]) -> Result<ClrMetadata, String> {
+        let rva = self.clr_field(bytes, "clr_metadata_rva")?;
+        let size = usize::try_from(self.clr_field(bytes, "clr_metadata_size")?)
+            .map_err(|_| "PE CLR metadata size outside address space")?;
+        if size < 24 {
+            return Err("PE CLR metadata root is too short".into());
+        }
+        let (start, end) = self.pe_rva_range(bytes.len(), rva, size)?;
+        let data = &bytes[start..end];
+        if number(data, 0, 4, false)? != 0x424a5342 {
+            return Err("invalid PE CLR metadata signature".into());
+        }
+        let version_bytes = usize::try_from(number(data, 12, 4, false)?)
+            .map_err(|_| "PE CLR metadata version length outside address space")?;
+        if !(4..=256).contains(&version_bytes) || version_bytes % 4 != 0 {
+            return Err("invalid PE CLR metadata version length".into());
+        }
+        let headers = 16 + version_bytes;
+        if headers + 4 > size {
+            return Err("truncated PE CLR metadata root".into());
+        }
+        let version_data = &data[16..headers];
+        let version_end = version_data
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or("unterminated PE CLR metadata version")?;
+        let version = std::str::from_utf8(&version_data[..version_end])
+            .map_err(|_| "invalid PE CLR metadata version UTF-8")?
+            .to_owned();
+        let count = number(data, headers + 2, 2, false)? as usize;
+        if count > 64 {
+            return Err("PE CLR metadata stream count exceeds 64".into());
+        }
+        let mut cursor = headers + 4;
+        let mut streams = Vec::with_capacity(count);
+        for _ in 0..count {
+            if cursor + 8 > size {
+                return Err("truncated PE CLR stream header".into());
+            }
+            let relative = usize::try_from(number(data, cursor, 4, false)?)
+                .map_err(|_| "PE CLR stream offset outside address space")?;
+            let stream_size = usize::try_from(number(data, cursor + 4, 4, false)?)
+                .map_err(|_| "PE CLR stream size outside address space")?;
+            if relative > size || stream_size > size - relative {
+                return Err("PE CLR stream outside metadata root".into());
+            }
+            let name_start = cursor + 8;
+            let available = size - name_start;
+            let scan = available.min(33);
+            let name_len = data[name_start..name_start + scan]
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or("unterminated PE CLR stream name")?;
+            if name_len == 0
+                || name_len > 32
+                || !data[name_start..name_start + name_len]
+                    .iter()
+                    .all(u8::is_ascii_graphic)
+            {
+                return Err("invalid PE CLR stream name".into());
+            }
+            let padded_name = (name_len + 1 + 3) & !3;
+            cursor = name_start
+                .checked_add(padded_name)
+                .ok_or("PE CLR stream header overflow")?;
+            if cursor > size {
+                return Err("truncated PE CLR stream name".into());
+            }
+            let rva = rva
+                .checked_add(relative as u64)
+                .ok_or("PE CLR stream RVA overflow")?;
+            streams.push(ClrStream {
+                name: String::from_utf8(data[name_start..name_start + name_len].to_vec())
+                    .map_err(|_| "invalid PE CLR stream name")?,
+                rva,
+                size: stream_size,
+                offset: start + relative,
+            });
+        }
+        Ok(ClrMetadata { version, streams })
     }
 
     pub fn summary(&self) -> String {
@@ -2909,6 +3011,7 @@ fn probe_pe(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_tls_directory,
         pe_tls_callbacks: Arc::new(OnceLock::new()),
         pe_clr_directory,
+        pe_clr_metadata: Arc::new(OnceLock::new()),
         pe_thunk_width,
         pe_dependencies: Arc::new(OnceLock::new()),
         pe_imports: Arc::new(OnceLock::new()),
@@ -3346,6 +3449,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
         pe_tls_directory: Ok(None),
         pe_tls_callbacks: Arc::new(OnceLock::new()),
         pe_clr_directory: Ok(None),
+        pe_clr_metadata: Arc::new(OnceLock::new()),
         pe_thunk_width: 0,
         pe_dependencies: Arc::new(OnceLock::new()),
         pe_imports: Arc::new(OnceLock::new()),
@@ -4502,6 +4606,48 @@ mod tests {
                 .unwrap_err()
                 .contains("invalid PE CLR header size"));
         }
+    }
+
+    #[test]
+    fn pe_clr_metadata_lists_bounded_streams() {
+        let mut bytes = pe_with_exports(true);
+        let directory = 0x98 + 112 + 14 * 8;
+        bytes[0x98 + 108..0x98 + 112].copy_from_slice(&15_u32.to_le_bytes());
+        bytes[directory..directory + 4].copy_from_slice(&0x10c0_u32.to_le_bytes());
+        bytes[directory + 4..directory + 8].copy_from_slice(&72_u32.to_le_bytes());
+        bytes[0x2c0..0x2c4].copy_from_slice(&72_u32.to_le_bytes());
+        bytes[0x2c8..0x2cc].copy_from_slice(&0x1100_u32.to_le_bytes());
+        bytes[0x2cc..0x2d0].copy_from_slice(&0x100_u32.to_le_bytes());
+        bytes[0x300..0x304].copy_from_slice(b"BSJB");
+        bytes[0x30c..0x310].copy_from_slice(&12_u32.to_le_bytes());
+        bytes[0x310..0x31b].copy_from_slice(b"v4.0.30319\0");
+        bytes[0x31e..0x320].copy_from_slice(&2_u16.to_le_bytes());
+        bytes[0x320..0x324].copy_from_slice(&0x80_u32.to_le_bytes());
+        bytes[0x324..0x328].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[0x328..0x32c].copy_from_slice(b"#~\0\0");
+        bytes[0x32c..0x330].copy_from_slice(&0x90_u32.to_le_bytes());
+        bytes[0x330..0x334].copy_from_slice(&8_u32.to_le_bytes());
+        bytes[0x334..0x340].copy_from_slice(b"#Strings\0\0\0\0");
+        let report = probe(&bytes).unwrap();
+        let metadata = report.clr_metadata(&bytes).unwrap();
+        assert_eq!(metadata.version, "v4.0.30319");
+        let streams = &metadata.streams;
+        assert_eq!(streams.len(), 2);
+        assert_eq!(
+            (streams[0].name.as_str(), streams[0].rva, streams[0].size),
+            ("#~", 0x1180, 4)
+        );
+        assert_eq!(
+            (streams[1].name.as_str(), streams[1].rva, streams[1].size),
+            ("#Strings", 0x1190, 8)
+        );
+        bytes[0x32c..0x330].copy_from_slice(&0xff_u32.to_le_bytes());
+        assert!(probe(&bytes)
+            .unwrap()
+            .clr_metadata(&bytes)
+            .err()
+            .unwrap()
+            .contains("outside metadata root"));
     }
 
     #[test]

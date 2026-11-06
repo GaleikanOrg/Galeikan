@@ -6497,6 +6497,41 @@ impl Runtime {
                 | "clr_metadata_size" | "clr_flags" | "clr_entry_point",
                 [Value::Format(source, report)],
             ) => Ok(Value::UInt(report.clr_field(source.bytes(), name)?)),
+            ("clr_metadata_version", [Value::Format(source, report)]) => Ok(Value::Str(
+                report.clr_metadata(source.bytes())?.version.clone(),
+            )),
+            ("clr_stream_count", [Value::Format(source, report)]) => Ok(Value::Int(
+                i64::try_from(report.clr_metadata(source.bytes())?.streams.len())
+                    .map_err(|_| "PE CLR stream count outside i64 range")?,
+            )),
+            (
+                "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",
+                [Value::Format(source, report), index],
+            ) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE CLR stream index out of range")?;
+                let stream = report
+                    .clr_metadata(source.bytes())?
+                    .streams
+                    .get(index)
+                    .ok_or("PE CLR stream index out of range")?;
+                match name {
+                    "clr_stream_name" => Ok(Value::Str(stream.name.clone())),
+                    "clr_stream_rva" => Ok(Value::UInt(stream.rva)),
+                    "clr_stream_size" => Ok(Value::UInt(stream.size as u64)),
+                    _ => {
+                        if stream.size == 0 {
+                            return Err("PE CLR stream is empty".into());
+                        }
+                        Ok(Value::Source(Arc::new(Source::rva_view(
+                            source.clone(),
+                            stream.offset,
+                            stream.offset + stream.size,
+                            stream.rva,
+                        )?)))
+                    }
+                }
+            }
             (
                 "debug_data" | "debug_size" | "debug_timestamp" | "debug_kind" | "debug_type"
                 | "debug_pdb_path" | "debug_pdb_guid" | "debug_pdb_age",
@@ -8522,6 +8557,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "certificate_count") => (&[Format], Int),
         ("formats", "debug_count") => (&[Format], Int),
         ("formats", "tls_callback_count") => (&[Format], Int),
+        ("formats", "clr_stream_count") => (&[Format], Int),
+        ("formats", "clr_metadata_version") => (&[Format], Str),
         ("formats", "symbol_count" | "static_symbol_count") => (&[Format], Int),
         ("formats", "relocation_count") => (&[Format], Int),
         ("formats", "relocation_location") => (&[Format], Str),
@@ -8570,6 +8607,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "debug_type" | "debug_pdb_path" | "debug_pdb_guid") => (&[Format, Int], Str),
         ("formats", "debug_data") => (&[Format, Int], Source),
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
+        ("formats", "clr_stream_name") => (&[Format, Int], Str),
+        ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
+        ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (
             "formats",
             "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"

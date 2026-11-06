@@ -3584,6 +3584,167 @@ uint64_t gak_native_formats_clr_field_u64(const void *value, int64_t part) {
     return result;
 }
 
+typedef struct {
+    const uint8_t *version;
+    uint64_t version_len;
+    uint64_t count;
+    const uint8_t *name;
+    uint64_t name_len;
+    uint64_t rva;
+    uint64_t size;
+} GakClrMetadataInfo;
+
+static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length) {
+    for (uint64_t at = 0; at < length;) {
+        uint8_t first = bytes[at];
+        if (first < 0x80) { at++; continue; }
+        unsigned width = first >= 0xc2 && first <= 0xdf ? 2u
+            : first >= 0xe0 && first <= 0xef ? 3u
+            : first >= 0xf0 && first <= 0xf4 ? 4u : 0u;
+        if (!width || width > length - at) return 0;
+        uint8_t second = bytes[at + 1];
+        if (second < 0x80 || second > 0xbf ||
+            (first == 0xe0 && second < 0xa0) ||
+            (first == 0xed && second > 0x9f) ||
+            (first == 0xf0 && second < 0x90) ||
+            (first == 0xf4 && second > 0x8f)) return 0;
+        for (unsigned index = 2; index < width; index++)
+            if (bytes[at + index] < 0x80 || bytes[at + index] > 0xbf) return 0;
+        at += width;
+    }
+    return 1;
+}
+
+static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
+                                     GakClrMetadataInfo *info) {
+    uint64_t root_rva = gak_native_formats_clr_field_u64(format, 2);
+    if (gak_formats_error) return 0;
+    uint64_t root_size = gak_native_formats_clr_field_u64(format, 3);
+    if (gak_formats_error) return 0;
+    if (root_size < 24) {
+        gak_format_fail("PE CLR metadata root is too short"); return 0;
+    }
+    GakFormatRange *mapped = gak_pe_rva(format, root_rva, root_size);
+    if (!mapped) return 0;
+    const GakSourceHead *source = format->source;
+    const uint8_t *data = source->backing + 8 + source->start + mapped->start;
+    int ok = 0;
+    if (gak_number(data, 0, 4, 0) != 0x424a5342u) {
+        gak_format_fail("invalid PE CLR metadata signature"); goto cleanup;
+    }
+    uint64_t version_bytes = gak_number(data, 12, 4, 0);
+    if (version_bytes < 4 || version_bytes > 256 || version_bytes % 4) {
+        gak_format_fail("invalid PE CLR metadata version length"); goto cleanup;
+    }
+    uint64_t headers = 16 + version_bytes;
+    if (headers + 4 > root_size) {
+        gak_format_fail("truncated PE CLR metadata root"); goto cleanup;
+    }
+    uint64_t version_len = 0;
+    while (version_len < version_bytes && data[16 + version_len]) version_len++;
+    if (version_len == version_bytes) {
+        gak_format_fail("unterminated PE CLR metadata version"); goto cleanup;
+    }
+    if (!gak_clr_utf8_valid(data + 16, version_len)) {
+        gak_format_fail("invalid PE CLR metadata version UTF-8"); goto cleanup;
+    }
+    info->version = data + 16;
+    info->version_len = version_len;
+    info->count = gak_number(data, headers + 2, 2, 0);
+    if (info->count > 64) {
+        gak_format_fail("PE CLR metadata stream count exceeds 64"); goto cleanup;
+    }
+    uint64_t cursor = headers + 4;
+    for (uint64_t index = 0; index < info->count; index++) {
+        if (cursor > root_size || root_size - cursor < 8) {
+            gak_format_fail("truncated PE CLR stream header"); goto cleanup;
+        }
+        uint64_t relative = gak_number(data, cursor, 4, 0);
+        uint64_t size = gak_number(data, cursor + 4, 4, 0);
+        if (relative > root_size || size > root_size - relative) {
+            gak_format_fail("PE CLR stream outside metadata root"); goto cleanup;
+        }
+        uint64_t name_at = cursor + 8;
+        uint64_t available = root_size - name_at;
+        uint64_t name_len = 0;
+        while (name_len < available && name_len < 33 && data[name_at + name_len]) name_len++;
+        if (!name_len || name_len > 32 || name_len == available) {
+            gak_format_fail("invalid PE CLR stream name"); goto cleanup;
+        }
+        for (uint64_t byte = 0; byte < name_len; byte++) {
+            if (data[name_at + byte] < 0x21 || data[name_at + byte] > 0x7e) {
+                gak_format_fail("invalid PE CLR stream name"); goto cleanup;
+            }
+        }
+        uint64_t padded = (name_len + 4) & ~3u;
+        if (padded > available) {
+            gak_format_fail("truncated PE CLR stream name"); goto cleanup;
+        }
+        if (selected >= 0 && (uint64_t)selected == index) {
+            info->name = data + name_at;
+            info->name_len = name_len;
+            info->rva = root_rva + relative;
+            info->size = size;
+        }
+        cursor = name_at + padded;
+    }
+    ok = 1;
+cleanup:
+    free(mapped);
+    format_memory -= sizeof(GakFormatRange);
+    return ok;
+}
+
+void *gak_native_formats_clr_metadata_version(const void *value) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    return gak_format_box((const char *)info.version, (size_t)info.version_len);
+}
+
+int64_t gak_native_formats_clr_stream_count(const void *value) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return -1; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return -1;
+    return (int64_t)info.count;
+}
+
+static int gak_pe_clr_stream_select(const void *value, int64_t index,
+                                     GakClrMetadataInfo *info) {
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    if (index < 0) { gak_format_fail("PE CLR stream index out of range"); return 0; }
+    if (!gak_pe_clr_metadata_scan(value, index, info)) return 0;
+    if ((uint64_t)index >= info->count) {
+        gak_format_fail("PE CLR stream index out of range"); return 0;
+    }
+    return 1;
+}
+
+void *gak_native_formats_clr_stream_name(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_stream_select(value, index, &info)) return NULL;
+    return gak_format_box((const char *)info.name, (size_t)info.name_len);
+}
+
+uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
+                                                int64_t part) {
+    gak_formats_error = NULL;
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_stream_select(value, index, &info)) return 0;
+    return part == 0 ? info.rva : info.size;
+}
+
+void *gak_native_formats_clr_stream_data(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_stream_select(value, index, &info)) return NULL;
+    if (!info.size) { gak_format_fail("PE CLR stream is empty"); return NULL; }
+    return gak_pe_rva(value, info.rva, info.size);
+}
+
 const void *gak_native_formats_signal(const void *value, const void *name) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

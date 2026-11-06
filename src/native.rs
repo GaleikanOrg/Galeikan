@@ -4638,6 +4638,71 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_tls_callback_address_u64\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
                 return Ok(Scalar::UInt);
             }
+            ("clr_metadata_version" | "clr_stream_count", [report]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                self.uses_formats = true;
+                let helper = if name == "clr_metadata_version" {
+                    "gak_native_formats_clr_metadata_version"
+                } else {
+                    "gak_native_formats_clr_stream_count"
+                };
+                let ready = self.label();
+                if name == "clr_metadata_version" {
+                    writeln!(self.code, "    mov {}, rax\n    call {helper}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                    return Ok(Scalar::Str);
+                }
+                writeln!(self.code, "    mov {}, rax\n    call {helper}\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                return Ok(Scalar::Int);
+            }
+            (
+                "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",
+                [report, index],
+            ) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                self.uses_formats = true;
+                let helper = match name {
+                    "clr_stream_name" => "gak_native_formats_clr_stream_name",
+                    "clr_stream_data" => "gak_native_formats_clr_stream_data",
+                    _ => "gak_native_formats_clr_stream_number",
+                };
+                writeln!(
+                    self.code,
+                    "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax",
+                    self.arg0(),
+                    report_slot * 8,
+                    self.arg1()
+                )
+                .unwrap();
+                if name == "clr_stream_rva" || name == "clr_stream_size" {
+                    let part = if name == "clr_stream_rva" { 0 } else { 1 };
+                    writeln!(self.code, "    mov {}, {part}", self.arg2()).unwrap();
+                }
+                writeln!(self.code, "    call {helper}").unwrap();
+                if name == "clr_stream_data" {
+                    return self.formats_range_result();
+                }
+                let ready = self.label();
+                if name == "clr_stream_name" {
+                    writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+                    return Ok(Scalar::Str);
+                }
+                writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+                return Ok(Scalar::UInt);
+            }
             (
                 "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"
                 | "clr_metadata_size" | "clr_flags" | "clr_entry_point",
