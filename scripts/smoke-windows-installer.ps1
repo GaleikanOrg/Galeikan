@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$cargoManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'Cargo.toml') -Raw
+if ($cargoManifest -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') { throw 'Missing Galeikan package version' }
+$expectedVersion = "Galeikan $($Matches[1])"
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsixName = "galeikan-language-$($extensionManifest.version).vsix"
 $installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview2-windows-x64-setup.exe'
@@ -63,10 +66,27 @@ if (-not $installedUserPath.EndsWith(";$smokeRoot") -and $installedUserPath -ne 
 $appPath = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\App Paths\galeikan.exe').GetValue('')
 if ($appPath -ne (Join-Path $smokeRoot 'galeikan.exe')) { throw 'Installer did not register the CLI App Path' }
 $binary = Join-Path $smokeRoot 'galeikan.exe'
+$savedProcessPath = $env:PATH
+try {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $env:PATH = "$machinePath;$installedUserPath"
+    $resolvedBinary = (Get-Command galeikan -CommandType Application -ErrorAction Stop).Source
+    if (-not [string]::Equals($resolvedBinary, $binary, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "A fresh terminal resolves galeikan to $resolvedBinary instead of $binary"
+    }
+    $versionOutput = & galeikan --version
+    if ($LASTEXITCODE -ne 0 -or $versionOutput -ne $expectedVersion) {
+        throw 'Galeikan command returned an invalid version from a fresh terminal PATH'
+    }
+} finally {
+    $env:PATH = $savedProcessPath
+}
 & $binary --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Installed Galeikan --help failed' }
-& $binary --version | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Installed Galeikan --version failed' }
+$versionOutput = & $binary --version
+if ($LASTEXITCODE -ne 0 -or $versionOutput -ne $expectedVersion) {
+    throw 'Installed Galeikan --version failed'
+}
 $example = Join-Path $smokeRoot 'examples\hello.gak'
 if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $example)) {
     throw 'Installer did not produce the expected binary and example.'
