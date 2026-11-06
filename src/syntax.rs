@@ -9,17 +9,28 @@ pub enum TokenKind {
     Unsigned(u64),
     String(String),
     Plus,
+    PlusEqual,
     Minus,
+    MinusEqual,
     Star,
+    StarEqual,
     Slash,
+    SlashEqual,
     Percent,
+    PercentEqual,
     Ampersand,
+    AmpersandEqual,
     Pipe,
+    PipeEqual,
     Caret,
+    CaretEqual,
     Tilde,
     ShiftLeft,
+    ShiftLeftEqual,
     ShiftRight,
+    ShiftRightEqual,
     UnsignedShiftRight,
+    UnsignedShiftRightEqual,
     LParen,
     RParen,
     LBracket,
@@ -79,13 +90,21 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             }
             '+' => {
                 lexer.bump();
-                TokenKind::Plus
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::PlusEqual
+                } else {
+                    TokenKind::Plus
+                }
             }
             '-' => {
                 lexer.bump();
                 if lexer.peek() == Some('>') {
                     lexer.bump();
                     TokenKind::Arrow
+                } else if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::MinusEqual
                 } else {
                     TokenKind::Minus
                 }
@@ -100,27 +119,57 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             }
             '*' => {
                 lexer.bump();
-                TokenKind::Star
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::StarEqual
+                } else {
+                    TokenKind::Star
+                }
             }
             '/' => {
                 lexer.bump();
-                TokenKind::Slash
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::SlashEqual
+                } else {
+                    TokenKind::Slash
+                }
             }
             '%' => {
                 lexer.bump();
-                TokenKind::Percent
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::PercentEqual
+                } else {
+                    TokenKind::Percent
+                }
             }
             '&' => {
                 lexer.bump();
-                TokenKind::Ampersand
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::AmpersandEqual
+                } else {
+                    TokenKind::Ampersand
+                }
             }
             '|' => {
                 lexer.bump();
-                TokenKind::Pipe
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::PipeEqual
+                } else {
+                    TokenKind::Pipe
+                }
             }
             '^' => {
                 lexer.bump();
-                TokenKind::Caret
+                if lexer.peek() == Some('=') {
+                    lexer.bump();
+                    TokenKind::CaretEqual
+                } else {
+                    TokenKind::Caret
+                }
             }
             '~' => {
                 lexer.bump();
@@ -182,7 +231,12 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 lexer.bump();
                 if lexer.peek() == Some('<') {
                     lexer.bump();
-                    TokenKind::ShiftLeft
+                    if lexer.peek() == Some('=') {
+                        lexer.bump();
+                        TokenKind::ShiftLeftEqual
+                    } else {
+                        TokenKind::ShiftLeft
+                    }
                 } else if lexer.peek() == Some('=') {
                     lexer.bump();
                     TokenKind::LessEqual
@@ -196,9 +250,19 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                     lexer.bump();
                     if lexer.peek() == Some('>') {
                         lexer.bump();
-                        TokenKind::UnsignedShiftRight
+                        if lexer.peek() == Some('=') {
+                            lexer.bump();
+                            TokenKind::UnsignedShiftRightEqual
+                        } else {
+                            TokenKind::UnsignedShiftRight
+                        }
                     } else {
-                        TokenKind::ShiftRight
+                        if lexer.peek() == Some('=') {
+                            lexer.bump();
+                            TokenKind::ShiftRightEqual
+                        } else {
+                            TokenKind::ShiftRight
+                        }
                     }
                 } else if lexer.peek() == Some('=') {
                     lexer.bump();
@@ -718,6 +782,46 @@ impl Parser {
             Ok(None)
         }
     }
+    fn assignment_op(&self) -> Option<Option<Op>> {
+        Some(match self.current().kind {
+            TokenKind::Equal => None,
+            TokenKind::PlusEqual => Some(Op::Add),
+            TokenKind::MinusEqual => Some(Op::Sub),
+            TokenKind::StarEqual => Some(Op::Mul),
+            TokenKind::SlashEqual => Some(Op::Div),
+            TokenKind::PercentEqual => Some(Op::Rem),
+            TokenKind::AmpersandEqual => Some(Op::BitAnd),
+            TokenKind::PipeEqual => Some(Op::BitOr),
+            TokenKind::CaretEqual => Some(Op::BitXor),
+            TokenKind::ShiftLeftEqual => Some(Op::Shl),
+            TokenKind::ShiftRightEqual => Some(Op::Shr),
+            TokenKind::UnsignedShiftRightEqual => Some(Op::Ushr),
+            _ => return None,
+        })
+    }
+    fn assignment_expr(&mut self, name: &str) -> Result<Expr, String> {
+        let (line, col) = (
+            self.tokens[self.pos - 1].line,
+            self.tokens[self.pos - 1].col,
+        );
+        let operation = self
+            .assignment_op()
+            .ok_or_else(|| self.error("assignment expected"))?;
+        self.bump();
+        let value = self.expr(0)?;
+        match operation {
+            None => Ok(value),
+            Some(op) => Expr::new(
+                ExprKind::Binary(
+                    Box::new(Expr::variable(name.to_owned(), line, col)),
+                    op,
+                    Box::new(value),
+                ),
+                line,
+                col,
+            ),
+        }
+    }
     fn line_end(&mut self) -> Result<(), String> {
         match self.current().kind {
             TokenKind::Newline => {
@@ -893,9 +997,9 @@ impl Parser {
                     let (condition, yes, no) = self.if_statement()?;
                     StmtKind::If(condition, yes, no)
                 }
-                _ if valid_binding_name(&word) && self.current().kind == TokenKind::Equal => {
-                    self.bump();
-                    StmtKind::Assign(word, self.expr(0)?)
+                _ if valid_binding_name(&word) && self.assignment_op().is_some() => {
+                    let value = self.assignment_expr(&word)?;
+                    StmtKind::Assign(word, value)
                 }
                 _ => StmtKind::Expr(self.call_statement()?),
             };
@@ -1169,10 +1273,9 @@ impl Parser {
                 let (condition, yes, no) = self.if_statement()?;
                 Ok(BlockStmtKind::If(condition, yes, no))
             }
-            _ if valid_binding_name(word) && self.current().kind == TokenKind::Equal => {
-                self.bump();
-                Ok(BlockStmtKind::Assign(word.to_string(), self.expr(0)?))
-            }
+            _ if valid_binding_name(word) && self.assignment_op().is_some() => Ok(
+                BlockStmtKind::Assign(word.to_string(), self.assignment_expr(word)?),
+            ),
             _ => Ok(BlockStmtKind::Expr(self.call_statement()?)),
         }
     }

@@ -2784,6 +2784,84 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
 }
 
 #[test]
+fn compound_assignments_match_all_execution_modes_and_keep_mutability_checks() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "compound-assignments.gaks",
+        "from std.result import is_error\nfn total() -> i64 {\n    var result = 0\n    for item in [1, 2, 3] {\n        result += item\n    }\n    return result\n}\nfn overflow() -> Result<i64> {\n    var high = 9223372036854775807\n    high += 1\n    return high\n}\nvar value = 10\nvar bits: u64 = u64(16)\nvalue += 5\nvalue -= 3\nvalue *= 2\nvalue /= 3\nvalue %= 3\nvalue |= 8\nvalue &= 11\nvalue ^= 3\nvalue <<= 1\nvalue >>= 2\nbits >>>= u64(2)\nprint value\nprint bits\nprint total()\nprint is_error(overflow())\n",
+    );
+    let expected = b"4\n4\n6\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, expected);
+    }
+    let immutable = s.write("immutable-compound.gak", "let value = 1\nvalue += 1\n");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&immutable)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{engine} accepted immutable assignment"
+        );
+    }
+    if gcc_available() {
+        assert!(!s.compile(&immutable).status.success());
+    }
+}
+
+#[test]
 fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
     if !gcc_available() {
         return;
