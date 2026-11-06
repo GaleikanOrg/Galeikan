@@ -3960,7 +3960,7 @@ void *gak_native_formats_clr_type_text(const void *value, int64_t index, int64_t
 }
 
 static int gak_clr_method_fields(const void *value, int64_t index,
-                                 uint64_t *rva, uint64_t *name) {
+                                 uint64_t *rva, uint64_t *name, uint64_t *signature) {
     if (!value) { gak_format_fail("invalid Format"); return 0; }
     GakClrMetadataInfo info = {0};
     if (!gak_pe_clr_metadata_scan(value, -1, &info)) return 0;
@@ -4018,6 +4018,7 @@ static int gak_clr_method_fields(const void *value, int64_t index,
     }
     *rva = gak_number(info.table, start, 4, 0);
     *name = gak_number(info.table, start + 8u, strings_width, 0);
+    *signature = gak_number(info.table, start + 8u + strings_width, blob_width, 0);
     if (!*name) {
         gak_format_fail("PE CLR MethodDef name is empty"); return 0;
     }
@@ -4026,16 +4027,26 @@ static int gak_clr_method_fields(const void *value, int64_t index,
 
 void *gak_native_formats_clr_method_name(const void *value, int64_t index) {
     gak_formats_error = NULL;
-    uint64_t rva = 0, name = 0;
-    if (!gak_clr_method_fields(value, index, &rva, &name)) return NULL;
+    uint64_t rva = 0, name = 0, signature = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &name, &signature)) return NULL;
     return gak_native_formats_clr_string(value, (int64_t)name);
 }
 
 uint64_t gak_native_formats_clr_method_rva(const void *value, int64_t index) {
     gak_formats_error = NULL;
-    uint64_t rva = 0, name = 0;
-    if (!gak_clr_method_fields(value, index, &rva, &name)) return 0;
+    uint64_t rva = 0, name = 0, signature = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &name, &signature)) return 0;
     return rva;
+}
+
+void *gak_native_formats_clr_method_signature(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    uint64_t rva = 0, name = 0, signature = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &name, &signature)) return NULL;
+    if (!signature) {
+        gak_format_fail("PE CLR MethodDef signature is empty"); return NULL;
+    }
+    return gak_native_formats_clr_blob(value, (int64_t)signature);
 }
 
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,

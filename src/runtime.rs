@@ -6546,6 +6546,14 @@ impl Runtime {
                     Ok(Value::UInt(report.clr_method_rva(source.bytes(), index)?))
                 }
             }
+            ("clr_method_signature", [Value::Format(source, report), index]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE CLR MethodDef index out of range")?;
+                let (start, end, rva) = report.clr_method_signature_range(source.bytes(), index)?;
+                Ok(Value::Source(Arc::new(Source::rva_view(
+                    source.clone(), start, end, rva,
+                )?)))
+            }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
                     Value::Int(index) => usize::try_from(*index)
@@ -8681,6 +8689,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_type_name" | "clr_type_namespace") => (&[Format, Int], Str),
         ("formats", "clr_method_name") => (&[Format, Int], Str),
         ("formats", "clr_method_rva") => (&[Format, Int], UInt),
+        ("formats", "clr_method_signature") => (&[Format, Int], Source),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (
