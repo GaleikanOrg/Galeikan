@@ -6505,8 +6505,12 @@ impl Runtime {
                     .map_err(|_| "PE CLR stream count outside i64 range")?,
             )),
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
-                let index = usize::try_from(index.as_int()?)
-                    .map_err(|_| "PE CLR table index out of range")?;
+                let index = match index {
+                    Value::Int(index) => usize::try_from(*index)
+                        .map_err(|_| "PE CLR table index out of range")?,
+                    Value::Str(name) => formats::clr_table_index(name)?,
+                    _ => return Err("PE CLR table expects an i64 index or str name".into()),
+                };
                 let (present, rows) = report.clr_table(source.bytes(), index)?;
                 if name == "clr_table_present" {
                     Ok(Value::Bool(present))
@@ -8261,6 +8265,16 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         Region, Regions, Source, Str, UInt,
     };
     let qualified = format!("{module}.{name}");
+    if module == "formats" && matches!(name, "clr_table_present" | "clr_table_rows") {
+        let [format, index] = args else {
+            return Err(format!("{qualified} expects Format and i64 index or str name"));
+        };
+        require_type(Format, *format)?;
+        if !matches!(index, Int | Str | Type::Any) {
+            return Err(format!("{qualified} expects i64 index or str name, got {index}"));
+        }
+        return Ok(if name == "clr_table_present" { Bool } else { Int });
+    }
     if module == "binary" && matches!(name, "find" | "contains") {
         let expected: &[Type] = match args.len() {
             2 => &[Source, Type::Any],
@@ -8618,8 +8632,6 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "debug_data") => (&[Format, Int], Source),
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
         ("formats", "clr_stream_name") => (&[Format, Int], Str),
-        ("formats", "clr_table_present") => (&[Format, Int], Bool),
-        ("formats", "clr_table_rows") => (&[Format, Int], Int),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (

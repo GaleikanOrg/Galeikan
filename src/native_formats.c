@@ -3774,6 +3774,39 @@ uint64_t gak_native_formats_clr_table_number(const void *value, int64_t index,
     return gak_number(info.table, 24u + (uint64_t)preceding * 4u, 4, 0);
 }
 
+uint64_t gak_native_formats_clr_table_named(const void *value, const void *name,
+                                              int64_t part) {
+    gak_formats_error = NULL;
+    if (!name) { gak_format_fail("PE CLR table name must be str"); return 0; }
+    static const char *const names[56] = {
+        [0] = "Module", [1] = "TypeRef", [2] = "TypeDef", [3] = "FieldPtr",
+        [4] = "Field", [5] = "MethodPtr", [6] = "MethodDef", [7] = "ParamPtr",
+        [8] = "Param", [9] = "InterfaceImpl", [10] = "MemberRef",
+        [11] = "Constant", [12] = "CustomAttribute", [13] = "FieldMarshal",
+        [14] = "DeclSecurity", [15] = "ClassLayout", [16] = "FieldLayout",
+        [17] = "StandAloneSig", [18] = "EventMap", [19] = "EventPtr",
+        [20] = "Event", [21] = "PropertyMap", [22] = "PropertyPtr",
+        [23] = "Property", [24] = "MethodSemantics", [25] = "MethodImpl",
+        [26] = "ModuleRef", [27] = "TypeSpec", [28] = "ImplMap",
+        [29] = "FieldRva", [30] = "EncLog", [31] = "EncMap",
+        [32] = "Assembly", [33] = "AssemblyProcessor", [34] = "AssemblyOS",
+        [35] = "AssemblyRef", [36] = "AssemblyRefProcessor",
+        [37] = "AssemblyRefOS", [38] = "File", [39] = "ExportedType",
+        [40] = "ManifestResource", [41] = "NestedClass", [42] = "GenericParam",
+        [43] = "MethodSpec", [44] = "GenericParamConstraint",
+        [48] = "Document", [49] = "MethodDebugInformation",
+        [50] = "LocalScope", [51] = "LocalVariable", [52] = "LocalConstant",
+        [53] = "ImportScope", [54] = "StateMachineMethod",
+        [55] = "CustomDebugInformation",
+    };
+    for (int64_t index = 0; index < 56; index++) {
+        if (names[index] && gak_format_name(name, names[index]))
+            return gak_native_formats_clr_table_number(value, index, part);
+    }
+    gak_format_fail("unknown PE CLR table name");
+    return 0;
+}
+
 void *gak_native_formats_clr_stream_data(const void *value, int64_t index) {
     gak_formats_error = NULL;
     GakClrMetadataInfo info = {0};
