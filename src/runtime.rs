@@ -6517,6 +6517,11 @@ impl Runtime {
                     source.clone(), start, end, rva,
                 )?)))
             }
+            ("clr_guid", [Value::Format(source, report), index]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE CLR GUID index out of range")?;
+                Ok(Value::Str(report.clr_guid(source.bytes(), index)?))
+            }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
                     Value::Int(index) => usize::try_from(*index)
@@ -8647,6 +8652,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_stream_name") => (&[Format, Int], Str),
         ("formats", "clr_string") => (&[Format, Int], Str),
         ("formats", "clr_blob") => (&[Format, Int], Source),
+        ("formats", "clr_guid") => (&[Format, Int], Str),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (

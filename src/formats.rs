@@ -862,6 +862,29 @@ impl FormatReport {
         Ok((start, start + length, rva))
     }
 
+    pub fn clr_guid(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let heap = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#GUID")
+            .ok_or("PE CLR metadata has no #GUID heap")?;
+        if heap.size % 16 != 0 {
+            return Err("invalid PE CLR #GUID heap size".into());
+        }
+        let offset = index
+            .checked_sub(1)
+            .and_then(|value| value.checked_mul(16))
+            .filter(|offset| *offset < heap.size)
+            .ok_or("PE CLR GUID index out of range")?;
+        let data = &bytes[heap.offset + offset..heap.offset + offset + 16];
+        Ok(format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            data[3], data[2], data[1], data[0], data[5], data[4], data[7], data[6],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+        ))
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

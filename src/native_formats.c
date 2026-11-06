@@ -3600,6 +3600,8 @@ typedef struct {
     uint64_t blob_size;
     uint64_t blob_rva;
     uint64_t blob_offset;
+    const uint8_t *guid;
+    uint64_t guid_size;
 } GakClrMetadataInfo;
 
 static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length) {
@@ -3718,6 +3720,10 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
             info->blob_size = size;
             info->blob_rva = root_rva + relative;
             info->blob_offset = mapped->start + relative;
+        }
+        if (name_len == 5 && memcmp(data + name_at, "#GUID", 5) == 0) {
+            info->guid = data + relative;
+            info->guid_size = size;
         }
         cursor = name_at + padded;
     }
@@ -3840,6 +3846,30 @@ void *gak_native_formats_clr_blob(const void *value, int64_t offset) {
     uint64_t start = info.blob_offset + (uint64_t)offset + prefix;
     uint64_t rva = info.blob_rva + (uint64_t)offset + prefix;
     return gak_format_range(format, start, start + length, 1, rva);
+}
+
+void *gak_native_formats_clr_guid(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.guid) {
+        gak_format_fail("PE CLR metadata has no #GUID heap"); return NULL;
+    }
+    if (info.guid_size % 16) {
+        gak_format_fail("invalid PE CLR #GUID heap size"); return NULL;
+    }
+    if (index <= 0 || (uint64_t)(index - 1) >= info.guid_size / 16) {
+        gak_format_fail("PE CLR GUID index out of range"); return NULL;
+    }
+    const uint8_t *data = info.guid + ((uint64_t)(index - 1) * 16);
+    char text[37];
+    int count = snprintf(text, sizeof(text),
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        data[3], data[2], data[1], data[0], data[5], data[4], data[7], data[6],
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
+    if (count != 36) { gak_format_fail("cannot format PE CLR GUID"); return NULL; }
+    return gak_format_box(text, 36);
 }
 
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
