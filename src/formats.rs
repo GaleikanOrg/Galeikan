@@ -885,6 +885,49 @@ impl FormatReport {
         ))
     }
 
+    fn clr_module_indices(&self, bytes: &[u8]) -> Result<(usize, usize), String> {
+        let table = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        if table.size < 24 {
+            return Err("PE CLR table stream is shorter than its header".into());
+        }
+        let data = &bytes[table.offset..table.offset + table.size];
+        let valid = number(data, 8, 8, false)?;
+        let row_bytes = valid.count_ones() as usize * 4;
+        if row_bytes > data.len() - 24 {
+            return Err("truncated PE CLR table row counts".into());
+        }
+        if valid & 1 == 0 || number(data, 24, 4, false)? != 1 {
+            return Err("PE CLR Module table must have one row".into());
+        }
+        let strings_width = if data[6] & 1 != 0 { 4 } else { 2 };
+        let guid_width = if data[6] & 2 != 0 { 4 } else { 2 };
+        let row = 24 + row_bytes;
+        if row + 2 + strings_width + 3 * guid_width > data.len() {
+            return Err("truncated PE CLR Module row".into());
+        }
+        let name = number(data, row + 2, strings_width, false)? as usize;
+        let mvid = number(data, row + 2 + strings_width, guid_width, false)? as usize;
+        if name == 0 {
+            return Err("PE CLR Module name is empty".into());
+        }
+        Ok((name, mvid))
+    }
+
+    pub fn clr_module_name(&self, bytes: &[u8]) -> Result<String, String> {
+        let (name, _) = self.clr_module_indices(bytes)?;
+        self.clr_string(bytes, name)
+    }
+
+    pub fn clr_module_mvid(&self, bytes: &[u8]) -> Result<String, String> {
+        let (_, mvid) = self.clr_module_indices(bytes)?;
+        self.clr_guid(bytes, mvid)
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

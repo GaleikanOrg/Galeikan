@@ -4656,6 +4656,16 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, rax\n    call {helper}\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
                 return Ok(Scalar::Int);
             }
+            ("clr_module_name" | "clr_module_mvid", [report]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                self.uses_formats = true;
+                let part = if name == "clr_module_name" { 0 } else { 1 };
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    mov {}, {part}\n    call gak_native_formats_clr_module_text\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1()).unwrap();
+                return Ok(Scalar::Str);
+            }
             ("clr_string", [report, offset]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err("formats.clr_string expects Format".into());

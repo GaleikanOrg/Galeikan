@@ -6522,6 +6522,12 @@ impl Runtime {
                     .map_err(|_| "PE CLR GUID index out of range")?;
                 Ok(Value::Str(report.clr_guid(source.bytes(), index)?))
             }
+            ("clr_module_name", [Value::Format(source, report)]) => {
+                Ok(Value::Str(report.clr_module_name(source.bytes())?))
+            }
+            ("clr_module_mvid", [Value::Format(source, report)]) => {
+                Ok(Value::Str(report.clr_module_mvid(source.bytes())?))
+            }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
                     Value::Int(index) => usize::try_from(*index)
@@ -8601,6 +8607,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "tls_callback_count") => (&[Format], Int),
         ("formats", "clr_stream_count") => (&[Format], Int),
         ("formats", "clr_metadata_version") => (&[Format], Str),
+        ("formats", "clr_module_name" | "clr_module_mvid") => (&[Format], Str),
         ("formats", "symbol_count" | "static_symbol_count") => (&[Format], Int),
         ("formats", "relocation_count") => (&[Format], Int),
         ("formats", "relocation_location") => (&[Format], Str),

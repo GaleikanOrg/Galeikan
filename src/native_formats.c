@@ -3872,6 +3872,40 @@ void *gak_native_formats_clr_guid(const void *value, int64_t index) {
     return gak_format_box(text, 36);
 }
 
+void *gak_native_formats_clr_module_text(const void *value, int64_t part) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.table) {
+        gak_format_fail("PE CLR metadata has no table stream"); return NULL;
+    }
+    if (info.table_size < 24) {
+        gak_format_fail("PE CLR table stream is shorter than its header"); return NULL;
+    }
+    uint64_t valid = gak_number(info.table, 8, 8, 0);
+    unsigned count = 0;
+    for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
+    uint64_t row_bytes = (uint64_t)count * 4u;
+    if (row_bytes > info.table_size - 24u) {
+        gak_format_fail("truncated PE CLR table row counts"); return NULL;
+    }
+    if (!(valid & 1u) || gak_number(info.table, 24, 4, 0) != 1) {
+        gak_format_fail("PE CLR Module table must have one row"); return NULL;
+    }
+    uint64_t strings_width = info.table[6] & 1u ? 4u : 2u;
+    uint64_t guid_width = info.table[6] & 2u ? 4u : 2u;
+    uint64_t row = 24u + row_bytes;
+    if (row + 2u + strings_width + 3u * guid_width > info.table_size) {
+        gak_format_fail("truncated PE CLR Module row"); return NULL;
+    }
+    uint64_t name = gak_number(info.table, row + 2u, strings_width, 0);
+    uint64_t mvid = gak_number(info.table, row + 2u + strings_width, guid_width, 0);
+    if (!name) { gak_format_fail("PE CLR Module name is empty"); return NULL; }
+    return part == 0 ? gak_native_formats_clr_string(value, (int64_t)name)
+                     : gak_native_formats_clr_guid(value, (int64_t)mvid);
+}
+
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
                                                 int64_t part) {
     gak_formats_error = NULL;
