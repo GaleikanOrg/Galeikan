@@ -13,5 +13,6 @@
   <mime-type type="application/x-galeikan-bytecode">
     <comment>Galeikan bytecode bundle</comment>
     <glob pattern="*.gakb"/>
+    <icon name="text-x-galeikan"/>
   </mime-type>
 </mime-info>

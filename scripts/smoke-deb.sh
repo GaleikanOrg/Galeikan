@@ -35,6 +35,8 @@ done
 update-mime-database "$staging/usr/share/mime"
 grep -Fq 'text/x-galeikan:*.gak' "$staging/usr/share/mime/globs2"
 grep -Fq 'text/x-galeikan-script:*.gaks' "$staging/usr/share/mime/globs2"
+grep -Fq 'application/x-galeikan-bytecode:*.gakb' "$staging/usr/share/mime/globs2"
+grep -Fq 'application/x-galeikan-bytecode:text-x-galeikan' "$staging/usr/share/mime/icons"
 cmp "$project_root/packaging/README.md" "$staging/usr/share/doc/galeikan/README.md"
 cmp "$project_root/packaging/docs/quickstart.md" "$staging/usr/share/doc/galeikan/docs/quickstart.md"
 [[ "$(find "$staging/usr/share/doc/galeikan/docs" -type f | wc -l)" -eq 1 ]]
