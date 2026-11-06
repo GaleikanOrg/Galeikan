@@ -697,6 +697,33 @@ impl FormatReport {
         Ok(ClrMetadata { version, streams })
     }
 
+    pub fn clr_table(&self, bytes: &[u8], index: usize) -> Result<(bool, u32), String> {
+        if index >= 64 {
+            return Err("PE CLR table index out of range".into());
+        }
+        let metadata = self.clr_metadata(bytes)?;
+        let stream = metadata
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        if stream.size < 24 {
+            return Err("PE CLR table stream is shorter than its header".into());
+        }
+        let data = &bytes[stream.offset..stream.offset + stream.size];
+        let valid = number(data, 8, 8, false)?;
+        let row_bytes = valid.count_ones() as usize * 4;
+        if 24 + row_bytes > stream.size {
+            return Err("truncated PE CLR table row counts".into());
+        }
+        let bit = 1_u64 << index;
+        if valid & bit == 0 {
+            return Ok((false, 0));
+        }
+        let preceding = (valid & (bit - 1)).count_ones() as usize;
+        Ok((true, number(data, 24 + preceding * 4, 4, false)? as u32))
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections
@@ -4623,11 +4650,15 @@ mod tests {
         bytes[0x310..0x31b].copy_from_slice(b"v4.0.30319\0");
         bytes[0x31e..0x320].copy_from_slice(&2_u16.to_le_bytes());
         bytes[0x320..0x324].copy_from_slice(&0x80_u32.to_le_bytes());
-        bytes[0x324..0x328].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[0x324..0x328].copy_from_slice(&36_u32.to_le_bytes());
         bytes[0x328..0x32c].copy_from_slice(b"#~\0\0");
-        bytes[0x32c..0x330].copy_from_slice(&0x90_u32.to_le_bytes());
+        bytes[0x32c..0x330].copy_from_slice(&0xc0_u32.to_le_bytes());
         bytes[0x330..0x334].copy_from_slice(&8_u32.to_le_bytes());
         bytes[0x334..0x340].copy_from_slice(b"#Strings\0\0\0\0");
+        bytes[0x388..0x390].copy_from_slice(&0x1_0000_0044_u64.to_le_bytes());
+        bytes[0x398..0x39c].copy_from_slice(&7_u32.to_le_bytes());
+        bytes[0x39c..0x3a0].copy_from_slice(&11_u32.to_le_bytes());
+        bytes[0x3a0..0x3a4].copy_from_slice(&1_u32.to_le_bytes());
         let report = probe(&bytes).unwrap();
         let metadata = report.clr_metadata(&bytes).unwrap();
         assert_eq!(metadata.version, "v4.0.30319");
@@ -4635,12 +4666,17 @@ mod tests {
         assert_eq!(streams.len(), 2);
         assert_eq!(
             (streams[0].name.as_str(), streams[0].rva, streams[0].size),
-            ("#~", 0x1180, 4)
+            ("#~", 0x1180, 36)
         );
         assert_eq!(
             (streams[1].name.as_str(), streams[1].rva, streams[1].size),
-            ("#Strings", 0x1190, 8)
+            ("#Strings", 0x11c0, 8)
         );
+        assert_eq!(report.clr_table(&bytes, 2).unwrap(), (true, 7));
+        assert_eq!(report.clr_table(&bytes, 6).unwrap(), (true, 11));
+        assert_eq!(report.clr_table(&bytes, 32).unwrap(), (true, 1));
+        assert_eq!(report.clr_table(&bytes, 5).unwrap(), (false, 0));
+        assert!(report.clr_table(&bytes, 64).is_err());
         bytes[0x32c..0x330].copy_from_slice(&0xff_u32.to_le_bytes());
         assert!(probe(&bytes)
             .unwrap()

@@ -2709,15 +2709,21 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
     pe[0x310..0x31b].copy_from_slice(b"v4.0.30319\0");
     pe[0x31e..0x320].copy_from_slice(&2_u16.to_le_bytes());
     pe[0x320..0x324].copy_from_slice(&0x80_u32.to_le_bytes());
-    pe[0x324..0x328].copy_from_slice(&4_u32.to_le_bytes());
+    pe[0x324..0x328].copy_from_slice(&36_u32.to_le_bytes());
     pe[0x328..0x32c].copy_from_slice(b"#~\0\0");
-    pe[0x32c..0x330].copy_from_slice(&0x90_u32.to_le_bytes());
+    pe[0x32c..0x330].copy_from_slice(&0xc0_u32.to_le_bytes());
     pe[0x330..0x334].copy_from_slice(&8_u32.to_le_bytes());
     pe[0x334..0x340].copy_from_slice(b"#Strings\0\0\0\0");
     pe[0x380..0x384].copy_from_slice(&[0, 2, 0, 1]);
-    pe[0x390..0x395].copy_from_slice(b"\0Foo\0");
+    pe[0x388..0x390].copy_from_slice(&0x1_0000_0044_u64.to_le_bytes());
+    pe[0x398..0x39c].copy_from_slice(&7_u32.to_le_bytes());
+    pe[0x39c..0x3a0].copy_from_slice(&11_u32.to_le_bytes());
+    pe[0x3a0..0x3a4].copy_from_slice(&1_u32.to_le_bytes());
+    pe[0x3c0..0x3c5].copy_from_slice(b"\0Foo\0");
     let mut malformed = pe.clone();
     malformed[0x32c..0x330].copy_from_slice(&0xff_u32.to_le_bytes());
+    let mut truncated = pe.clone();
+    truncated[0x324..0x328].copy_from_slice(&24_u32.to_le_bytes());
     let hex = |bytes: &[u8]| {
         bytes
             .iter()
@@ -2726,9 +2732,10 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
     };
     let script = s.write(
         "clr-streams.gaks",
-        &format!("from std.binary import from_hex, snapshot, read_cstring, size\nfrom std.formats import probe, clr_metadata_version, clr_stream_count, clr_stream_name, clr_stream_rva, clr_stream_size, clr_stream_data\nfrom std.result import is_error\nfn invalid(report: Format) -> Result<i64> = clr_stream_count(report)\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet broken = probe(snapshot(from_hex(\"{}\")))\nprint clr_metadata_version(report)\nprint clr_stream_count(report)\nprint clr_stream_name(report, 0)\nprint clr_stream_rva(report, 0)\nprint clr_stream_size(report, 0)\nprint size(clr_stream_data(report, 0))\nprint clr_stream_name(report, 1)\nprint read_cstring(clr_stream_data(report, 1), 1, 7)\nprint is_error(invalid(broken))\n", hex(&pe), hex(&malformed)),
+        &format!("from std.binary import from_hex, snapshot, read_cstring, size\nfrom std.formats import probe, clr_metadata_version, clr_stream_count, clr_stream_name, clr_stream_rva, clr_stream_size, clr_stream_data, clr_table_present, clr_table_rows\nfrom std.result import is_error\nfn invalid(report: Format) -> Result<i64> = clr_stream_count(report)\nfn bad_table(report: Format) -> Result<i64> = clr_table_rows(report, 64)\nfn bad_rows(report: Format) -> Result<i64> = clr_table_rows(report, 2)\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet broken = probe(snapshot(from_hex(\"{}\")))\nlet short = probe(snapshot(from_hex(\"{}\")))\nprint clr_metadata_version(report)\nprint clr_stream_count(report)\nprint clr_stream_name(report, 0)\nprint clr_stream_rva(report, 0)\nprint clr_stream_size(report, 0)\nprint size(clr_stream_data(report, 0))\nprint clr_stream_name(report, 1)\nprint read_cstring(clr_stream_data(report, 1), 1, 7)\nprint clr_table_present(report, 2)\nprint clr_table_rows(report, 2)\nprint clr_table_rows(report, 6)\nprint clr_table_rows(report, 32)\nprint clr_table_present(report, 5)\nprint clr_table_rows(report, 5)\nprint is_error(bad_table(report))\nprint is_error(invalid(broken))\nprint is_error(bad_rows(short))\n", hex(&pe), hex(&malformed), hex(&truncated)),
     );
-    let expected = b"v4.0.30319\n2\n#~\n4480\n4\n4\n#Strings\nFoo\ntrue\n";
+    let expected =
+        b"v4.0.30319\n2\n#~\n4480\n36\n36\n#Strings\nFoo\ntrue\n7\n11\n1\nfalse\n0\ntrue\ntrue\ntrue\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)

@@ -4703,6 +4703,30 @@ impl Codegen {
                 writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
                 return Ok(Scalar::UInt);
             }
+            ("clr_table_present" | "clr_table_rows", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax",
+                    report_slot * 8
+                )
+                .unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                self.uses_formats = true;
+                let part = if name == "clr_table_present" { 1 } else { 0 };
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    call gak_native_formats_clr_table_number\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
+                return Ok(if name == "clr_table_present" {
+                    Scalar::Bool
+                } else {
+                    Scalar::Int
+                });
+            }
             (
                 "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"
                 | "clr_metadata_size" | "clr_flags" | "clr_entry_point",

@@ -3592,6 +3592,8 @@ typedef struct {
     uint64_t name_len;
     uint64_t rva;
     uint64_t size;
+    const uint8_t *table;
+    uint64_t table_size;
 } GakClrMetadataInfo;
 
 static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length) {
@@ -3686,6 +3688,11 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
             info->rva = root_rva + relative;
             info->size = size;
         }
+        if (!info->table && name_len == 2 && data[name_at] == '#' &&
+            (data[name_at + 1] == '~' || data[name_at + 1] == '-')) {
+            info->table = data + relative;
+            info->table_size = size;
+        }
         cursor = name_at + padded;
     }
     ok = 1;
@@ -3735,6 +3742,36 @@ uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
     GakClrMetadataInfo info = {0};
     if (!gak_pe_clr_stream_select(value, index, &info)) return 0;
     return part == 0 ? info.rva : info.size;
+}
+
+uint64_t gak_native_formats_clr_table_number(const void *value, int64_t index,
+                                               int64_t part) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    if (index < 0 || index >= 64) {
+        gak_format_fail("PE CLR table index out of range"); return 0;
+    }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return 0;
+    if (!info.table) {
+        gak_format_fail("PE CLR metadata has no table stream"); return 0;
+    }
+    if (info.table_size < 24) {
+        gak_format_fail("PE CLR table stream is shorter than its header"); return 0;
+    }
+    uint64_t valid = gak_number(info.table, 8, 8, 0);
+    unsigned count = 0;
+    for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
+    if ((uint64_t)count * 4u > info.table_size - 24u) {
+        gak_format_fail("truncated PE CLR table row counts"); return 0;
+    }
+    uint64_t selected = 1ull << (unsigned)index;
+    if (!(valid & selected)) return 0;
+    if (part == 1) return 1;
+    unsigned preceding = 0;
+    for (unsigned bit = 0; bit < (unsigned)index; bit++)
+        preceding += (unsigned)((valid >> bit) & 1u);
+    return gak_number(info.table, 24u + (uint64_t)preceding * 4u, 4, 0);
 }
 
 void *gak_native_formats_clr_stream_data(const void *value, int64_t index) {

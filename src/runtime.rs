@@ -6504,6 +6504,16 @@ impl Runtime {
                 i64::try_from(report.clr_metadata(source.bytes())?.streams.len())
                     .map_err(|_| "PE CLR stream count outside i64 range")?,
             )),
+            ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE CLR table index out of range")?;
+                let (present, rows) = report.clr_table(source.bytes(), index)?;
+                if name == "clr_table_present" {
+                    Ok(Value::Bool(present))
+                } else {
+                    Ok(Value::Int(i64::from(rows)))
+                }
+            }
             (
                 "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",
                 [Value::Format(source, report), index],
@@ -8608,6 +8618,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "debug_data") => (&[Format, Int], Source),
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
         ("formats", "clr_stream_name") => (&[Format, Int], Str),
+        ("formats", "clr_table_present") => (&[Format, Int], Bool),
+        ("formats", "clr_table_rows") => (&[Format, Int], Int),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (
