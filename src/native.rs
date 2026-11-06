@@ -4726,6 +4726,30 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    call gak_native_formats_clr_type_text\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Str);
             }
+            ("clr_method_name" | "clr_method_rva", [report, index]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8).unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                self.uses_formats = true;
+                let helper = if name == "clr_method_name" {
+                    "gak_native_formats_clr_method_name"
+                } else {
+                    "gak_native_formats_clr_method_rva"
+                };
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call {helper}", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                if name == "clr_method_name" {
+                    writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+                    return Ok(Scalar::Str);
+                }
+                writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+                return Ok(Scalar::UInt);
+            }
             (
                 "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",
                 [report, index],

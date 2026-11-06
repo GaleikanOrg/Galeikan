@@ -1002,6 +1002,82 @@ impl FormatReport {
         self.clr_string(bytes, namespace)
     }
 
+    fn clr_method_fields(&self, bytes: &[u8], index: usize) -> Result<(u64, usize), String> {
+        let table = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        if table.size < 24 {
+            return Err("PE CLR table stream is shorter than its header".into());
+        }
+        let data = &bytes[table.offset..table.offset + table.size];
+        let valid = number(data, 8, 8, false)?;
+        let row_bytes = valid.count_ones() as usize * 4;
+        if row_bytes > data.len() - 24 {
+            return Err("truncated PE CLR table row counts".into());
+        }
+        let mut rows = [0_u64; 64];
+        let mut cursor = 24;
+        for (table_index, count) in rows.iter_mut().enumerate() {
+            if valid & (1_u64 << table_index) != 0 {
+                *count = number(data, cursor, 4, false)?;
+                cursor += 4;
+            }
+        }
+        if index == 0 || index as u64 > rows[6] {
+            return Err("PE CLR MethodDef index out of range".into());
+        }
+        let strings_width = if data[6] & 1 != 0 { 4 } else { 2 };
+        let guid_width = if data[6] & 2 != 0 { 4 } else { 2 };
+        let blob_width = if data[6] & 4 != 0 { 4 } else { 2 };
+        let scope_width = if [0, 1, 26, 35].iter().any(|&table| rows[table] >= 1 << 14) { 4 } else { 2 };
+        let extends_width = if [1, 2, 27].iter().any(|&table| rows[table] >= 1 << 14) { 4 } else { 2 };
+        let field_rows = if valid & (1 << 3) != 0 { rows[3] } else { rows[4] };
+        let method_rows = if valid & (1 << 5) != 0 { rows[5] } else { rows[6] };
+        let param_rows = if valid & (1 << 7) != 0 { rows[7] } else { rows[8] };
+        let field_width = if field_rows >= 1 << 16 { 4 } else { 2 };
+        let method_width = if method_rows >= 1 << 16 { 4 } else { 2 };
+        let param_width = if param_rows >= 1 << 16 { 4 } else { 2 };
+        let sizes = [
+            2 + strings_width + 3 * guid_width,
+            scope_width + 2 * strings_width,
+            4 + 2 * strings_width + extends_width + field_width + method_width,
+            field_width,
+            2 + strings_width + blob_width,
+            method_width,
+        ];
+        let preceding = (0..6).try_fold(0_u64, |total, table| {
+            total.checked_add(rows[table].checked_mul(sizes[table] as u64)?)
+        }).ok_or("PE CLR MethodDef row outside address space")?;
+        let method_size = 8 + strings_width + blob_width + param_width;
+        let start = preceding
+            .checked_add((index as u64 - 1).checked_mul(method_size as u64).ok_or("PE CLR MethodDef row outside address space")?)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .and_then(|offset| cursor.checked_add(offset))
+            .ok_or("PE CLR MethodDef row outside address space")?;
+        if start > data.len() || method_size > data.len() - start {
+            return Err("truncated PE CLR MethodDef row".into());
+        }
+        let rva = number(data, start, 4, false)?;
+        let name = number(data, start + 8, strings_width, false)? as usize;
+        if name == 0 {
+            return Err("PE CLR MethodDef name is empty".into());
+        }
+        Ok((rva, name))
+    }
+
+    pub fn clr_method_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (_, name) = self.clr_method_fields(bytes, index)?;
+        self.clr_string(bytes, name)
+    }
+
+    pub fn clr_method_rva(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        let (rva, _) = self.clr_method_fields(bytes, index)?;
+        Ok(rva)
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

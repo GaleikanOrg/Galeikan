@@ -3959,6 +3959,85 @@ void *gak_native_formats_clr_type_text(const void *value, int64_t index, int64_t
     return gak_native_formats_clr_string(value, (int64_t)(part == 0 ? name : namespace));
 }
 
+static int gak_clr_method_fields(const void *value, int64_t index,
+                                 uint64_t *rva, uint64_t *name) {
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return 0;
+    if (!info.table) {
+        gak_format_fail("PE CLR metadata has no table stream"); return 0;
+    }
+    if (info.table_size < 24) {
+        gak_format_fail("PE CLR table stream is shorter than its header"); return 0;
+    }
+    uint64_t valid = gak_number(info.table, 8, 8, 0);
+    unsigned count = 0;
+    for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
+    uint64_t row_bytes = (uint64_t)count * 4u;
+    if (row_bytes > info.table_size - 24u) {
+        gak_format_fail("truncated PE CLR table row counts"); return 0;
+    }
+    uint64_t rows[64] = {0};
+    uint64_t cursor = 24;
+    for (unsigned bit = 0; bit < 64; bit++) {
+        if ((valid >> bit) & 1u) {
+            rows[bit] = gak_number(info.table, cursor, 4, 0);
+            cursor += 4;
+        }
+    }
+    if (index <= 0 || (uint64_t)index > rows[6]) {
+        gak_format_fail("PE CLR MethodDef index out of range"); return 0;
+    }
+    uint64_t strings_width = info.table[6] & 1u ? 4u : 2u;
+    uint64_t guid_width = info.table[6] & 2u ? 4u : 2u;
+    uint64_t blob_width = info.table[6] & 4u ? 4u : 2u;
+    uint64_t scope_width = rows[0] >= (1u << 14) || rows[1] >= (1u << 14) ||
+        rows[26] >= (1u << 14) || rows[35] >= (1u << 14) ? 4u : 2u;
+    uint64_t extends_width = rows[1] >= (1u << 14) || rows[2] >= (1u << 14) ||
+        rows[27] >= (1u << 14) ? 4u : 2u;
+    uint64_t field_rows = valid & (1u << 3) ? rows[3] : rows[4];
+    uint64_t method_rows = valid & (1u << 5) ? rows[5] : rows[6];
+    uint64_t param_rows = valid & (1u << 7) ? rows[7] : rows[8];
+    uint64_t field_width = field_rows >= (1u << 16) ? 4u : 2u;
+    uint64_t method_width = method_rows >= (1u << 16) ? 4u : 2u;
+    uint64_t param_width = param_rows >= (1u << 16) ? 4u : 2u;
+    uint64_t sizes[6] = {
+        2u + strings_width + 3u * guid_width,
+        scope_width + 2u * strings_width,
+        4u + 2u * strings_width + extends_width + field_width + method_width,
+        field_width,
+        2u + strings_width + blob_width,
+        method_width,
+    };
+    uint64_t start = cursor;
+    for (unsigned bit = 0; bit < 6; bit++) start += rows[bit] * sizes[bit];
+    uint64_t method_size = 8u + strings_width + blob_width + param_width;
+    start += ((uint64_t)index - 1u) * method_size;
+    if (start > info.table_size || method_size > info.table_size - start) {
+        gak_format_fail("truncated PE CLR MethodDef row"); return 0;
+    }
+    *rva = gak_number(info.table, start, 4, 0);
+    *name = gak_number(info.table, start + 8u, strings_width, 0);
+    if (!*name) {
+        gak_format_fail("PE CLR MethodDef name is empty"); return 0;
+    }
+    return 1;
+}
+
+void *gak_native_formats_clr_method_name(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    uint64_t rva = 0, name = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &name)) return NULL;
+    return gak_native_formats_clr_string(value, (int64_t)name);
+}
+
+uint64_t gak_native_formats_clr_method_rva(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    uint64_t rva = 0, name = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &name)) return 0;
+    return rva;
+}
+
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
                                                 int64_t part) {
     gak_formats_error = NULL;
