@@ -3906,6 +3906,59 @@ void *gak_native_formats_clr_module_text(const void *value, int64_t part) {
                      : gak_native_formats_clr_guid(value, (int64_t)mvid);
 }
 
+void *gak_native_formats_clr_type_text(const void *value, int64_t index, int64_t part) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.table) {
+        gak_format_fail("PE CLR metadata has no table stream"); return NULL;
+    }
+    if (info.table_size < 24) {
+        gak_format_fail("PE CLR table stream is shorter than its header"); return NULL;
+    }
+    uint64_t valid = gak_number(info.table, 8, 8, 0);
+    unsigned count = 0;
+    for (unsigned bit = 0; bit < 64; bit++) count += (unsigned)((valid >> bit) & 1u);
+    uint64_t row_bytes = (uint64_t)count * 4u;
+    if (row_bytes > info.table_size - 24u) {
+        gak_format_fail("truncated PE CLR table row counts"); return NULL;
+    }
+    uint64_t rows[64] = {0};
+    uint64_t cursor = 24;
+    for (unsigned bit = 0; bit < 64; bit++) {
+        if ((valid >> bit) & 1u) {
+            rows[bit] = gak_number(info.table, cursor, 4, 0);
+            cursor += 4;
+        }
+    }
+    if (index <= 0 || (uint64_t)index > rows[2]) {
+        gak_format_fail("PE CLR TypeDef index out of range"); return NULL;
+    }
+    uint64_t strings_width = info.table[6] & 1u ? 4u : 2u;
+    uint64_t guid_width = info.table[6] & 2u ? 4u : 2u;
+    uint64_t scope_width = rows[0] >= (1u << 14) || rows[1] >= (1u << 14) ||
+        rows[26] >= (1u << 14) || rows[35] >= (1u << 14) ? 4u : 2u;
+    uint64_t extends_width = rows[1] >= (1u << 14) || rows[2] >= (1u << 14) ||
+        rows[27] >= (1u << 14) ? 4u : 2u;
+    uint64_t field_rows = rows[3] ? rows[3] : rows[4];
+    uint64_t method_rows = rows[5] ? rows[5] : rows[6];
+    uint64_t field_width = field_rows >= (1u << 16) ? 4u : 2u;
+    uint64_t method_width = method_rows >= (1u << 16) ? 4u : 2u;
+    uint64_t module_size = 2u + strings_width + 3u * guid_width;
+    uint64_t type_ref_size = scope_width + 2u * strings_width;
+    uint64_t type_size = 4u + 2u * strings_width + extends_width + field_width + method_width;
+    uint64_t start = cursor + rows[0] * module_size + rows[1] * type_ref_size +
+        ((uint64_t)index - 1u) * type_size;
+    if (start > info.table_size || type_size > info.table_size - start) {
+        gak_format_fail("truncated PE CLR TypeDef row"); return NULL;
+    }
+    uint64_t name = gak_number(info.table, start + 4u, strings_width, 0);
+    uint64_t namespace = gak_number(info.table, start + 4u + strings_width, strings_width, 0);
+    if (!name) { gak_format_fail("PE CLR TypeDef name is empty"); return NULL; }
+    return gak_native_formats_clr_string(value, (int64_t)(part == 0 ? name : namespace));
+}
+
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,
                                                 int64_t part) {
     gak_formats_error = NULL;

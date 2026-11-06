@@ -928,6 +928,80 @@ impl FormatReport {
         self.clr_guid(bytes, mvid)
     }
 
+    fn clr_type_indices(&self, bytes: &[u8], index: usize) -> Result<(usize, usize), String> {
+        let table = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        if table.size < 24 {
+            return Err("PE CLR table stream is shorter than its header".into());
+        }
+        let data = &bytes[table.offset..table.offset + table.size];
+        let valid = number(data, 8, 8, false)?;
+        let row_bytes = valid.count_ones() as usize * 4;
+        if row_bytes > data.len() - 24 {
+            return Err("truncated PE CLR table row counts".into());
+        }
+        let mut rows = [0_u64; 64];
+        let mut cursor = 24;
+        for (table_index, count) in rows.iter_mut().enumerate() {
+            if valid & (1_u64 << table_index) != 0 {
+                *count = number(data, cursor, 4, false)?;
+                cursor += 4;
+            }
+        }
+        if index == 0 || index as u64 > rows[2] {
+            return Err("PE CLR TypeDef index out of range".into());
+        }
+        let strings_width = if data[6] & 1 != 0 { 4 } else { 2 };
+        let guid_width = if data[6] & 2 != 0 { 4 } else { 2 };
+        let scope_width = if [0, 1, 26, 35].iter().any(|&table| rows[table] >= 1 << 14) {
+            4
+        } else {
+            2
+        };
+        let extends_width = if [1, 2, 27].iter().any(|&table| rows[table] >= 1 << 14) {
+            4
+        } else {
+            2
+        };
+        let field_rows = if rows[3] != 0 { rows[3] } else { rows[4] };
+        let method_rows = if rows[5] != 0 { rows[5] } else { rows[6] };
+        let field_width = if field_rows >= 1 << 16 { 4 } else { 2 };
+        let method_width = if method_rows >= 1 << 16 { 4 } else { 2 };
+        let module_size = 2 + strings_width + 3 * guid_width;
+        let type_ref_size = scope_width + 2 * strings_width;
+        let type_size = 4 + 2 * strings_width + extends_width + field_width + method_width;
+        let start = rows[0]
+            .checked_mul(module_size as u64)
+            .and_then(|size| size.checked_add(rows[1] * type_ref_size as u64))
+            .and_then(|size| size.checked_add((index as u64 - 1) * type_size as u64))
+            .and_then(|size| usize::try_from(size).ok())
+            .and_then(|size| cursor.checked_add(size))
+            .ok_or("PE CLR TypeDef row outside address space")?;
+        if start > data.len() || type_size > data.len() - start {
+            return Err("truncated PE CLR TypeDef row".into());
+        }
+        let name = number(data, start + 4, strings_width, false)? as usize;
+        let namespace = number(data, start + 4 + strings_width, strings_width, false)? as usize;
+        if name == 0 {
+            return Err("PE CLR TypeDef name is empty".into());
+        }
+        Ok((name, namespace))
+    }
+
+    pub fn clr_type_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (name, _) = self.clr_type_indices(bytes, index)?;
+        self.clr_string(bytes, name)
+    }
+
+    pub fn clr_type_namespace(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        let (_, namespace) = self.clr_type_indices(bytes, index)?;
+        self.clr_string(bytes, namespace)
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections
