@@ -111,6 +111,7 @@ pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
 pub fn hunt_region(
     region: &Region,
     pattern: &[u8],
+    masks: Option<&[u8]>,
     offset: usize,
     length: usize,
 ) -> Result<Vec<usize>, String> {
@@ -121,6 +122,13 @@ pub fn hunt_region(
     }
     if length > MAX_SCAN {
         return Err(format!("process scan length exceeds {MAX_SCAN} bytes"));
+    }
+    if let Some(masks) = masks {
+        if masks.len() != pattern.len()
+            || (masks.iter().any(|mask| *mask != 0xff) && pattern.len() > 64)
+        {
+            return Err("invalid masked process search pattern".into());
+        }
     }
     if offset > region.size
         || length > region.size - offset
@@ -134,37 +142,60 @@ pub fn hunt_region(
     if !region.access.starts_with('r') {
         return Err("region is not marked readable".into());
     }
-    let mut prefix = vec![0; pattern.len()];
-    for index in 1..pattern.len() {
-        let mut matched = prefix[index - 1];
-        while matched > 0 && pattern[index] != pattern[matched] {
-            matched = prefix[matched - 1];
+    let masked = masks.filter(|masks| masks.iter().any(|mask| *mask != 0xff));
+    let mut accept = [0_u64; 256];
+    let mut prefix = Vec::new();
+    if let Some(masks) = masked {
+        for (position, (&value, &mask)) in pattern.iter().zip(masks).enumerate() {
+            let bit = 1_u64 << position;
+            for (byte, entry) in accept.iter_mut().enumerate() {
+                if (byte as u8 & mask) == value {
+                    *entry |= bit;
+                }
+            }
         }
-        if pattern[index] == pattern[matched] {
-            matched += 1;
+    } else {
+        prefix = vec![0; pattern.len()];
+        for index in 1..pattern.len() {
+            let mut matched = prefix[index - 1];
+            while matched > 0 && pattern[index] != pattern[matched] {
+                matched = prefix[matched - 1];
+            }
+            if pattern[index] == pattern[matched] {
+                matched += 1;
+            }
+            prefix[index] = matched;
         }
-        prefix[index] = matched;
     }
     let mut hits = Vec::new();
     let mut matched = 0;
+    let mut state = 0_u64;
     let mut scanned = 0;
     while scanned < length {
         let count = (length - scanned).min(MAX_READ);
         let address = region.address_of(offset + scanned)?;
         let bytes = snapshot(region.pid, address, count)?;
         for (index, &byte) in bytes.iter().enumerate() {
-            while matched > 0 && byte != pattern[matched] {
-                matched = prefix[matched - 1];
-            }
-            if byte == pattern[matched] {
-                matched += 1;
-            }
-            if matched == pattern.len() {
+            let found = if masked.is_some() {
+                state = ((state << 1) | 1) & accept[byte as usize];
+                state & (1_u64 << (pattern.len() - 1)) != 0
+            } else {
+                while matched > 0 && byte != pattern[matched] {
+                    matched = prefix[matched - 1];
+                }
+                if byte == pattern[matched] {
+                    matched += 1;
+                }
+                matched == pattern.len()
+            };
+            if found {
                 hits.push(offset + scanned + index + 1 - pattern.len());
                 if hits.len() > MAX_SCAN_HITS {
                     return Err(format!("process search exceeds {MAX_SCAN_HITS} matches"));
                 }
-                matched = prefix[matched - 1];
+                if masked.is_none() {
+                    matched = prefix[matched - 1];
+                }
             }
         }
         scanned += count;
@@ -970,27 +1001,39 @@ mod tests {
             image_backed: false,
         };
         assert_eq!(
-            hunt_region(&region, needle, 0, data.len()).unwrap(),
+            hunt_region(&region, needle, None, 0, data.len()).unwrap(),
             [MAX_READ - 2, MAX_READ + 10]
         );
         assert_eq!(
-            hunt_region(&region, needle, MAX_READ - 2, needle.len()).unwrap(),
+            hunt_region(&region, needle, None, MAX_READ - 2, needle.len()).unwrap(),
             [MAX_READ - 2]
         );
-        assert!(hunt_region(&region, b"", 0, 4).is_err());
-        assert!(hunt_region(&region, needle, 0, MAX_SCAN + 1).is_err());
-        assert!(hunt_region(&region, needle, data.len(), 1).is_err());
+        assert_eq!(
+            hunt_region(
+                &region,
+                b"GA\0!",
+                Some(&[0xff, 0xff, 0, 0xff]),
+                0,
+                data.len()
+            )
+            .unwrap(),
+            [MAX_READ - 2, MAX_READ + 10]
+        );
+        assert!(hunt_region(&region, b"", None, 0, 4).is_err());
+        assert!(hunt_region(&region, needle, None, 0, MAX_SCAN + 1).is_err());
+        assert!(hunt_region(&region, needle, None, data.len(), 1).is_err());
         assert!(hunt_region(
             &Region {
                 access: "---".into(),
                 ..region.clone()
             },
             needle,
+            None,
             0,
             4
         )
         .is_err());
-        assert!(hunt_region(&region, &[0], 0, 10_001).is_err());
+        assert!(hunt_region(&region, &[0], None, 0, 10_001).is_err());
     }
 
     #[cfg(any(target_os = "linux", windows))]

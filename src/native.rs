@@ -4165,15 +4165,29 @@ impl Codegen {
             ("hunt_region", [_, _, _, _]) => {
                 let expected = [Scalar::Region, Scalar::Bytes, Scalar::Int, Scalar::Int];
                 let mut slots = Vec::with_capacity(4);
-                for (argument, kind) in args.iter().zip(expected) {
-                    if self.expr(argument, scope)? != kind {
-                        return Err("process.hunt_region expects Region, bytes, i64, i64".into());
+                let mut text_pattern = false;
+                for (index, (argument, kind)) in args.iter().zip(expected).enumerate() {
+                    let actual = self.expr(argument, scope)?;
+                    if index == 1 {
+                        if !matches!(actual, Scalar::Bytes | Scalar::Str) {
+                            return Err("process.hunt_region pattern must be bytes or str".into());
+                        }
+                        text_pattern = actual == Scalar::Str;
+                    } else if actual != kind {
+                        return Err(
+                            "process.hunt_region expects Region, bytes or str, i64, i64".into()
+                        );
                     }
                     let slot = self.reserve_slot()?;
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     slots.push(slot);
                 }
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_process_hunt_region", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), slots[3] * 8).unwrap();
+                let target = if text_pattern {
+                    "gak_native_process_hunt_region_text"
+                } else {
+                    "gak_native_process_hunt_region"
+                };
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {target}", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), slots[3] * 8).unwrap();
                 self.process_checked_result();
                 self.uses_process = true;
                 Ok(Scalar::Offsets)

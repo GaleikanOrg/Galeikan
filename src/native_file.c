@@ -1727,9 +1727,10 @@ metadata_failed:
     return NULL;
 }
 
-uint64_t *gak_native_process_hunt_region(GakRegion *region,
-                                         const uint8_t *pattern,
-                                         int64_t offset, int64_t length) {
+static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
+                                                  const uint8_t *pattern,
+                                                  const uint8_t *masks,
+                                                  int64_t offset, int64_t length) {
     gak_file_error = NULL;
     if (!region || !pattern) {
         gak_failf("invalid process search arguments");
@@ -1762,13 +1763,32 @@ uint64_t *gak_native_process_hunt_region(GakRegion *region,
         return NULL;
     }
     const uint8_t *needle = pattern + 8;
+    int masked = 0;
+    if (masks) {
+        for (uint64_t index = 0; index < pattern_length; index++)
+            if (masks[index] != 0xff) masked = 1;
+    }
+    if (masked && pattern_length > 64) {
+        gak_failf("masked hex pattern exceeds 64 bytes");
+        return NULL;
+    }
+    uint64_t accept[256] = {0};
     uint16_t prefix[GAK_MAX_SCAN_PATTERN] = {0};
-    for (uint64_t index = 1; index < pattern_length; index++) {
-        uint16_t matched = prefix[index - 1];
-        while (matched && needle[index] != needle[matched])
-            matched = prefix[matched - 1];
-        if (needle[index] == needle[matched]) matched++;
-        prefix[index] = matched;
+    if (masked) {
+        for (uint64_t position = 0; position < pattern_length; position++) {
+            uint64_t bit = UINT64_C(1) << position;
+            for (unsigned byte = 0; byte < 256; byte++)
+                if (((uint8_t)byte & masks[position]) == needle[position])
+                    accept[byte] |= bit;
+        }
+    } else {
+        for (uint64_t index = 1; index < pattern_length; index++) {
+            uint16_t matched = prefix[index - 1];
+            while (matched && needle[index] != needle[matched])
+                matched = prefix[matched - 1];
+            if (needle[index] == needle[matched]) matched++;
+            prefix[index] = matched;
+        }
     }
     size_t capacity = 16;
     if (!gak_account_metadata((capacity + 1) * sizeof(uint64_t))) {
@@ -1779,6 +1799,7 @@ uint64_t *gak_native_process_hunt_region(GakRegion *region,
     if (!hits) { gak_failf("native allocation failed"); return NULL; }
     uint64_t hit_count = 0;
     uint16_t matched = 0;
+    uint64_t state = 0;
     uint64_t scanned = 0;
     GakFileResult *chunk = NULL;
     while (scanned < (uint64_t)length) {
@@ -1793,10 +1814,17 @@ uint64_t *gak_native_process_hunt_region(GakRegion *region,
         if (!chunk) goto failed;
         const uint8_t *bytes = chunk->backing + 8;
         for (uint64_t index = 0; index < count; index++) {
-            while (matched && bytes[index] != needle[matched])
-                matched = prefix[matched - 1];
-            if (bytes[index] == needle[matched]) matched++;
-            if (matched == pattern_length) {
+            int found;
+            if (masked) {
+                state = ((state << 1) | 1) & accept[bytes[index]];
+                found = (state & (UINT64_C(1) << (pattern_length - 1))) != 0;
+            } else {
+                while (matched && bytes[index] != needle[matched])
+                    matched = prefix[matched - 1];
+                if (bytes[index] == needle[matched]) matched++;
+                found = matched == pattern_length;
+            }
+            if (found) {
                 if (hit_count == GAK_MAX_SCAN_HITS) {
                     gak_failf("process search exceeds 10000 matches");
                     goto failed;
@@ -1815,7 +1843,7 @@ uint64_t *gak_native_process_hunt_region(GakRegion *region,
                 }
                 hits[hit_count + 1] = (uint64_t)offset + scanned + index + 1 - pattern_length;
                 hit_count++;
-                matched = prefix[matched - 1];
+                if (!masked) matched = prefix[matched - 1];
             }
         }
         free(chunk->backing);
@@ -1836,6 +1864,52 @@ failed:
     }
     free(hits);
     return NULL;
+}
+
+uint64_t *gak_native_process_hunt_region(GakRegion *region,
+                                         const uint8_t *pattern,
+                                         int64_t offset, int64_t length) {
+    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
+}
+
+uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
+                                              const uint8_t *pattern,
+                                              int64_t offset, int64_t length) {
+    gak_file_error = NULL;
+    if (!pattern) { gak_failf("invalid process search arguments"); return NULL; }
+    uint64_t text_length;
+    memcpy(&text_length, pattern, sizeof(text_length));
+    if (text_length < 4 || memcmp(pattern + 8, "hex:", 4) != 0)
+        return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
+    uint8_t boxed[8 + GAK_MAX_SCAN_PATTERN];
+    uint8_t masks[GAK_MAX_SCAN_PATTERN];
+    uint64_t width = 0;
+    int high = -1, high_mask = 0;
+    for (uint64_t index = 4; index < text_length; index++) {
+        uint8_t ch = pattern[8 + index];
+        if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\v' || ch == '\f')
+            continue;
+        int nibble, nibble_mask;
+        if (ch == '?') { nibble = 0; nibble_mask = 0; }
+        else if (ch >= '0' && ch <= '9') { nibble = ch - '0'; nibble_mask = 15; }
+        else if (ch >= 'a' && ch <= 'f') { nibble = ch - 'a' + 10; nibble_mask = 15; }
+        else if (ch >= 'A' && ch <= 'F') { nibble = ch - 'A' + 10; nibble_mask = 15; }
+        else { gak_failf("invalid hex pattern"); return NULL; }
+        if (high < 0) { high = nibble; high_mask = nibble_mask; }
+        else {
+            if (width == GAK_MAX_SCAN_PATTERN) {
+                gak_failf("process search pattern must contain 1..4096 bytes");
+                return NULL;
+            }
+            boxed[8 + width] = (uint8_t)((high << 4) | nibble);
+            masks[width] = (uint8_t)((high_mask << 4) | nibble_mask);
+            width++;
+            high = -1;
+        }
+    }
+    if (high >= 0) { gak_failf("hex pattern needs an even number of nibbles"); return NULL; }
+    memcpy(boxed, &width, sizeof(width));
+    return gak_process_hunt_region_pattern(region, boxed, masks, offset, length);
 }
 
 GakFileResult *gak_native_process_snapshot_at(GakRegions *regions,

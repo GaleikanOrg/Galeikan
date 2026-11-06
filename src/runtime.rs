@@ -5687,17 +5687,26 @@ impl Runtime {
                 .collect();
                 Ok(Value::Regions(Arc::new(regions)))
             }
-            ("hunt_region", [Value::Region(region), Value::Bytes(pattern), offset, length]) => {
+            ("hunt_region", [Value::Region(region), pattern, offset, length]) => {
                 self.check_effect(module, "process.inspect")?;
                 if !self.allowed_processes.contains(&region.pid) {
                     return Err(format!("process access not allowed: {}", region.pid));
                 }
+                let (needle, masks): (Cow<'_, [u8]>, Option<Vec<u8>>) = match pattern {
+                    Value::Bytes(bytes) => (Cow::Borrowed(bytes), None),
+                    Value::Str(text) if text.starts_with("hex:") => {
+                        let (needle, masks) = parse_hunt_hex(&text[4..])?;
+                        (Cow::Owned(needle), Some(masks))
+                    }
+                    Value::Str(text) => (Cow::Borrowed(text.as_bytes()), None),
+                    _ => return Err("process.hunt_region pattern must be bytes or str".into()),
+                };
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "region offset out of range")?;
                 let length = usize::try_from(length.as_int()?)
                     .map_err(|_| "region length out of range")?;
                 Ok(Value::Offsets(process::hunt_region(
-                    region, pattern, offset, length,
+                    region, &needle, masks.as_deref(), offset, length,
                 )?))
             }
             ("count", [Value::Regions(regions)]) => Ok(Value::Int(
@@ -8643,7 +8652,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "access" | "label") => (&[Region], Str),
         ("process", "image_backed") => (&[Region], Type::Bool),
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),
-        ("process", "hunt_region") => (&[Region, Bytes, Int, Int], Offsets),
+        ("process", "hunt_region") => (&[Region, Type::Any, Int, Int], Offsets),
         ("process", "snapshot_ref") => (&[Region, Str, Int], Source),
         ("process", "snapshot_at") => (&[Regions, Int, Int], Source),
         ("process", "snapshot_at_u64") => (&[Regions, UInt, Int], Source),
@@ -8651,7 +8660,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
     };
     check_arguments(&qualified, args, expected)?;
     match (module, name) {
-        ("binary" | "audit", "hunt") | ("net", "exchange" | "datagram" | "request") => {
+        ("binary" | "audit", "hunt")
+        | ("process", "hunt_region")
+        | ("net", "exchange" | "datagram" | "request") => {
             let index = if module == "net" { 2 } else { 1 };
             let index = if name == "request" { 3 } else { index };
             if !matches!(args[index], Str | Bytes | Type::Any) {

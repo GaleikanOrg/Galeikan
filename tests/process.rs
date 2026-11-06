@@ -82,13 +82,13 @@ fn process_region_search_matches_all_engines() {
     fs::write(
         &script,
         format!(
-            "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad_length(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"47 41 4b 21\", offset, -1)\nfn too_large(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"47 41 4b 21\", offset, 16777217)\nfn empty_pattern(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"\", offset, 4)\nfn too_many(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"00\", offset, 10001)\nlet maps = process.regions({pid})\nlet region = process.locate(maps, {})\nlet offset = process.offset(region, {})\nlet hits = process.hunt_region(region, hex\"47 41 4b 21\", offset, 1048608)\nprint len(hits)\nprint hits[0] - offset\nprint is_error(bad_length(region, offset))\nprint is_error(too_large(region, offset))\nprint is_error(empty_pattern(region, offset))\nprint is_error(too_many(region, offset))\nprint len(process.hunt_region(region, hex\"47 41 4b 21\", offset, 0))\n",
+            "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad_length(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"47 41 4b 21\", offset, -1)\nfn too_large(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"47 41 4b 21\", offset, 16777217)\nfn empty_pattern(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"\", offset, 4)\nfn too_many(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, hex\"00\", offset, 10001)\nfn bad_hex(region: Region, offset: i64) -> Result<Offsets> = process.hunt_region(region, \"hex:4\", offset, 4)\nlet maps = process.regions({pid})\nlet region = process.locate(maps, {})\nlet offset = process.offset(region, {})\nlet hits = process.hunt_region(region, hex\"47 41 4b 21\", offset, 1048608)\nprint len(hits)\nprint hits[0] - offset\nprint process.hunt_region(region, \"hex:47 41 ?? 21\", offset, 1048608)[0] - offset\nprint process.hunt_region(region, \"hex:47 41 4? 21\", offset, 1048608)[0] - offset\nprint process.hunt_region(region, \"GAK!\", offset, 1048608)[0] - offset\nprint is_error(bad_length(region, offset))\nprint is_error(too_large(region, offset))\nprint is_error(empty_pattern(region, offset))\nprint is_error(too_many(region, offset))\nprint is_error(bad_hex(region, offset))\nprint len(process.hunt_region(region, hex\"47 41 4b 21\", offset, 0))\n",
             helper.address, helper.address
         ),
     )
     .unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"1\n1048574\ntrue\ntrue\ntrue\ntrue\n0\n";
+    let expected = b"1\n1048574\n1048574\n1048574\n1048574\ntrue\ntrue\ntrue\ntrue\ntrue\n0\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
             .arg("run")
