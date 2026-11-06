@@ -3596,6 +3596,10 @@ typedef struct {
     uint64_t table_size;
     const uint8_t *strings;
     uint64_t strings_size;
+    const uint8_t *blob;
+    uint64_t blob_size;
+    uint64_t blob_rva;
+    uint64_t blob_offset;
 } GakClrMetadataInfo;
 
 static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length) {
@@ -3709,6 +3713,12 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
             info->strings = data + relative;
             info->strings_size = size;
         }
+        if (name_len == 5 && memcmp(data + name_at, "#Blob", 5) == 0) {
+            info->blob = data + relative;
+            info->blob_size = size;
+            info->blob_rva = root_rva + relative;
+            info->blob_offset = mapped->start + relative;
+        }
         cursor = name_at + padded;
     }
     ok = 1;
@@ -3780,6 +3790,56 @@ void *gak_native_formats_clr_string(const void *value, int64_t offset) {
         gak_format_fail("invalid PE CLR string UTF-8"); return NULL;
     }
     return gak_format_box((const char *)start, (size_t)length);
+}
+
+void *gak_native_formats_clr_blob(const void *value, int64_t offset) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    if (offset < 0) {
+        gak_format_fail("PE CLR blob offset out of range"); return NULL;
+    }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.blob) {
+        gak_format_fail("PE CLR metadata has no #Blob heap"); return NULL;
+    }
+    if ((uint64_t)offset >= info.blob_size) {
+        gak_format_fail("PE CLR blob offset out of range"); return NULL;
+    }
+    const uint8_t *data = info.blob + (uint64_t)offset;
+    uint64_t available = info.blob_size - (uint64_t)offset;
+    uint8_t first = data[0];
+    uint64_t prefix, length;
+    if (!(first & 0x80)) {
+        prefix = 1; length = first;
+    } else if ((first & 0xc0) == 0x80) {
+        if (available < 2) {
+            gak_format_fail("truncated PE CLR blob length"); return NULL;
+        }
+        prefix = 2; length = ((uint64_t)(first & 0x3f) << 8) | data[1];
+    } else if ((first & 0xe0) == 0xc0) {
+        if (available < 4) {
+            gak_format_fail("truncated PE CLR blob length"); return NULL;
+        }
+        prefix = 4;
+        length = ((uint64_t)(first & 0x1f) << 24) |
+                 ((uint64_t)data[1] << 16) | ((uint64_t)data[2] << 8) | data[3];
+    } else {
+        gak_format_fail("invalid PE CLR blob length prefix"); return NULL;
+    }
+    if ((prefix == 2 && length < 128) || (prefix == 4 && length < 0x4000)) {
+        gak_format_fail("noncanonical PE CLR blob length"); return NULL;
+    }
+    if (length > 16u * 1024u * 1024u) {
+        gak_format_fail("PE CLR blob exceeds 16 MiB"); return NULL;
+    }
+    if (length > available - prefix) {
+        gak_format_fail("PE CLR blob exceeds #Blob heap"); return NULL;
+    }
+    const GakFormat *format = value;
+    uint64_t start = info.blob_offset + (uint64_t)offset + prefix;
+    uint64_t rva = info.blob_rva + (uint64_t)offset + prefix;
+    return gak_format_range(format, start, start + length, 1, rva);
 }
 
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,

@@ -2727,6 +2727,23 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
     duplicate[0x334..0x336].copy_from_slice(b"#~");
     let mut invalid_utf8 = pe.clone();
     invalid_utf8[0x3c1] = 0xff;
+    let mut with_blob = pe.clone();
+    with_blob.resize(0x500, 0);
+    with_blob[section + 8..section + 12].copy_from_slice(&0x300_u32.to_le_bytes());
+    with_blob[section + 16..section + 20].copy_from_slice(&0x300_u32.to_le_bytes());
+    with_blob[0x2cc..0x2d0].copy_from_slice(&0x200_u32.to_le_bytes());
+    with_blob[0x31e..0x320].copy_from_slice(&3_u16.to_le_bytes());
+    with_blob[0x340..0x344].copy_from_slice(&0xd0_u32.to_le_bytes());
+    with_blob[0x344..0x348].copy_from_slice(&0x90_u32.to_le_bytes());
+    with_blob[0x348..0x350].copy_from_slice(b"#Blob\0\0\0");
+    with_blob[0x3d1..0x3d5].copy_from_slice(&[3, 0xaa, 0xbb, 0xcc]);
+    with_blob[0x3d5..0x3d7].copy_from_slice(&[0x80, 0x80]);
+    with_blob[0x3d7..0x457].fill(0x7a);
+    with_blob[0x45f] = 0x80;
+    let mut invalid_blob = with_blob.clone();
+    invalid_blob[0x3d5] = 0xe0;
+    let mut noncanonical_blob = with_blob.clone();
+    noncanonical_blob[0x3d6] = 1;
     let mut truncated = pe.clone();
     truncated[0x324..0x328].copy_from_slice(&24_u32.to_le_bytes());
     let hex = |bytes: &[u8]| {
@@ -2737,10 +2754,10 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
     };
     let script = s.write(
         "clr-streams.gaks",
-        &format!("from std.binary import from_hex, snapshot, read_cstring, size\nfrom std.formats import probe, clr_metadata_version, clr_stream_count, clr_stream_name, clr_stream_rva, clr_stream_size, clr_stream_data, clr_string, clr_table_present, clr_table_rows\nfrom std.result import is_error, message\nfn invalid(report: Format) -> Result<i64> = clr_stream_count(report)\nfn bad_string(report: Format, offset: i64) -> Result<str> = clr_string(report, offset)\nfn bad_table(report: Format) -> Result<i64> = clr_table_rows(report, 64)\nfn bad_rows(report: Format) -> Result<i64> = clr_table_rows(report, 2)\nfn unknown_table(report: Format) -> Result<i64> = clr_table_rows(report, \"UnknownTable\")\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet broken = probe(snapshot(from_hex(\"{}\")))\nlet short = probe(snapshot(from_hex(\"{}\")))\nlet duplicate = probe(snapshot(from_hex(\"{}\")))\nlet invalid_utf8 = probe(snapshot(from_hex(\"{}\")))\nlet table_name = \"MethodDef\"\nprint clr_metadata_version(report)\nprint clr_stream_count(report)\nprint clr_stream_name(report, 0)\nprint clr_stream_rva(report, 0)\nprint clr_stream_size(report, 0)\nprint size(clr_stream_data(report, 0))\nprint clr_stream_name(report, 1)\nprint read_cstring(clr_stream_data(report, 1), 1, 7)\nprint clr_table_present(report, 2)\nprint clr_table_rows(report, 2)\nprint clr_table_rows(report, 6)\nprint clr_table_rows(report, 32)\nprint clr_table_present(report, 5)\nprint clr_table_rows(report, 5)\nprint clr_table_rows(report, \"TypeDef\")\nprint clr_table_rows(report, table_name)\nprint clr_table_present(report, \"Assembly\")\nprint clr_table_rows(report, \"AssemblyRef\")\nprint is_error(unknown_table(report))\nprint message(unknown_table(report))\nprint is_error(bad_table(report))\nprint is_error(invalid(broken))\nprint is_error(bad_rows(short))\nprint is_error(invalid(duplicate))\nprint message(invalid(duplicate))\nprint clr_string(report, 1)\nprint is_error(bad_string(report, 8))\nprint is_error(bad_string(report, -1))\nprint is_error(bad_string(invalid_utf8, 1))\n", hex(&pe), hex(&malformed), hex(&truncated), hex(&duplicate), hex(&invalid_utf8)),
+        &format!("from std.binary import from_hex, snapshot, read_cstring, size, extract\nfrom std.bytes import to_hex\nfrom std.formats import probe, clr_metadata_version, clr_stream_count, clr_stream_name, clr_stream_rva, clr_stream_size, clr_stream_data, clr_string, clr_blob, clr_table_present, clr_table_rows\nfrom std.result import is_error, message\nfn invalid(report: Format) -> Result<i64> = clr_stream_count(report)\nfn bad_string(report: Format, offset: i64) -> Result<str> = clr_string(report, offset)\nfn bad_blob(report: Format, offset: i64) -> Result<Source> = clr_blob(report, offset)\nfn bad_table(report: Format) -> Result<i64> = clr_table_rows(report, 64)\nfn bad_rows(report: Format) -> Result<i64> = clr_table_rows(report, 2)\nfn unknown_table(report: Format) -> Result<i64> = clr_table_rows(report, \"UnknownTable\")\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet broken = probe(snapshot(from_hex(\"{}\")))\nlet short = probe(snapshot(from_hex(\"{}\")))\nlet duplicate = probe(snapshot(from_hex(\"{}\")))\nlet invalid_utf8 = probe(snapshot(from_hex(\"{}\")))\nlet blob_report = probe(snapshot(from_hex(\"{}\")))\nlet invalid_blob = probe(snapshot(from_hex(\"{}\")))\nlet noncanonical_blob = probe(snapshot(from_hex(\"{}\")))\nlet table_name = \"MethodDef\"\nprint clr_metadata_version(report)\nprint clr_stream_count(report)\nprint clr_stream_name(report, 0)\nprint clr_stream_rva(report, 0)\nprint clr_stream_size(report, 0)\nprint size(clr_stream_data(report, 0))\nprint clr_stream_name(report, 1)\nprint read_cstring(clr_stream_data(report, 1), 1, 7)\nprint clr_table_present(report, 2)\nprint clr_table_rows(report, 2)\nprint clr_table_rows(report, 6)\nprint clr_table_rows(report, 32)\nprint clr_table_present(report, 5)\nprint clr_table_rows(report, 5)\nprint clr_table_rows(report, \"TypeDef\")\nprint clr_table_rows(report, table_name)\nprint clr_table_present(report, \"Assembly\")\nprint clr_table_rows(report, \"AssemblyRef\")\nprint is_error(unknown_table(report))\nprint message(unknown_table(report))\nprint is_error(bad_table(report))\nprint is_error(invalid(broken))\nprint is_error(bad_rows(short))\nprint is_error(invalid(duplicate))\nprint message(invalid(duplicate))\nprint clr_string(report, 1)\nprint is_error(bad_string(report, 8))\nprint is_error(bad_string(report, -1))\nprint is_error(bad_string(invalid_utf8, 1))\nprint size(clr_blob(blob_report, 0))\nprint to_hex(extract(clr_blob(blob_report, 1), 0, 3))\nprint size(clr_blob(blob_report, 5))\nprint is_error(bad_blob(blob_report, 144))\nprint is_error(bad_blob(blob_report, -1))\nprint is_error(bad_blob(blob_report, 143))\nprint is_error(bad_blob(invalid_blob, 5))\nprint is_error(bad_blob(noncanonical_blob, 5))\nprint is_error(bad_blob(report, 0))\n", hex(&pe), hex(&malformed), hex(&truncated), hex(&duplicate), hex(&invalid_utf8), hex(&with_blob), hex(&invalid_blob), hex(&noncanonical_blob)),
     );
     let expected =
-        b"v4.0.30319\n2\n#~\n4480\n36\n36\n#Strings\nFoo\ntrue\n7\n11\n1\nfalse\n0\n7\n11\ntrue\n0\ntrue\nunknown PE CLR table name\ntrue\ntrue\ntrue\ntrue\nduplicate PE CLR stream name\nFoo\ntrue\ntrue\ntrue\n";
+        b"v4.0.30319\n2\n#~\n4480\n36\n36\n#Strings\nFoo\ntrue\n7\n11\n1\nfalse\n0\n7\n11\ntrue\n0\ntrue\nunknown PE CLR table name\ntrue\ntrue\ntrue\ntrue\nduplicate PE CLR stream name\nFoo\ntrue\ntrue\ntrue\n0\naabbcc\n128\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)

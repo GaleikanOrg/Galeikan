@@ -4671,6 +4671,20 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_clr_string\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
                 return Ok(Scalar::Str);
             }
+            ("clr_blob", [report, offset]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.clr_blob expects Format".into());
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8)
+                    .unwrap();
+                if self.expr(offset, scope)? != Scalar::Int {
+                    return Err("formats.clr_blob offset must be i64".into());
+                }
+                self.uses_formats = true;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_clr_blob", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                return self.formats_range_result();
+            }
             (
                 "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",
                 [report, index],

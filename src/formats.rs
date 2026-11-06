@@ -812,6 +812,56 @@ impl FormatReport {
             .map_err(|_| "invalid PE CLR string UTF-8".into())
     }
 
+    pub fn clr_blob_range(&self, bytes: &[u8], offset: usize) -> Result<(usize, usize, u64), String> {
+        let heap = self
+            .clr_metadata(bytes)?
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#Blob")
+            .ok_or("PE CLR metadata has no #Blob heap")?;
+        if offset >= heap.size {
+            return Err("PE CLR blob offset out of range".into());
+        }
+        let data = &bytes[heap.offset + offset..heap.offset + heap.size];
+        let first = data[0];
+        let (prefix, length) = if first & 0x80 == 0 {
+            (1, usize::from(first))
+        } else if first & 0xc0 == 0x80 {
+            if data.len() < 2 {
+                return Err("truncated PE CLR blob length".into());
+            }
+            (2, (usize::from(first & 0x3f) << 8) | usize::from(data[1]))
+        } else if first & 0xe0 == 0xc0 {
+            if data.len() < 4 {
+                return Err("truncated PE CLR blob length".into());
+            }
+            (
+                4,
+                (usize::from(first & 0x1f) << 24)
+                    | (usize::from(data[1]) << 16)
+                    | (usize::from(data[2]) << 8)
+                    | usize::from(data[3]),
+            )
+        } else {
+            return Err("invalid PE CLR blob length prefix".into());
+        };
+        if (prefix == 2 && length < 128) || (prefix == 4 && length < 0x4000) {
+            return Err("noncanonical PE CLR blob length".into());
+        }
+        if length > 16 * 1024 * 1024 {
+            return Err("PE CLR blob exceeds 16 MiB".into());
+        }
+        if length > data.len() - prefix {
+            return Err("PE CLR blob exceeds #Blob heap".into());
+        }
+        let start = heap.offset + offset + prefix;
+        let rva = heap
+            .rva
+            .checked_add((offset + prefix) as u64)
+            .ok_or("PE CLR blob RVA overflow")?;
+        Ok((start, start + length, rva))
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

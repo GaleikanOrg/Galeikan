@@ -6509,6 +6509,14 @@ impl Runtime {
                     .map_err(|_| "PE CLR string offset out of range")?;
                 Ok(Value::Str(report.clr_string(source.bytes(), offset)?))
             }
+            ("clr_blob", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "PE CLR blob offset out of range")?;
+                let (start, end, rva) = report.clr_blob_range(source.bytes(), offset)?;
+                Ok(Value::Source(Arc::new(Source::rva_view(
+                    source.clone(), start, end, rva,
+                )?)))
+            }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
                     Value::Int(index) => usize::try_from(*index)
@@ -8638,6 +8646,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
         ("formats", "clr_stream_name") => (&[Format, Int], Str),
         ("formats", "clr_string") => (&[Format, Int], Str),
+        ("formats", "clr_blob") => (&[Format, Int], Source),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (
