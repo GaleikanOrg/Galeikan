@@ -3544,6 +3544,46 @@ uint64_t gak_native_formats_tls_callback_address_u64(const void *value, int64_t 
     return address;
 }
 
+uint64_t gak_native_formats_clr_field_u64(const void *value, int64_t part) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return 0; }
+    const GakFormat *format = value;
+    if (format->kind != 1) {
+        gak_format_fail("PE CLR header requires a PE image"); return 0;
+    }
+    if (part < 0 || part > 5) {
+        gak_format_fail("unknown PE CLR field"); return 0;
+    }
+    uint64_t directory_at = 0, directory_rva = 0;
+    int status = gak_pe_directory_status(format, 14u, &directory_at, &directory_rva);
+    if (status == 0) {
+        gak_format_fail("PE CLR directory is absent"); return 0;
+    }
+    if (status != 1) {
+        gak_format_fail("incomplete PE CLR directory"); return 0;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t declared_size = gak_number(bytes, directory_at + 4, 4, 0);
+    if (declared_size < 72) {
+        gak_format_fail("PE CLR directory is shorter than its header"); return 0;
+    }
+    GakFormatRange *header = gak_pe_rva(format, directory_rva, 72);
+    if (!header) return 0;
+    uint64_t header_size = gak_number(bytes, header->start, 4, 0);
+    if (header_size < 72 || header_size > declared_size) {
+        free(header);
+        format_memory -= sizeof(GakFormatRange);
+        gak_format_fail("invalid PE CLR header size"); return 0;
+    }
+    static const unsigned offsets[] = {4, 6, 8, 12, 16, 20};
+    unsigned width = part < 2 ? 2u : 4u;
+    uint64_t result = gak_number(bytes, header->start + offsets[part], width, 0);
+    free(header);
+    format_memory -= sizeof(GakFormatRange);
+    return result;
+}
+
 const void *gak_native_formats_signal(const void *value, const void *name) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

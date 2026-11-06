@@ -6493,6 +6493,11 @@ impl Runtime {
                     .ok_or("TLS callback index out of range")?))
             }
             (
+                "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"
+                | "clr_metadata_size" | "clr_flags" | "clr_entry_point",
+                [Value::Format(source, report)],
+            ) => Ok(Value::UInt(report.clr_field(source.bytes(), name)?)),
+            (
                 "debug_data" | "debug_size" | "debug_timestamp" | "debug_kind" | "debug_type"
                 | "debug_pdb_path" | "debug_pdb_guid" | "debug_pdb_age",
                 [Value::Format(source, report), index],
@@ -8565,6 +8570,11 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "debug_type" | "debug_pdb_path" | "debug_pdb_guid") => (&[Format, Int], Str),
         ("formats", "debug_data") => (&[Format, Int], Source),
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
+        (
+            "formats",
+            "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"
+            | "clr_metadata_size" | "clr_flags" | "clr_entry_point",
+        ) => (&[Format], UInt),
         (
             "formats",
             "relocation_rva" | "relocation_type" | "relocation_symbol" | "relocation_addend",

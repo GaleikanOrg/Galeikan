@@ -565,6 +565,36 @@ impl FormatReport {
         unreachable!()
     }
 
+    pub fn clr_field(&self, bytes: &[u8], name: &str) -> Result<u64, String> {
+        if self.kind() != "pe" {
+            return Err("PE CLR header requires a PE image".into());
+        }
+        let directory = match &self.pe_clr_directory {
+            Ok(Some(field)) => field,
+            Ok(None) => return Err("PE CLR directory is absent".into()),
+            Err(error) => return Err(error.clone()),
+        };
+        let declared_size = number(bytes, directory.offset + 4, 4, false)?;
+        if declared_size < 72 {
+            return Err("PE CLR directory is shorter than its header".into());
+        }
+        let (start, _) = self.pe_rva_range(bytes.len(), directory.value, 72)?;
+        let header_size = number(bytes, start, 4, false)?;
+        if header_size < 72 || header_size > declared_size {
+            return Err("invalid PE CLR header size".into());
+        }
+        let (offset, width) = match name {
+            "clr_runtime_major" => (4, 2),
+            "clr_runtime_minor" => (6, 2),
+            "clr_metadata_rva" => (8, 4),
+            "clr_metadata_size" => (12, 4),
+            "clr_flags" => (16, 4),
+            "clr_entry_point" => (20, 4),
+            _ => return Err("unknown PE CLR field".into()),
+        };
+        number(bytes, start + offset, width, false)
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections
@@ -4426,6 +4456,51 @@ mod tests {
                 .tls_callbacks(&bytes)
                 .unwrap_err()
                 .contains("below image base"));
+        }
+    }
+
+    #[test]
+    fn pe_clr_fields_validate_header_and_report_declared_values() {
+        for plus in [false, true] {
+            let mut bytes = pe_with_exports(plus);
+            let first = if plus { 112 } else { 96 };
+            let count = if plus { 108 } else { 92 };
+            bytes[0x98 + count..0x98 + count + 4].copy_from_slice(&15_u32.to_le_bytes());
+            let directory = 0x98 + first + 14 * 8;
+            bytes[directory..directory + 4].copy_from_slice(&0x1100_u32.to_le_bytes());
+            bytes[directory + 4..directory + 8].copy_from_slice(&72_u32.to_le_bytes());
+            let header = 0x300;
+            bytes[header..header + 4].copy_from_slice(&72_u32.to_le_bytes());
+            bytes[header + 4..header + 6].copy_from_slice(&2_u16.to_le_bytes());
+            bytes[header + 6..header + 8].copy_from_slice(&5_u16.to_le_bytes());
+            bytes[header + 8..header + 12].copy_from_slice(&0x1180_u32.to_le_bytes());
+            bytes[header + 12..header + 16].copy_from_slice(&0x80_u32.to_le_bytes());
+            bytes[header + 16..header + 20].copy_from_slice(&9_u32.to_le_bytes());
+            bytes[header + 20..header + 24].copy_from_slice(&0x06000001_u32.to_le_bytes());
+            let report = probe(&bytes).unwrap();
+            for (name, value) in [
+                ("clr_runtime_major", 2),
+                ("clr_runtime_minor", 5),
+                ("clr_metadata_rva", 0x1180),
+                ("clr_metadata_size", 0x80),
+                ("clr_flags", 9),
+                ("clr_entry_point", 0x06000001),
+            ] {
+                assert_eq!(report.clr_field(&bytes, name).unwrap(), value, "{name}");
+            }
+            bytes[directory + 4..directory + 8].copy_from_slice(&71_u32.to_le_bytes());
+            assert!(probe(&bytes)
+                .unwrap()
+                .clr_field(&bytes, "clr_flags")
+                .unwrap_err()
+                .contains("shorter"));
+            bytes[directory + 4..directory + 8].copy_from_slice(&72_u32.to_le_bytes());
+            bytes[header..header + 4].copy_from_slice(&71_u32.to_le_bytes());
+            assert!(probe(&bytes)
+                .unwrap()
+                .clr_field(&bytes, "clr_flags")
+                .unwrap_err()
+                .contains("invalid PE CLR header size"));
         }
     }
 

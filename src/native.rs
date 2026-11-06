@@ -4639,6 +4639,27 @@ impl Codegen {
                 return Ok(Scalar::UInt);
             }
             (
+                "clr_runtime_major" | "clr_runtime_minor" | "clr_metadata_rva"
+                | "clr_metadata_size" | "clr_flags" | "clr_entry_point",
+                [report],
+            ) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                self.uses_formats = true;
+                let part = match name {
+                    "clr_runtime_major" => 0,
+                    "clr_runtime_minor" => 1,
+                    "clr_metadata_rva" => 2,
+                    "clr_metadata_size" => 3,
+                    "clr_flags" => 4,
+                    _ => 5,
+                };
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    mov {}, {part}\n    call gak_native_formats_clr_field_u64\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1()).unwrap();
+                return Ok(Scalar::UInt);
+            }
+            (
                 "debug_data" | "debug_size" | "debug_timestamp" | "debug_kind" | "debug_type"
                 | "debug_pdb_path" | "debug_pdb_guid" | "debug_pdb_age",
                 [report, index],
