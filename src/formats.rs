@@ -788,6 +788,30 @@ impl FormatReport {
         Ok((true, number(data, 24 + preceding * 4, 4, false)? as u32))
     }
 
+    pub fn clr_string(&self, bytes: &[u8], offset: usize) -> Result<String, String> {
+        let metadata = self.clr_metadata(bytes)?;
+        let heap = metadata
+            .streams
+            .iter()
+            .find(|stream| stream.name == "#Strings")
+            .ok_or("PE CLR metadata has no #Strings heap")?;
+        if offset >= heap.size {
+            return Err("PE CLR string offset out of range".into());
+        }
+        let data = &bytes[heap.offset + offset..heap.offset + heap.size];
+        let length = data[..data.len().min(4097)]
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or(if data.len() > 4096 {
+                "PE CLR string exceeds 4096 bytes"
+            } else {
+                "unterminated PE CLR string"
+            })?;
+        std::str::from_utf8(&data[..length])
+            .map(str::to_owned)
+            .map_err(|_| "invalid PE CLR string UTF-8".into())
+    }
+
     pub fn summary(&self) -> String {
         let sections = self
             .sections

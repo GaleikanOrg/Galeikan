@@ -3594,6 +3594,8 @@ typedef struct {
     uint64_t size;
     const uint8_t *table;
     uint64_t table_size;
+    const uint8_t *strings;
+    uint64_t strings_size;
 } GakClrMetadataInfo;
 
 static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length) {
@@ -3703,6 +3705,10 @@ static int gak_pe_clr_metadata_scan(const GakFormat *format, int64_t selected,
             info->table = data + relative;
             info->table_size = size;
         }
+        if (name_len == 8 && memcmp(data + name_at, "#Strings", 8) == 0) {
+            info->strings = data + relative;
+            info->strings_size = size;
+        }
         cursor = name_at + padded;
     }
     ok = 1;
@@ -3744,6 +3750,36 @@ void *gak_native_formats_clr_stream_name(const void *value, int64_t index) {
     GakClrMetadataInfo info = {0};
     if (!gak_pe_clr_stream_select(value, index, &info)) return NULL;
     return gak_format_box((const char *)info.name, (size_t)info.name_len);
+}
+
+void *gak_native_formats_clr_string(const void *value, int64_t offset) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    if (offset < 0) {
+        gak_format_fail("PE CLR string offset out of range"); return NULL;
+    }
+    GakClrMetadataInfo info = {0};
+    if (!gak_pe_clr_metadata_scan(value, -1, &info)) return NULL;
+    if (!info.strings) {
+        gak_format_fail("PE CLR metadata has no #Strings heap"); return NULL;
+    }
+    if ((uint64_t)offset >= info.strings_size) {
+        gak_format_fail("PE CLR string offset out of range"); return NULL;
+    }
+    const uint8_t *start = info.strings + (uint64_t)offset;
+    uint64_t remaining = info.strings_size - (uint64_t)offset;
+    uint64_t length = 0;
+    while (length < remaining && length <= 4096 && start[length]) length++;
+    if (length > 4096) {
+        gak_format_fail("PE CLR string exceeds 4096 bytes"); return NULL;
+    }
+    if (length == remaining) {
+        gak_format_fail("unterminated PE CLR string"); return NULL;
+    }
+    if (!gak_clr_utf8_valid(start, length)) {
+        gak_format_fail("invalid PE CLR string UTF-8"); return NULL;
+    }
+    return gak_format_box((const char *)start, (size_t)length);
 }
 
 uint64_t gak_native_formats_clr_stream_number(const void *value, int64_t index,

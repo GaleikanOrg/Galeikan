@@ -6504,6 +6504,11 @@ impl Runtime {
                 i64::try_from(report.clr_metadata(source.bytes())?.streams.len())
                     .map_err(|_| "PE CLR stream count outside i64 range")?,
             )),
+            ("clr_string", [Value::Format(source, report), offset]) => {
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "PE CLR string offset out of range")?;
+                Ok(Value::Str(report.clr_string(source.bytes(), offset)?))
+            }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
                     Value::Int(index) => usize::try_from(*index)
@@ -8632,6 +8637,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "debug_data") => (&[Format, Int], Source),
         ("formats", "tls_callback_address_u64") => (&[Format, Int], UInt),
         ("formats", "clr_stream_name") => (&[Format, Int], Str),
+        ("formats", "clr_string") => (&[Format, Int], Str),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),
         (
