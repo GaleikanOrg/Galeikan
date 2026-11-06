@@ -5760,6 +5760,7 @@ impl Runtime {
             )),
             ("access", [Value::Region(region)]) => Ok(Value::Str(region.access.clone())),
             ("label", [Value::Region(region)]) => Ok(Value::Str(region.label.clone())),
+            ("kind", [Value::Region(region)]) => Ok(Value::Str(process::kind(region).into())),
             ("reference", [Value::Region(region), address]) => {
                 let address = usize::try_from(address.as_uint()?)
                     .map_err(|_| "process address out of range")?;
@@ -8649,7 +8650,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "reference") => (&[Region, UInt], Str),
         ("process", "resolve") => (&[Region, Str], UInt),
         ("process", "advance_ref") => (&[Region, Str, Int], Str),
-        ("process", "access" | "label") => (&[Region], Str),
+        ("process", "access" | "label" | "kind") => (&[Region], Str),
         ("process", "image_backed") => (&[Region], Type::Bool),
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),
         ("process", "hunt_region") => (&[Region, Type::Any, Int, Int], Offsets),

@@ -1545,6 +1545,36 @@ GakRegion *gak_native_process_locate(GakRegions *regions, uint64_t address) {
     return NULL;
 }
 
+uint8_t *gak_native_process_kind(GakRegion *region) {
+    gak_file_error = NULL;
+    if (!region || !region->label) {
+        gak_failf("invalid process region");
+        return NULL;
+    }
+    const char *label = (const char *)(region->label + 8);
+    size_t length = strlen(label);
+    const char *kind;
+    if (strcmp(label, "[heap]") == 0) kind = "heap";
+    else if (length >= 7 && strncmp(label, "[stack", 6) == 0 && label[length - 1] == ']')
+        kind = "stack";
+    else if (region->image_backed) {
+#ifdef _WIN32
+        kind = "image";
+#else
+        kind = "file";
+#endif
+    }
+    else if (strcmp(label, "mapped") == 0) kind = "mapped";
+    else if (strcmp(label, "private") == 0) kind = "private";
+    else if (length == 0) kind = "anonymous";
+    else if (label[0] == '/') kind = "file";
+    else if (label[0] == '[') kind = "special";
+    else kind = "other";
+    uint8_t *result = gak_box(kind, strlen(kind));
+    if (!result) gak_failf("native allocation failed");
+    return result;
+}
+
 uint64_t gak_native_region_offset(GakRegion *region, uint64_t address) {
     gak_file_error = NULL;
     if (!region || address < region->start || address - region->start >= region->size) {

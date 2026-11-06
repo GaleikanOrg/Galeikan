@@ -19,6 +19,33 @@ pub struct Region {
     pub image_backed: bool,
 }
 
+pub fn kind(region: &Region) -> &'static str {
+    let label = region.label.as_str();
+    if label == "[heap]" {
+        "heap"
+    } else if label.starts_with("[stack") && label.ends_with(']') {
+        "stack"
+    } else if region.image_backed {
+        if cfg!(windows) {
+            "image"
+        } else {
+            "file"
+        }
+    } else if label == "mapped" {
+        "mapped"
+    } else if label == "private" {
+        "private"
+    } else if label.is_empty() {
+        "anonymous"
+    } else if label.starts_with('/') {
+        "file"
+    } else if label.starts_with('[') {
+        "special"
+    } else {
+        "other"
+    }
+}
+
 impl Region {
     fn reference_prefix(&self) -> String {
         let name = self
@@ -921,8 +948,8 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::{
-        executable, hunt_region, module_paths, regions, snapshot, thread_ids, writable_regions,
-        Region, MAX_READ, MAX_SCAN,
+        executable, hunt_region, kind, module_paths, regions, snapshot, thread_ids,
+        writable_regions, Region, MAX_READ, MAX_SCAN,
     };
 
     #[test]
@@ -1034,6 +1061,28 @@ mod tests {
         )
         .is_err());
         assert!(hunt_region(&region, &[0], None, 0, 10_001).is_err());
+    }
+
+    #[test]
+    fn region_kind_keeps_heap_distinct_from_private_memory() {
+        let mut region = Region {
+            pid: 1,
+            start: 0,
+            size: 4096,
+            access: "rw-".into(),
+            label: "[heap]".into(),
+            image_backed: false,
+        };
+        assert_eq!(kind(&region), "heap");
+        region.label = "[stack]".into();
+        assert_eq!(kind(&region), "stack");
+        region.label = "private".into();
+        assert_eq!(kind(&region), "private");
+        region.label.clear();
+        assert_eq!(kind(&region), "anonymous");
+        region.label = "/tmp/mapped.bin".into();
+        region.image_backed = true;
+        assert_eq!(kind(&region), if cfg!(windows) { "image" } else { "file" });
     }
 
     #[cfg(any(target_os = "linux", windows))]

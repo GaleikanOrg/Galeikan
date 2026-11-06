@@ -4008,6 +4008,20 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::Region)
             }
+            ("kind", [region]) => {
+                if self.expr(region, scope)? != Scalar::Region {
+                    return Err("process.kind expects Region".into());
+                }
+                writeln!(
+                    self.code,
+                    "    mov {}, rax\n    call gak_native_process_kind",
+                    self.arg0()
+                )
+                .unwrap();
+                self.process_checked_result();
+                self.uses_process = true;
+                Ok(Scalar::Str)
+            }
             (
                 "pid" | "start" | "start_u64" | "size" | "end" | "end_u64" | "access" | "label"
                 | "image_backed",
