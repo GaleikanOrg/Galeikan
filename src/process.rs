@@ -610,6 +610,60 @@ fn module_paths(images: &[Region]) -> Vec<String> {
 }
 
 #[cfg(target_os = "linux")]
+fn map_field<'a>(rest: &mut &'a str) -> Result<&'a str, String> {
+    let current = rest.trim_start_matches(|ch| ch == ' ' || ch == '\t');
+    if current.is_empty() {
+        return Err("malformed process memory map".into());
+    }
+    let end = current
+        .find(|ch| ch == ' ' || ch == '\t')
+        .unwrap_or(current.len());
+    let (field, tail) = current.split_at(end);
+    *rest = tail;
+    Ok(field)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_map_line(pid: u32, line: &str) -> Result<Region, String> {
+    let mut rest = line;
+    let addresses = map_field(&mut rest)?;
+    let rights = map_field(&mut rest)?;
+    map_field(&mut rest)?;
+    map_field(&mut rest)?;
+    let inode = map_field(&mut rest)?
+        .parse::<u64>()
+        .map_err(|_| "invalid process memory map inode")?;
+    let (start, end) = addresses
+        .split_once('-')
+        .ok_or("malformed process memory address range")?;
+    let start =
+        usize::from_str_radix(start, 16).map_err(|_| "invalid process memory start address")?;
+    let end = usize::from_str_radix(end, 16).map_err(|_| "invalid process memory end address")?;
+    if start >= end || rights.len() != 4 {
+        return Err("invalid process memory map entry".into());
+    }
+    let bytes = rights.as_bytes();
+    if !matches!(bytes[0], b'r' | b'-')
+        || !matches!(bytes[1], b'w' | b'-')
+        || !matches!(bytes[2], b'x' | b'-')
+    {
+        return Err("invalid process memory access flags".into());
+    }
+    let label = rest
+        .trim_start_matches(|ch| ch == ' ' || ch == '\t')
+        .to_owned();
+    let image_backed = inode != 0 && label.starts_with('/');
+    Ok(Region {
+        pid,
+        start,
+        size: end - start,
+        access: rights[..3].to_string(),
+        label,
+        image_backed,
+    })
+}
+
+#[cfg(target_os = "linux")]
 fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
     use std::fs::File;
     use std::io::Read;
@@ -628,43 +682,7 @@ fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
     let content = String::from_utf8_lossy(&bytes);
     let mut regions = Vec::new();
     for line in content.lines() {
-        let mut fields = line.split_whitespace();
-        let addresses = fields.next().ok_or("malformed process memory map")?;
-        let rights = fields.next().ok_or("malformed process memory map")?;
-        fields.next().ok_or("malformed process memory map")?;
-        fields.next().ok_or("malformed process memory map")?;
-        let inode = fields
-            .next()
-            .ok_or("malformed process memory map")?
-            .parse::<u64>()
-            .map_err(|_| "invalid process memory map inode")?;
-        let (start, end) = addresses
-            .split_once('-')
-            .ok_or("malformed process memory address range")?;
-        let start =
-            usize::from_str_radix(start, 16).map_err(|_| "invalid process memory start address")?;
-        let end =
-            usize::from_str_radix(end, 16).map_err(|_| "invalid process memory end address")?;
-        if start >= end || rights.len() != 4 {
-            return Err("invalid process memory map entry".into());
-        }
-        let bytes = rights.as_bytes();
-        if !matches!(bytes[0], b'r' | b'-')
-            || !matches!(bytes[1], b'w' | b'-')
-            || !matches!(bytes[2], b'x' | b'-')
-        {
-            return Err("invalid process memory access flags".into());
-        }
-        let label = fields.collect::<Vec<_>>().join(" ");
-        let image_backed = inode != 0 && label.starts_with('/');
-        regions.push(Region {
-            pid,
-            start,
-            size: end - start,
-            access: rights[..3].to_string(),
-            label,
-            image_backed,
-        });
+        regions.push(parse_linux_map_line(pid, line)?);
         if regions.len() > MAX_REGIONS {
             return Err(format!("process memory map exceeds {MAX_REGIONS} regions"));
         }
@@ -989,6 +1007,17 @@ mod tests {
             image(""),
         ]);
         assert_eq!(paths, ["/bin/main", "/lib/one.so"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_module_paths_preserve_internal_whitespace() {
+        let line = "00400000-00401000 r-xp 00000000 00:01 42   /tmp/a  b\tc (deleted)";
+        let region = super::parse_linux_map_line(7, line).unwrap();
+        assert_eq!(region.label, "/tmp/a  b\tc (deleted)");
+        assert!(region.image_backed);
+        assert_eq!(module_paths(&[region]), ["/tmp/a  b\tc (deleted)"]);
+        assert!(super::parse_linux_map_line(7, "00400000-00401000 r-xp").is_err());
     }
 
     #[test]
