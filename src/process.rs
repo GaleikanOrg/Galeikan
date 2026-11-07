@@ -135,6 +135,13 @@ pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
         .collect())
 }
 
+pub fn readable_regions(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| region.access.as_bytes().first() == Some(&b'r'))
+        .collect())
+}
+
 pub fn executable_regions(pid: u32) -> Result<Vec<Region>, String> {
     Ok(regions(pid)?
         .into_iter()

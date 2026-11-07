@@ -1101,7 +1101,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
             const char *access = gak_windows_access(information.Protect);
             if (!filter || (filter == 1 && image_backed && access[2] == 'x') ||
                 (filter == 2 && access[1] == 'w') || (filter == 3 && access[2] == 'x') ||
-                (filter == 4 && access[1] == 'w' && access[2] == 'x')) {
+                (filter == 4 && access[1] == 'w' && access[2] == 'x') ||
+                (filter == 5 && access[0] == 'r')) {
                 char *label_owned = NULL;
                 const char *label = "other";
                 if (image_backed) {
@@ -1175,7 +1176,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
         int image_backed = inode != 0 && label[0] == '/';
         if (!filter || (filter == 1 && image_backed && rights[2] == 'x') ||
             (filter == 2 && rights[1] == 'w') || (filter == 3 && rights[2] == 'x') ||
-            (filter == 4 && rights[1] == 'w' && rights[2] == 'x')) {
+            (filter == 4 && rights[1] == 'w' && rights[2] == 'x') ||
+            (filter == 5 && rights[0] == 'r')) {
             char access[4] = {rights[0], rights[1], rights[2], 0};
             status = gak_regions_append(regions, pid, start, end - start,
                                         access, label, image_backed);
@@ -1191,7 +1193,7 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
 
 GakRegions *gak_native_process_regions(uint64_t pid, uint64_t filter) {
     gak_file_error = NULL;
-    if (filter > 4) {
+    if (filter > 5) {
         gak_failf("invalid process region filter");
         return NULL;
     }

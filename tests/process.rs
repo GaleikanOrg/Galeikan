@@ -510,7 +510,7 @@ fn native_process_snapshot_rejects_negative_inputs_like_vm() {
 }
 
 #[test]
-fn executable_and_wx_regions_match_across_execution_modes() {
+fn readable_executable_and_wx_regions_match_across_execution_modes() {
     let Some(helper) = MemoryChild::spawn_wx() else {
         return;
     };
@@ -521,11 +521,11 @@ fn executable_and_wx_regions_match_across_execution_modes() {
     fs::create_dir_all(&root).unwrap();
     let script = root.join("wx_regions.gaks");
     fs::write(&script, format!(
-        "requires {{ process.inspect }}\nimport std.process\nlet all: Regions = process.regions({pid})\nlet executable: Regions = process.executable_regions({pid})\nlet writable: Regions = process.writable_regions({pid})\nlet wx: Regions = process.wx_regions({pid})\nlet region: Region = process.locate_u64(wx, {}u64)\nprint process.count(executable) > 0\nprint process.count(wx) > 0\nprint process.count(all) >= process.count(executable)\nprint process.count(writable) >= process.count(wx)\nprint process.access(region) == \"rwx\"\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\n",
-        helper.address, helper.address, helper.address
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.text import starts_with\nlet all: Regions = process.regions({pid})\nlet readable: Regions = process.readable_regions({pid})\nlet executable: Regions = process.executable_regions({pid})\nlet writable: Regions = process.writable_regions({pid})\nlet wx: Regions = process.wx_regions({pid})\nlet region: Region = process.locate_u64(wx, {}u64)\nlet readable_region: Region = process.locate_u64(readable, {}u64)\nvar all_readable = true\nfor item in readable {{\n    if not starts_with(process.access(item), \"r\") {{\n        all_readable = false\n    }}\n}}\nprint process.count(readable) > 0\nprint process.count(all) >= process.count(readable)\nprint all_readable\nprint process.access(readable_region) == \"rwx\"\nprint process.count(executable) > 0\nprint process.count(wx) > 0\nprint process.count(all) >= process.count(executable)\nprint process.count(writable) >= process.count(wx)\nprint process.access(region) == \"rwx\"\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\n",
+        helper.address, helper.address, helper.address, helper.address
     )).unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine, "--allow-process", &pid.to_string()])
