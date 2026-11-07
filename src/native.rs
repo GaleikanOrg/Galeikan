@@ -336,6 +336,9 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_binary_range_overflow", "range overflow"),
     ("gak_binary_out_of_bounds", "out of bounds"),
     ("gak_crc32_seed_range", "crc32 previous value exceeds u32"),
+    ("gak_entropy_window_range", "entropy window must be between 1 and 4096"),
+    ("gak_entropy_step_range", "entropy step must be between 1 and 4096"),
+    ("gak_entropy_windows_limit", "too many entropy windows"),
     ("gak_bits_offset", "bit offset must not be negative"),
     ("gak_bits_count", "bit count must be between 1 and 64"),
     ("gak_bits_bounds", "bit range out of bounds"),
@@ -6071,6 +6074,34 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax+16]\n    mov rdx, QWORD PTR [rax+24]\n    sub rdx, r10\n    mov r11, QWORD PTR [rax]\n    lea rax, [r11+r10+8]\n    call gak_entropy_milli\n    mov r8, rax\n    mov rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    lea r11, [rip+{decoder}]\n    call gak_alloc_observation", source_slot * 8, source_slot * 8).unwrap();
                 Ok(Scalar::Observation)
             }
+            ("entropy_windows", [source, window, step]) => {
+                if self.expr(source, scope)? != Scalar::Source {
+                    return Err("binary.entropy_windows expects Source".into());
+                }
+                let source_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
+                if self.expr(window, scope)? != Scalar::Int {
+                    return Err("binary.entropy_windows window must be i64".into());
+                }
+                let window_slot = self.reserve_slot()?;
+                writeln!(self.code, "    cmp rax, 1\n    jl gak_entropy_window_range\n    cmp rax, 4096\n    jg gak_entropy_window_range\n    mov QWORD PTR [rbp-{}], rax", window_slot * 8).unwrap();
+                if self.expr(step, scope)? != Scalar::Int {
+                    return Err("binary.entropy_windows step must be i64".into());
+                }
+                let step_slot = self.reserve_slot()?;
+                writeln!(self.code, "    cmp rax, 1\n    jl gak_entropy_step_range\n    cmp rax, 4096\n    jg gak_entropy_step_range\n    mov QWORD PTR [rbp-{}], rax", step_slot * 8).unwrap();
+                let empty = self.label();
+                let ready = self.label();
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]\n    sub rax, QWORD PTR [r10+16]\n    cmp rax, QWORD PTR [rbp-{}]\n    jb {empty}\n    sub rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    div QWORD PTR [rbp-{}]\n    inc rax\n    cmp rax, 10000\n    ja gak_entropy_windows_limit\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list", source_slot * 8, window_slot * 8, window_slot * 8, step_slot * 8).unwrap();
+                let list_slot = self.reserve_slot()?;
+                let index_slot = self.reserve_slot()?;
+                let offset_slot = self.reserve_slot()?;
+                let decoder = self.literal("entropy_milli")?;
+                let loop_label = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0\n{loop_label}:\n    mov r11, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r11]\n    jae {done}\n    imul rax, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10]\n    mov r10, QWORD PTR [r10+16]\n    add r10, rax\n    lea rax, [r11+r10+8]\n    mov rdx, QWORD PTR [rbp-{}]\n    call gak_entropy_milli\n    mov r8, rax\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    lea r11, [rip+{decoder}]\n    call gak_alloc_observation\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov QWORD PTR [r10+r11*8+8], rax\n    inc QWORD PTR [rbp-{}]\n    jmp {loop_label}\n{done}:\n    mov rax, QWORD PTR [rbp-{}]", list_slot * 8, index_slot * 8, list_slot * 8, index_slot * 8, step_slot * 8, offset_slot * 8, source_slot * 8, window_slot * 8, source_slot * 8, offset_slot * 8, window_slot * 8, list_slot * 8, index_slot * 8, index_slot * 8, list_slot * 8).unwrap();
+                Ok(Scalar::ListObservation)
+            }
             ("bits" | "signed_bits", [source, offset, count, order]) => {
                 self.uses_bits = true;
                 if self.expr(source, scope)? != Scalar::Source {
@@ -8033,6 +8064,7 @@ impl Codegen {
         }
         out.push_str("gak_binary_offset_negative_msg: .ascii \"offset must not be negative\\n\"\ngak_binary_offset_negative_msg_end:\ngak_binary_length_negative_msg: .ascii \"length must not be negative\\n\"\ngak_binary_length_negative_msg_end:\ngak_binary_range_overflow_msg: .ascii \"range overflow\\n\"\ngak_binary_range_overflow_msg_end:\ngak_binary_out_of_bounds_msg: .ascii \"out of bounds\\n\"\ngak_binary_out_of_bounds_msg_end:\ngak_binary_unknown_decoder_msg: .ascii \"unknown decoder\\n\"\ngak_binary_unknown_decoder_msg_end:\ngak_hexdump_limit_msg: .ascii \"hexdump length exceeds 4096 bytes\\n\"\ngak_hexdump_limit_msg_end:\ngak_observation_value_range_msg: .ascii \"Observation value does not fit i64\\n\"\ngak_observation_value_range_msg_end:\ngak_observation_limit_msg: .ascii \"native Observation memory exceeds 64 MiB\\n\"\ngak_observation_limit_msg_end:\n");
         out.push_str("gak_crc32_seed_range_msg: .ascii \"crc32 previous value exceeds u32\\n\"\ngak_crc32_seed_range_msg_end:\n");
+        out.push_str("gak_entropy_window_range_msg: .ascii \"entropy window must be between 1 and 4096\\n\"\ngak_entropy_window_range_msg_end:\ngak_entropy_step_range_msg: .ascii \"entropy step must be between 1 and 4096\\n\"\ngak_entropy_step_range_msg_end:\ngak_entropy_windows_limit_msg: .ascii \"too many entropy windows\\n\"\ngak_entropy_windows_limit_msg_end:\n");
         for (label, message) in [
             ("gak_bits_offset", "bit offset must not be negative"),
             ("gak_bits_count", "bit count must be between 1 and 64"),
@@ -9178,6 +9210,9 @@ gak_cli_utf8_done:
             ("gak_binary_range_overflow", "gak_binary_range_overflow_msg"),
             ("gak_binary_out_of_bounds", "gak_binary_out_of_bounds_msg"),
             ("gak_crc32_seed_range", "gak_crc32_seed_range_msg"),
+            ("gak_entropy_window_range", "gak_entropy_window_range_msg"),
+            ("gak_entropy_step_range", "gak_entropy_step_range_msg"),
+            ("gak_entropy_windows_limit", "gak_entropy_windows_limit_msg"),
             ("gak_bits_offset", "gak_bits_offset_msg"),
             ("gak_bits_count", "gak_bits_count_msg"),
             ("gak_bits_bounds", "gak_bits_bounds_msg"),

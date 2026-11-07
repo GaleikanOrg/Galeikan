@@ -5442,6 +5442,40 @@ impl Runtime {
                     decoder: "entropy_milli",
                 })))
             }
+            ("entropy_windows", [source, window, step]) => {
+                let source = source.as_source()?;
+                let window = usize::try_from(window.as_int()?).unwrap_or(0);
+                let step = usize::try_from(step.as_int()?).unwrap_or(0);
+                if !(1..=4096).contains(&window) {
+                    return Err("entropy window must be between 1 and 4096".into());
+                }
+                if !(1..=4096).contains(&step) {
+                    return Err("entropy step must be between 1 and 4096".into());
+                }
+                let count = if source.bytes().len() < window {
+                    0
+                } else {
+                    (source.bytes().len() - window) / step + 1
+                };
+                if count > 10_000 {
+                    return Err("too many entropy windows".into());
+                }
+                let mut observations = Vec::with_capacity(count);
+                for index in 0..count {
+                    let offset = index * step;
+                    observations.push(Value::Observation(Arc::new(Observation {
+                        value: shannon_entropy_milli(&source.bytes()[offset..offset + window]),
+                        source: source.clone(),
+                        offset,
+                        width: window,
+                        decoder: "entropy_milli",
+                    })));
+                }
+                Ok(Value::List(
+                    Arc::new(observations),
+                    Some(ResultKind::Observation),
+                ))
+            }
             ("hunt", [source, pattern]) => {
                 let source = source.as_source()?;
                 let result = search_pattern(source.bytes(), pattern, usize::MAX)?;
@@ -8696,6 +8730,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "patch_bits") => (&[Source, Int, Int, UInt, Str], Source),
         ("binary", "patch_signed_bits") => (&[Source, Int, Int, Int, Str], Source),
         ("binary", "entropy") => (&[Source], Observation),
+        ("binary", "entropy_windows") => (&[Source, Int, Int], Type::List(Some(ResultKind::Observation))),
         ("binary", "view") => (&[Source, Int, Int], Source),
         ("binary", "extract") => (&[Type::Any, Int, Int], Bytes),
         ("binary", "patch") => (&[Source, Int, Bytes], Source),

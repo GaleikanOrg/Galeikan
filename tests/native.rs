@@ -9881,6 +9881,37 @@ fn native_binary_hunt_errors_and_hit_limit_match_vm() {
 }
 
 #[test]
+fn entropy_windows_track_local_changes_across_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "entropy-windows.gak",
+        "from std.binary import entropy_windows, from_hex, offset, snapshot, value, view, width\nfrom std.bytes import repeat\nfrom std.result import message\nfn bad_window() -> Result<List<Observation>> = entropy_windows(snapshot(from_hex(\"41\")), 0, 1)\nfn bad_step() -> Result<List<Observation>> = entropy_windows(snapshot(from_hex(\"41\")), 1, -1)\nfn too_many() -> Result<List<Observation>> = entropy_windows(snapshot(repeat(from_hex(\"41\"), 10001)), 1, 1)\nlet source = snapshot(from_hex(\"ff 41 41 41 41 42 42 42 42 00\"))\nlet windows: List<Observation> = entropy_windows(view(source, 1, 8), 4, 2)\nprint len(windows)\nprint value(windows[0])\nprint value(windows[1])\nprint value(windows[2])\nprint offset(windows[0])\nprint offset(windows[1])\nprint offset(windows[2])\nprint width(windows[1])\nprint len(entropy_windows(view(source, 1, 2), 4, 1))\nprint message(bad_window())\nprint message(bad_step())\nprint message(too_many())\n",
+    );
+    let expected = b"3\n0\n1000\n0\n0\n2\n4\n4\n0\nentropy window must be between 1 and 4096\nentropy step must be between 1 and 4096\ntoo many entropy windows\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundled = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb")).output().unwrap();
+    assert!(bundled.status.success(), "{}", String::from_utf8_lossy(&bundled.stderr));
+    assert_eq!(bundled.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let native = Command::new(PathBuf::from(String::from_utf8(built.stdout).unwrap().trim()))
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_binary_entropy_matches_vm_fixed_point_values_and_observations() {
     if !gcc_available() {
         return;
