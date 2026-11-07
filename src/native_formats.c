@@ -1448,7 +1448,7 @@ static int gak_relocation_emit(GakRelocationSelection *result, int64_t selected,
 static int gak_pe_relocation_scan(const GakFormat *format, int64_t selected,
                                   GakRelocationSelection *result) {
     if (format->kind != 1) {
-        gak_format_fail("native ELF relocations are not yet supported"); return 0;
+        gak_format_fail("PE relocations require a PE image"); return 0;
     }
     const GakSourceHead *source = format->source;
     const uint8_t *bytes = source->backing + 8 + source->start;
@@ -1932,6 +1932,143 @@ static void *gak_dependency_text(const uint8_t *raw, size_t length) {
     }
     format_memory += escaped + 8;
     return box;
+}
+
+static int gak_clr_utf8_valid(const uint8_t *bytes, uint64_t length);
+
+typedef struct {
+    uint64_t count;
+    const uint8_t *name;
+    size_t name_length;
+    uint64_t value;
+    int64_t section;
+    uint64_t symbol_type;
+    uint64_t storage;
+    uint64_t aux_count;
+} GakCoffSymbolSelection;
+
+static int gak_pe_coff_symbol_scan(const GakFormat *format, int64_t selected,
+                                   GakCoffSymbolSelection *result) {
+    gak_formats_error = NULL;
+    if (!format || format->kind != 1) {
+        gak_format_fail("PE COFF symbols require a PE image"); return 0;
+    }
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t length = source->end - source->start;
+    uint64_t coff = format->machine_at;
+    uint64_t table = gak_number(bytes, coff + 8u, 4, 0);
+    uint64_t rows = gak_number(bytes, coff + 12u, 4, 0);
+    if (!table && !rows) {
+        if (selected >= 0) {
+            gak_format_fail("PE COFF symbol index out of range"); return 0;
+        }
+        return 1;
+    }
+    if (!table || !rows || rows > 100000u) {
+        gak_format_fail("invalid PE COFF symbol table location or count"); return 0;
+    }
+    uint64_t table_size = rows * 18u;
+    if (!gak_span(length, table, table_size)) {
+        gak_format_fail("PE COFF symbol table outside captured Source"); return 0;
+    }
+    uint64_t strings = table + table_size;
+    if (!gak_span(length, strings, 4)) {
+        gak_format_fail("PE COFF string table header outside captured Source"); return 0;
+    }
+    uint64_t string_size = gak_number(bytes, strings, 4, 0);
+    if (string_size < 4 || string_size > 16u * 1024u * 1024u ||
+        !gak_span(length, strings, string_size)) {
+        gak_format_fail("invalid PE COFF string table size"); return 0;
+    }
+    for (uint64_t row = 0; row < rows;) {
+        uint64_t at = table + row * 18u;
+        uint64_t aux = bytes[at + 17u];
+        if (aux >= rows - row) {
+            gak_format_fail("PE COFF auxiliary symbol exceeds table"); return 0;
+        }
+        if (selected >= 0 && (uint64_t)selected == result->count) {
+            const uint8_t *name = bytes + at;
+            uint64_t name_length = 0;
+            if (gak_number(bytes, at, 4, 0) == 0) {
+                uint64_t offset = gak_number(bytes, at + 4u, 4, 0);
+                if (offset < 4 || offset >= string_size) {
+                    gak_format_fail("PE COFF name offset outside string table"); return 0;
+                }
+                name = bytes + strings + offset;
+                uint64_t available = string_size - offset;
+                uint64_t limit = available < 4097u ? available : 4097u;
+                while (name_length < limit && name[name_length]) name_length++;
+                if (name_length == limit) {
+                    gak_format_fail(available > 4097u
+                        ? "PE COFF symbol name exceeds 4096 bytes"
+                        : "unterminated PE COFF symbol name"); return 0;
+                }
+            } else {
+                while (name_length < 8 && name[name_length]) name_length++;
+            }
+            if (name_length > 4096) {
+                gak_format_fail("PE COFF symbol name exceeds 4096 bytes"); return 0;
+            }
+            if (!gak_clr_utf8_valid(name, name_length)) {
+                gak_format_fail("invalid PE COFF symbol name UTF-8"); return 0;
+            }
+            result->name = name;
+            result->name_length = (size_t)name_length;
+            result->value = gak_number(bytes, at + 8u, 4, 0);
+            uint64_t raw_section = gak_number(bytes, at + 12u, 2, 0);
+            result->section = raw_section <= 0x7fffu
+                ? (int64_t)raw_section : (int64_t)raw_section - 0x10000;
+            result->symbol_type = gak_number(bytes, at + 14u, 2, 0);
+            result->storage = bytes[at + 16u];
+            result->aux_count = aux;
+        }
+        result->count++;
+        row += aux + 1u;
+    }
+    if (selected >= 0 && (uint64_t)selected >= result->count) {
+        gak_format_fail("PE COFF symbol index out of range"); return 0;
+    }
+    return 1;
+}
+
+int64_t gak_native_formats_coff_symbol_count(const void *value) {
+    GakCoffSymbolSelection result = {0};
+    if (!gak_pe_coff_symbol_scan(value, -1, &result)) return -1;
+    return (int64_t)result.count;
+}
+
+void *gak_native_formats_coff_symbol_name(const void *value, int64_t index) {
+    GakCoffSymbolSelection result = {0};
+    if (index < 0) {
+        gak_format_fail("PE COFF symbol index out of range"); return NULL;
+    }
+    if (!gak_pe_coff_symbol_scan(value, index, &result)) return NULL;
+    return gak_format_box((const char *)result.name, result.name_length);
+}
+
+int64_t gak_native_formats_coff_symbol_field(const void *value, int64_t index,
+                                              const void *field) {
+    gak_formats_error = NULL;
+    int part;
+    if (gak_format_name(field, "value")) part = 0;
+    else if (gak_format_name(field, "section")) part = 1;
+    else if (gak_format_name(field, "type")) part = 2;
+    else if (gak_format_name(field, "storage")) part = 3;
+    else if (gak_format_name(field, "aux_count")) part = 4;
+    else { gak_format_fail("unknown PE COFF symbol field"); return -1; }
+    if (index < 0) {
+        gak_format_fail("PE COFF symbol index out of range"); return -1;
+    }
+    GakCoffSymbolSelection result = {0};
+    if (!gak_pe_coff_symbol_scan(value, index, &result)) return -1;
+    switch (part) {
+        case 0: return (int64_t)result.value;
+        case 1: return result.section;
+        case 2: return (int64_t)result.symbol_type;
+        case 3: return (int64_t)result.storage;
+        default: return (int64_t)result.aux_count;
+    }
 }
 
 static void gak_dependency_text_free(void *box) {

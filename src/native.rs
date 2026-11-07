@@ -4520,6 +4520,40 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    mov {}, {mode}\n    call gak_native_formats_symbol_text\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2(), self.arg3()).unwrap();
                 return Ok(Scalar::Str);
             }
+            ("coff_symbol_count", [report]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.coff_symbol_count expects Format".into());
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_coff_symbol_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                return Ok(Scalar::Int);
+            }
+            ("coff_symbol_name", [report, index]) | ("coff_symbol_field", [report, index, _]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err(format!("formats.{name} expects Format"));
+                }
+                let report_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8).unwrap();
+                if self.expr(index, scope)? != Scalar::Int {
+                    return Err(format!("formats.{name} index must be i64"));
+                }
+                if name == "coff_symbol_name" {
+                    self.uses_formats = true;
+                    let ready = self.label();
+                    writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_coff_symbol_name\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1()).unwrap();
+                    return Ok(Scalar::Str);
+                }
+                let index_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", index_slot * 8).unwrap();
+                if self.expr(&args[2], scope)? != Scalar::Str {
+                    return Err("formats.coff_symbol_field field must be str".into());
+                }
+                self.uses_formats = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_formats_coff_symbol_field\n    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), index_slot * 8, self.arg2()).unwrap();
+                return Ok(Scalar::Int);
+            }
             ("relocation_location", [report]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err("formats.relocation_location expects Format".into());

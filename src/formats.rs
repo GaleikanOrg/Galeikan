@@ -216,6 +216,18 @@ const MAX_PDB_PATH_BYTES: usize = 4096;
 const MAX_ELF_NOTE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ELF_NOTE_ENTRIES: usize = 100_000;
 const MAX_ELF_BUILD_ID_BYTES: usize = 64;
+const MAX_COFF_SYMBOLS: usize = 100_000;
+const MAX_COFF_STRING_BYTES: usize = 16 * 1024 * 1024;
+const MAX_COFF_NAME_BYTES: usize = 4096;
+
+struct CoffSymbol {
+    name: String,
+    value: u32,
+    section: i16,
+    symbol_type: u16,
+    storage: u8,
+    aux_count: u8,
+}
 
 #[derive(Clone)]
 pub struct FormatReport {
@@ -358,6 +370,112 @@ pub fn clr_table_index(name: &str) -> Result<usize, String> {
 }
 
 impl FormatReport {
+    fn coff_symbols(
+        &self,
+        bytes: &[u8],
+        selected: Option<usize>,
+    ) -> Result<(usize, Option<CoffSymbol>), String> {
+        if self.kind() != "pe" {
+            return Err("PE COFF symbols require a PE image".into());
+        }
+        let pe = usize::try_from(number(bytes, 0x3c, 4, false)?)
+            .map_err(|_| "PE offset outside address space")?;
+        let coff = pe.checked_add(4).ok_or("PE COFF header offset overflow")?;
+        span(bytes, coff, 20)?;
+        let table = usize::try_from(number(bytes, coff + 8, 4, false)?)
+            .map_err(|_| "PE COFF symbol offset outside address space")?;
+        let rows = usize::try_from(number(bytes, coff + 12, 4, false)?)
+            .map_err(|_| "PE COFF symbol count outside address space")?;
+        if table == 0 && rows == 0 {
+            return if selected.is_some() {
+                Err("PE COFF symbol index out of range".into())
+            } else {
+                Ok((0, None))
+            };
+        }
+        if table == 0 || rows == 0 || rows > MAX_COFF_SYMBOLS {
+            return Err("invalid PE COFF symbol table location or count".into());
+        }
+        let table_size = rows.checked_mul(18).ok_or("PE COFF symbol table size overflow")?;
+        span(bytes, table, table_size)?;
+        let strings = table.checked_add(table_size).ok_or("PE COFF string table offset overflow")?;
+        span(bytes, strings, 4)?;
+        let string_size = usize::try_from(number(bytes, strings, 4, false)?)
+            .map_err(|_| "PE COFF string table size outside address space")?;
+        if !(4..=MAX_COFF_STRING_BYTES).contains(&string_size) {
+            return Err("invalid PE COFF string table size".into());
+        }
+        span(bytes, strings, string_size)?;
+        let mut row = 0_usize;
+        let mut count = 0_usize;
+        let mut found = None;
+        while row < rows {
+            let at = table + row * 18;
+            let aux = usize::from(bytes[at + 17]);
+            if aux >= rows - row {
+                return Err("PE COFF auxiliary symbol exceeds table".into());
+            }
+            if selected == Some(count) {
+                let name_bytes = if bytes[at..at + 4] == [0, 0, 0, 0] {
+                    let offset = usize::try_from(number(bytes, at + 4, 4, false)?)
+                        .map_err(|_| "PE COFF name offset outside address space")?;
+                    if offset < 4 || offset >= string_size {
+                        return Err("PE COFF name offset outside string table".into());
+                    }
+                    let tail = &bytes[strings + offset..strings + string_size];
+                    let length = tail.iter().take(MAX_COFF_NAME_BYTES + 1)
+                        .position(|&byte| byte == 0)
+                        .ok_or_else(|| if tail.len() > MAX_COFF_NAME_BYTES + 1 {
+                            "PE COFF symbol name exceeds 4096 bytes"
+                        } else {
+                            "unterminated PE COFF symbol name"
+                        })?;
+                    &tail[..length]
+                } else {
+                    let raw = &bytes[at..at + 8];
+                    &raw[..raw.iter().position(|&byte| byte == 0).unwrap_or(8)]
+                };
+                found = Some(CoffSymbol {
+                    name: std::str::from_utf8(name_bytes)
+                        .map_err(|_| "invalid PE COFF symbol name UTF-8")?.to_owned(),
+                    value: number(bytes, at + 8, 4, false)? as u32,
+                    section: i16::from_le_bytes([bytes[at + 12], bytes[at + 13]]),
+                    symbol_type: number(bytes, at + 14, 2, false)? as u16,
+                    storage: bytes[at + 16],
+                    aux_count: aux as u8,
+                });
+            }
+            row += aux + 1;
+            count += 1;
+        }
+        if selected.is_some() && found.is_none() {
+            return Err("PE COFF symbol index out of range".into());
+        }
+        Ok((count, found))
+    }
+
+    pub fn coff_symbol_count(&self, bytes: &[u8]) -> Result<usize, String> {
+        Ok(self.coff_symbols(bytes, None)?.0)
+    }
+
+    pub fn coff_symbol_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
+        Ok(self.coff_symbols(bytes, Some(index))?.1
+            .ok_or("PE COFF symbol index out of range")?.name)
+    }
+
+    pub fn coff_symbol_field(&self, bytes: &[u8], index: usize, field: &str) -> Result<i64, String> {
+        let symbol = self.coff_symbols(bytes, Some(index))?.1
+            .ok_or("PE COFF symbol index out of range")?;
+        Ok(match field {
+            "value" => i64::from(symbol.value),
+            "section" => i64::from(symbol.section),
+            "type" => i64::from(symbol.symbol_type),
+            "storage" => i64::from(symbol.storage),
+            "aux_count" => i64::from(symbol.aux_count),
+            _ => return Err("unknown PE COFF symbol field".into()),
+        })
+    }
+
     pub fn build_id(&self, bytes: &[u8]) -> Result<String, String> {
         if self.kind() != "elf" {
             return Err("ELF build ID requires an ELF image".into());

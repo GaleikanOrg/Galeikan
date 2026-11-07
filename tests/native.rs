@@ -6007,6 +6007,104 @@ fn native_elf_symbol_views_match_vm_and_reject_unmapped_bytes() {
 }
 
 #[test]
+fn pe_coff_symbols_skip_auxiliary_rows_and_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let mut pe = vec![0_u8; 0x400];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0x98 + 60..0x98 + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+    let section = 0x98 + 0xf0;
+    pe[section + 8..section + 12].copy_from_slice(&0x100_u32.to_le_bytes());
+    pe[section + 12..section + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section + 16..section + 20].copy_from_slice(&0x100_u32.to_le_bytes());
+    pe[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x8c..0x90].copy_from_slice(&0x300_u32.to_le_bytes());
+    pe[0x90..0x94].copy_from_slice(&3_u32.to_le_bytes());
+    pe[0x300..0x308].copy_from_slice(b"entry\0\0\0");
+    pe[0x308..0x30c].copy_from_slice(&0x20_u32.to_le_bytes());
+    pe[0x30c..0x30e].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x30e..0x310].copy_from_slice(&0x20_u16.to_le_bytes());
+    pe[0x310..0x312].copy_from_slice(&[2, 1]);
+    pe[0x312..0x324].fill(0xff);
+    pe[0x328..0x32c].copy_from_slice(&4_u32.to_le_bytes());
+    pe[0x32c..0x330].copy_from_slice(&0x77_u32.to_le_bytes());
+    pe[0x330..0x332].copy_from_slice(&(-1_i16).to_le_bytes());
+    pe[0x334..0x336].copy_from_slice(&[3, 0]);
+    pe[0x336..0x33a].copy_from_slice(&16_u32.to_le_bytes());
+    pe[0x33a..0x346].copy_from_slice(b"long_symbol\0");
+    let mut bad_aux = pe.clone();
+    bad_aux[0x311] = 3;
+    let mut bad_offset = pe.clone();
+    bad_offset[0x328..0x32c].copy_from_slice(&16_u32.to_le_bytes());
+    let mut bad_pointer = pe.clone();
+    bad_pointer[0x8c..0x90].fill(0);
+    let mut no_symbols = pe.clone();
+    no_symbols[0x8c..0x94].fill(0);
+    let mut bad_utf8 = pe.clone();
+    bad_utf8[0x33a] = 0xff;
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let script = s.write(
+        "coff_symbols.gak",
+        &format!(r#"from std.binary import from_hex, snapshot
+from std.formats import probe, coff_symbol_count, coff_symbol_name, coff_symbol_field
+from std.result import is_error
+fn count(report: Format) -> Result<i64> = coff_symbol_count(report)
+fn name(report: Format, index: i64) -> Result<str> = coff_symbol_name(report, index)
+fn field(report: Format, index: i64, key: str) -> Result<i64> = coff_symbol_field(report, index, key)
+let report = probe(snapshot(from_hex("{}")))
+let bad_aux = probe(snapshot(from_hex("{}")))
+let bad_offset = probe(snapshot(from_hex("{}")))
+let bad_pointer = probe(snapshot(from_hex("{}")))
+let no_symbols = probe(snapshot(from_hex("{}")))
+let bad_utf8 = probe(snapshot(from_hex("{}")))
+print coff_symbol_count(report)
+print coff_symbol_count(no_symbols)
+print coff_symbol_name(report, 0)
+print coff_symbol_name(report, 1)
+print coff_symbol_field(report, 0, "value")
+print coff_symbol_field(report, 0, "section")
+print coff_symbol_field(report, 0, "type")
+print coff_symbol_field(report, 0, "storage")
+print coff_symbol_field(report, 0, "aux_count")
+print coff_symbol_field(report, 1, "section")
+print is_error(count(bad_aux))
+print is_error(name(bad_offset, 1))
+print is_error(name(bad_utf8, 1))
+print is_error(count(bad_pointer))
+print is_error(name(report, 2))
+print is_error(field(report, -1, "value"))
+print is_error(field(report, 0, "unknown"))
+"#, hex(&pe), hex(&bad_aux), hex(&bad_offset), hex(&bad_pointer), hex(&no_symbols), hex(&bad_utf8)),
+    );
+    let expected = b"2\n0\nentry\nlong_symbol\n32\n1\n32\n2\n1\n-1\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundled = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb")).output().unwrap();
+    assert!(bundled.status.success(), "{}", String::from_utf8_lossy(&bundled.stderr));
+    assert_eq!(bundled.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let native = Command::new(PathBuf::from(String::from_utf8(built.stdout).unwrap().trim()))
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_pe_relocations_match_vm_and_reject_malformed_blocks() {
     if !gcc_available() {
         return;

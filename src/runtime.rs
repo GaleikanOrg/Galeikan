@@ -6726,6 +6726,20 @@ impl Runtime {
                     _ => Ok(Value::Int(i64::from(certificate.kind))),
                 }
             }
+            ("coff_symbol_count", [Value::Format(source, report)]) => Ok(Value::Int(
+                i64::try_from(report.coff_symbol_count(source.bytes())?)
+                    .map_err(|_| "PE COFF symbol count outside i64 range")?,
+            )),
+            ("coff_symbol_name", [Value::Format(source, report), index]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE COFF symbol index out of range")?;
+                Ok(Value::Str(report.coff_symbol_name(source.bytes(), index)?))
+            }
+            ("coff_symbol_field", [Value::Format(source, report), index, Value::Str(field)]) => {
+                let index = usize::try_from(index.as_int()?)
+                    .map_err(|_| "PE COFF symbol index out of range")?;
+                Ok(Value::Int(report.coff_symbol_field(source.bytes(), index, field)?))
+            }
             ("symbol_count" | "static_symbol_count", [Value::Format(source, report)]) => {
                 let static_table = name == "static_symbol_count";
                 let symbols = if static_table {
@@ -8688,6 +8702,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_metadata_version") => (&[Format], Str),
         ("formats", "clr_module_name" | "clr_module_mvid") => (&[Format], Str),
         ("formats", "symbol_count" | "static_symbol_count") => (&[Format], Int),
+        ("formats", "coff_symbol_count") => (&[Format], Int),
+        ("formats", "coff_symbol_name") => (&[Format, Int], Str),
+        ("formats", "coff_symbol_field") => (&[Format, Int, Str], Int),
         ("formats", "relocation_count") => (&[Format], Int),
         ("formats", "relocation_location") => (&[Format], Str),
         ("formats", "needed_count") => (&[Format], Int),
