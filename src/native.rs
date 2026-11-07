@@ -4745,7 +4745,7 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {part}\n    call {helper}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), report_slot * 8, self.arg1(), self.arg2()).unwrap();
                 return Ok(Scalar::Str);
             }
-            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_signature" | "clr_method_signature_text", [report, index]) => {
+            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_owner" | "clr_method_signature" | "clr_method_signature_text", [report, index]) => {
                 if self.expr(report, scope)? != Scalar::Format {
                     return Err(format!("formats.{name} expects Format"));
                 }
@@ -4765,6 +4765,8 @@ impl Codegen {
                     "gak_native_formats_clr_method_impl_flags"
                 } else if name == "clr_method_flags" {
                     "gak_native_formats_clr_method_flags"
+                } else if name == "clr_method_owner" {
+                    "gak_native_formats_clr_method_owner"
                 } else {
                     "gak_native_formats_clr_method_rva"
                 };
@@ -4778,7 +4780,7 @@ impl Codegen {
                     return Ok(Scalar::Str);
                 }
                 writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_formats_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
-                return Ok(Scalar::UInt);
+                return Ok(if name == "clr_method_owner" { Scalar::Int } else { Scalar::UInt });
             }
             (
                 "clr_stream_name" | "clr_stream_rva" | "clr_stream_size" | "clr_stream_data",

@@ -967,8 +967,8 @@ impl FormatReport {
         } else {
             2
         };
-        let field_rows = if rows[3] != 0 { rows[3] } else { rows[4] };
-        let method_rows = if rows[5] != 0 { rows[5] } else { rows[6] };
+        let field_rows = if valid & (1 << 3) != 0 { rows[3] } else { rows[4] };
+        let method_rows = if valid & (1 << 5) != 0 { rows[5] } else { rows[6] };
         let field_width = if field_rows >= 1 << 16 { 4 } else { 2 };
         let method_width = if method_rows >= 1 << 16 { 4 } else { 2 };
         let module_size = 2 + strings_width + 3 * guid_width;
@@ -1145,9 +1145,9 @@ impl FormatReport {
             2 + strings_width + 3 * guid_width,
             scope_width + 2 * strings_width,
             4 + 2 * strings_width + extends_width + field_width + method_width,
-            field_width,
+            if rows[4] >= 1 << 16 { 4 } else { 2 },
             2 + strings_width + blob_width,
-            method_width,
+            if rows[6] >= 1 << 16 { 4 } else { 2 },
         ];
         let preceding = (0..6).try_fold(0_u64, |total, table| {
             total.checked_add(rows[table].checked_mul(sizes[table] as u64)?)
@@ -1190,6 +1190,91 @@ impl FormatReport {
     pub fn clr_method_flags(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
         let (_, _, flags, _, _) = self.clr_method_fields(bytes, index)?;
         Ok(flags)
+    }
+
+    pub fn clr_method_owner(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        self.clr_method_fields(bytes, index)?;
+        let table = self.clr_metadata(bytes)?.streams.iter()
+            .find(|stream| stream.name == "#~" || stream.name == "#-")
+            .ok_or("PE CLR metadata has no table stream")?;
+        let data = &bytes[table.offset..table.offset + table.size];
+        let valid = number(data, 8, 8, false)?;
+        let mut rows = [0_u64; 64];
+        let mut cursor = 24;
+        for (table_index, count) in rows.iter_mut().enumerate() {
+            if valid & (1_u64 << table_index) != 0 {
+                *count = number(data, cursor, 4, false)?;
+                cursor += 4;
+            }
+        }
+        let strings_width = if data[6] & 1 != 0 { 4 } else { 2 };
+        let guid_width = if data[6] & 2 != 0 { 4 } else { 2 };
+        let blob_width = if data[6] & 4 != 0 { 4 } else { 2 };
+        let scope_width = if [0, 1, 26, 35].iter().any(|&table| rows[table] >= 1 << 14) { 4 } else { 2 };
+        let extends_width = if [1, 2, 27].iter().any(|&table| rows[table] >= 1 << 14) { 4 } else { 2 };
+        let field_count = if valid & (1 << 3) != 0 { rows[3] } else { rows[4] };
+        let method_count = if valid & (1 << 5) != 0 { rows[5] } else { rows[6] };
+        let field_width = if field_count >= 1 << 16 { 4 } else { 2 };
+        let method_width = if method_count >= 1 << 16 { 4 } else { 2 };
+        let field_ptr_width = if rows[4] >= 1 << 16 { 4 } else { 2 };
+        let method_ptr_width = if rows[6] >= 1 << 16 { 4 } else { 2 };
+        let type_size = 4 + 2 * strings_width + extends_width + field_width + method_width;
+        let type_start = rows[0].checked_mul((2 + strings_width + 3 * guid_width) as u64)
+            .and_then(|size| size.checked_add(rows[1] * (scope_width + 2 * strings_width) as u64))
+            .and_then(|size| usize::try_from(size).ok())
+            .and_then(|size| cursor.checked_add(size))
+            .ok_or("PE CLR TypeDef row outside address space")?;
+        let type_bytes = rows[2].checked_mul(type_size as u64)
+            .and_then(|size| usize::try_from(size).ok())
+            .ok_or("PE CLR TypeDef row outside address space")?;
+        if type_start > data.len() || type_bytes > data.len() - type_start {
+            return Err("truncated PE CLR TypeDef table".into());
+        }
+        let ptr_start = type_start.checked_add(type_bytes)
+            .and_then(|size| size.checked_add(usize::try_from(rows[3].checked_mul(field_ptr_width as u64)?).ok()?))
+            .and_then(|size| size.checked_add(usize::try_from(rows[4].checked_mul((2 + strings_width + blob_width) as u64)?).ok()?))
+            .ok_or("PE CLR MethodPtr row outside address space")?;
+        if valid & (1 << 5) != 0 {
+            let ptr_bytes = rows[5].checked_mul(method_ptr_width as u64)
+                .and_then(|size| usize::try_from(size).ok())
+                .ok_or("PE CLR MethodPtr row outside address space")?;
+            if ptr_start > data.len() || ptr_bytes > data.len() - ptr_start {
+                return Err("truncated PE CLR MethodPtr table".into());
+            }
+        }
+        let mut previous = 1_u64;
+        let mut owner = None;
+        for type_index in 1..=rows[2] + 1 {
+            let next = if type_index <= rows[2] {
+                let row = type_start + (type_index as usize - 1) * type_size;
+                number(data, row + 4 + 2 * strings_width + extends_width + field_width, method_width, false)?
+            } else {
+                method_count + 1
+            };
+            if next < previous || next > method_count + 1 || (type_index == 1 && next != 1) {
+                return Err("invalid PE CLR TypeDef MethodList".into());
+            }
+            if type_index > 1 {
+                for position in previous..next {
+                    let method = if valid & (1 << 5) != 0 {
+                        let row = ptr_start + (position as usize - 1) * method_ptr_width;
+                        number(data, row, method_ptr_width, false)?
+                    } else {
+                        position
+                    };
+                    if method == 0 || method > rows[6] {
+                        return Err("invalid PE CLR MethodPtr target".into());
+                    }
+                    if method == index as u64 {
+                        if owner.replace(type_index - 1).is_some() {
+                            return Err("duplicate PE CLR MethodDef owner".into());
+                        }
+                    }
+                }
+            }
+            previous = next;
+        }
+        owner.ok_or_else(|| "PE CLR MethodDef has no owner".into())
     }
 
     pub fn clr_method_signature_range(
