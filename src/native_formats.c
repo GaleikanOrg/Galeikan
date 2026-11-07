@@ -4209,7 +4209,8 @@ void *gak_native_formats_clr_method_signature(const void *value, int64_t index) 
     return gak_native_formats_clr_blob(value, (int64_t)signature);
 }
 
-void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
+static GakFormatRange *gak_clr_method_body(const void *value, int64_t index,
+                                           uint64_t *max_stack, uint64_t *local_sig_token) {
     gak_formats_error = NULL;
     uint64_t rva = 0, impl_flags = 0, flags = 0, name = 0, signature = 0;
     if (!gak_clr_method_fields(value, index, &rva, &impl_flags, &flags, &name, &signature)) return NULL;
@@ -4227,6 +4228,8 @@ void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
     if ((first & 3u) == 2u) {
         header_size = 1;
         code_size = first >> 2;
+        if (max_stack) *max_stack = 8;
+        if (local_sig_token) *local_sig_token = 0;
     } else if ((first & 3u) == 3u) {
         if (rva & 3u) {
             gak_format_fail("unaligned PE CLR fat method header"); return NULL;
@@ -4236,6 +4239,8 @@ void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
         uint64_t start = header->start;
         uint64_t flags_size = gak_number(bytes, start, 2, 0);
         code_size = gak_number(bytes, start + 4u, 4, 0);
+        if (max_stack) *max_stack = gak_number(bytes, start + 2u, 2, 0);
+        if (local_sig_token) *local_sig_token = gak_number(bytes, start + 8u, 4, 0);
         format_memory -= sizeof(*header);
         free(header);
         if ((flags_size >> 12) != 3u) {
@@ -4249,6 +4254,28 @@ void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
         gak_format_fail("PE CLR method has empty IL body"); return NULL;
     }
     return gak_pe_rva(value, rva + header_size, code_size);
+}
+
+void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
+    return gak_clr_method_body(value, index, NULL, NULL);
+}
+
+uint64_t gak_native_formats_clr_method_max_stack(const void *value, int64_t index) {
+    uint64_t result = 0;
+    GakFormatRange *body = gak_clr_method_body(value, index, &result, NULL);
+    if (!body) return 0;
+    format_memory -= sizeof(*body);
+    free(body);
+    return result;
+}
+
+uint64_t gak_native_formats_clr_method_local_sig_token(const void *value, int64_t index) {
+    uint64_t result = 0;
+    GakFormatRange *body = gak_clr_method_body(value, index, NULL, &result);
+    if (!body) return 0;
+    format_memory -= sizeof(*body);
+    free(body);
+    return result;
 }
 
 typedef struct {

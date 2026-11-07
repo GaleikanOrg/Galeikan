@@ -6562,7 +6562,7 @@ impl Runtime {
                     report.clr_type_ref_namespace(source.bytes(), index)?
                 }))
             }
-            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_owner", [Value::Format(source, report), index]) => {
+            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_owner" | "clr_method_max_stack" | "clr_method_local_sig_token", [Value::Format(source, report), index]) => {
                 let index = usize::try_from(index.as_int()?)
                     .map_err(|_| "PE CLR MethodDef index out of range")?;
                 if name == "clr_method_name" {
@@ -6573,6 +6573,10 @@ impl Runtime {
                     Ok(Value::UInt(report.clr_method_flags(source.bytes(), index)?))
                 } else if name == "clr_method_owner" {
                     Ok(Value::Int(report.clr_method_owner(source.bytes(), index)? as i64))
+                } else if name == "clr_method_max_stack" {
+                    Ok(Value::UInt(report.clr_method_max_stack(source.bytes(), index)?))
+                } else if name == "clr_method_local_sig_token" {
+                    Ok(Value::UInt(report.clr_method_local_sig_token(source.bytes(), index)?))
                 } else {
                     Ok(Value::UInt(report.clr_method_rva(source.bytes(), index)?))
                 }
@@ -8730,7 +8734,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_type_ref_name" | "clr_type_ref_namespace" | "clr_type_ref_full_name") => (&[Format, Int], Str),
         ("formats", "clr_method_name") => (&[Format, Int], Str),
         ("formats", "clr_method_signature_text") => (&[Format, Int], Str),
-        ("formats", "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags") => (&[Format, Int], UInt),
+        ("formats", "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_max_stack" | "clr_method_local_sig_token") => (&[Format, Int], UInt),
         ("formats", "clr_method_owner") => (&[Format, Int], Int),
         ("formats", "clr_method_signature" | "clr_method_il") => (&[Format, Int], Source),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),

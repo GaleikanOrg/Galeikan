@@ -1192,18 +1192,18 @@ impl FormatReport {
         Ok(flags)
     }
 
-    pub fn clr_method_il_range(
+    fn clr_method_body(
         &self,
         bytes: &[u8],
         index: usize,
-    ) -> Result<(usize, usize, u64), String> {
+    ) -> Result<(usize, usize, u64, u64, u64), String> {
         let (rva, impl_flags, _, _, _) = self.clr_method_fields(bytes, index)?;
         if rva == 0 || impl_flags & 3 != 0 {
             return Err("PE CLR MethodDef has no IL body".into());
         }
         let (header, _) = self.pe_rva_range(bytes.len(), rva, 1)?;
-        let (header_size, code_size) = match bytes[header] & 3 {
-            2 => (1_u64, usize::from(bytes[header] >> 2)),
+        let (header_size, code_size, max_stack, local_sig_token) = match bytes[header] & 3 {
+            2 => (1_u64, usize::from(bytes[header] >> 2), 8, 0),
             3 => {
                 if rva & 3 != 0 {
                     return Err("unaligned PE CLR fat method header".into());
@@ -1215,7 +1215,9 @@ impl FormatReport {
                 }
                 let code_size = usize::try_from(number(bytes, start + 4, 4, false)?)
                     .map_err(|_| "PE CLR method code size outside address space")?;
-                (12, code_size)
+                let max_stack = number(bytes, start + 2, 2, false)?;
+                let local_sig_token = number(bytes, start + 8, 4, false)?;
+                (12, code_size, max_stack, local_sig_token)
             }
             _ => return Err("invalid PE CLR method header".into()),
         };
@@ -1224,7 +1226,24 @@ impl FormatReport {
         }
         let code_rva = rva.checked_add(header_size).ok_or("PE CLR method RVA overflow")?;
         let (start, end) = self.pe_rva_range(bytes.len(), code_rva, code_size)?;
-        Ok((start, end, code_rva))
+        Ok((start, end, code_rva, max_stack, local_sig_token))
+    }
+
+    pub fn clr_method_il_range(
+        &self,
+        bytes: &[u8],
+        index: usize,
+    ) -> Result<(usize, usize, u64), String> {
+        let (start, end, rva, _, _) = self.clr_method_body(bytes, index)?;
+        Ok((start, end, rva))
+    }
+
+    pub fn clr_method_max_stack(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        Ok(self.clr_method_body(bytes, index)?.3)
+    }
+
+    pub fn clr_method_local_sig_token(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        Ok(self.clr_method_body(bytes, index)?.4)
     }
 
     pub fn clr_method_owner(&self, bytes: &[u8], index: usize) -> Result<u64, String> {

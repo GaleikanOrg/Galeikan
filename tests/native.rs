@@ -3040,6 +3040,49 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
         );
         assert_eq!(native.stdout, expected);
     }
+
+    let mut header_values = with_il.clone();
+    header_values[0x482..0x484].copy_from_slice(&37_u16.to_le_bytes());
+    header_values[0x488..0x48c].copy_from_slice(&0x1100_0002_u32.to_le_bytes());
+    let header_script = s.write(
+        "clr_header.gak",
+        &format!(
+            "from std.binary import from_hex, snapshot\nfrom std.formats import probe, clr_method_max_stack, clr_method_local_sig_token\nfrom std.result import is_error\nfn max_stack(report: Format, index: i64) -> Result<u64> = clr_method_max_stack(report, index)\nfn local_sig(report: Format, index: i64) -> Result<u64> = clr_method_local_sig_token(report, index)\nlet report = probe(snapshot(from_hex(\"{}\")))\nlet bad = probe(snapshot(from_hex(\"{}\")))\nlet missing = probe(snapshot(from_hex(\"{}\")))\nlet native = probe(snapshot(from_hex(\"{}\")))\nlet truncated = probe(snapshot(from_hex(\"{}\")))\nprint clr_method_max_stack(report, 1)\nprint clr_method_local_sig_token(report, 1)\nprint clr_method_max_stack(report, 2)\nprint clr_method_local_sig_token(report, 2)\nprint is_error(max_stack(bad, 2))\nprint is_error(local_sig(missing, 1))\nprint is_error(max_stack(native, 1))\nprint is_error(local_sig(truncated, 1))\nprint is_error(max_stack(report, -1))\n",
+            hex(&header_values),
+            hex(&invalid_fat_header),
+            hex(&missing_il),
+            hex(&native_method),
+            hex(&truncated_il)
+        ),
+    );
+    let header_expected = b"8\n0\n37\n285212674\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&header_script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, header_expected, "{engine}");
+    }
+    let bundle = Command::new(galeikan).arg("build").arg(&header_script).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(header_script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, header_expected);
+    if gcc_available() {
+        let built = s.compile(&header_script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, header_expected);
+    }
 }
 
 #[test]
