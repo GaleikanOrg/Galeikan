@@ -4209,6 +4209,48 @@ void *gak_native_formats_clr_method_signature(const void *value, int64_t index) 
     return gak_native_formats_clr_blob(value, (int64_t)signature);
 }
 
+void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
+    gak_formats_error = NULL;
+    uint64_t rva = 0, impl_flags = 0, flags = 0, name = 0, signature = 0;
+    if (!gak_clr_method_fields(value, index, &rva, &impl_flags, &flags, &name, &signature)) return NULL;
+    if (!rva || (impl_flags & 3u)) {
+        gak_format_fail("PE CLR MethodDef has no IL body"); return NULL;
+    }
+    GakFormatRange *header = gak_pe_rva(value, rva, 1);
+    if (!header) return NULL;
+    const GakSourceHead *source = header->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint8_t first = bytes[header->start];
+    format_memory -= sizeof(*header);
+    free(header);
+    uint64_t header_size = 0, code_size = 0;
+    if ((first & 3u) == 2u) {
+        header_size = 1;
+        code_size = first >> 2;
+    } else if ((first & 3u) == 3u) {
+        if (rva & 3u) {
+            gak_format_fail("unaligned PE CLR fat method header"); return NULL;
+        }
+        header = gak_pe_rva(value, rva, 12);
+        if (!header) return NULL;
+        uint64_t start = header->start;
+        uint64_t flags_size = gak_number(bytes, start, 2, 0);
+        code_size = gak_number(bytes, start + 4u, 4, 0);
+        format_memory -= sizeof(*header);
+        free(header);
+        if ((flags_size >> 12) != 3u) {
+            gak_format_fail("unsupported PE CLR fat method header size"); return NULL;
+        }
+        header_size = 12;
+    } else {
+        gak_format_fail("invalid PE CLR method header"); return NULL;
+    }
+    if (!code_size) {
+        gak_format_fail("PE CLR method has empty IL body"); return NULL;
+    }
+    return gak_pe_rva(value, rva + header_size, code_size);
+}
+
 typedef struct {
     const uint8_t *data;
     size_t size;
