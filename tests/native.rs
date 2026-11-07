@@ -3083,6 +3083,75 @@ fn pe_clr_metadata_streams_match_all_execution_modes() {
         assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
         assert_eq!(native.stdout, header_expected);
     }
+
+    header_values[0x480..0x482].copy_from_slice(&0x300b_u16.to_le_bytes());
+    header_values[0x490..0x4a0].copy_from_slice(&[
+        0x81, 0x10, 0, 0, 0, 0, 0, 0, 1, 1, 0, 2, 1, 0, 0, 1,
+    ]);
+    header_values[0x4a0..0x4a4].copy_from_slice(&[0x41, 0x1c, 0, 0]);
+    for (part, value) in [0_u32, 0, 1, 1, 2, 0x0100_0002].into_iter().enumerate() {
+        header_values[0x4a4 + part * 4..0x4a8 + part * 4]
+            .copy_from_slice(&value.to_le_bytes());
+    }
+    let mut bad_section = header_values.clone();
+    bad_section[0x491] = 0;
+    let mut bad_clause = header_values.clone();
+    bad_clause[0x498] = 4;
+    let mut bad_chain = header_values.clone();
+    bad_chain[0x4a1] = 0xff;
+    let eh_script = s.write(
+        "clr_eh.gak",
+        &format!(
+            r#"from std.binary import from_hex, snapshot
+from std.formats import probe, clr_method_eh_count, clr_method_eh_field
+from std.result import is_error
+fn count(report: Format, method: i64) -> Result<i64> = clr_method_eh_count(report, method)
+fn field(report: Format, method: i64, clause: i64, name: str) -> Result<u64> = clr_method_eh_field(report, method, clause, name)
+let report = probe(snapshot(from_hex("{}")))
+let bad_section = probe(snapshot(from_hex("{}")))
+let bad_clause = probe(snapshot(from_hex("{}")))
+let bad_chain = probe(snapshot(from_hex("{}")))
+print clr_method_eh_count(report, 1)
+print clr_method_eh_count(report, 2)
+print clr_method_eh_field(report, 2, 0, "flags")
+print clr_method_eh_field(report, 2, 0, "try_offset")
+print clr_method_eh_field(report, 2, 0, "try_length")
+print clr_method_eh_field(report, 2, 0, "handler_offset")
+print clr_method_eh_field(report, 2, 0, "handler_length")
+print clr_method_eh_field(report, 2, 0, "token_or_filter")
+print clr_method_eh_field(report, 2, 1, "token_or_filter")
+print is_error(count(bad_section, 2))
+print is_error(count(bad_clause, 2))
+print is_error(count(bad_chain, 2))
+print is_error(field(report, 2, 2, "flags"))
+print is_error(field(report, 2, -1, "flags"))
+print is_error(field(report, 2, 0, "unknown"))
+print is_error(count(report, -1))
+"#,
+            hex(&header_values), hex(&bad_section), hex(&bad_clause), hex(&bad_chain)
+        ),
+    );
+    let eh_expected = b"0\n2\n0\n0\n1\n1\n2\n16777217\n16777218\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run").arg(&eh_script).args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, eh_expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&eh_script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec")
+        .arg(eh_script.with_extension("gakb")).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, eh_expected);
+    if gcc_available() {
+        let built = s.compile(&eh_script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, eh_expected);
+    }
 }
 
 #[test]

@@ -6562,7 +6562,7 @@ impl Runtime {
                     report.clr_type_ref_namespace(source.bytes(), index)?
                 }))
             }
-            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_owner" | "clr_method_max_stack" | "clr_method_local_sig_token", [Value::Format(source, report), index]) => {
+            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_owner" | "clr_method_max_stack" | "clr_method_local_sig_token" | "clr_method_eh_count", [Value::Format(source, report), index]) => {
                 let index = usize::try_from(index.as_int()?)
                     .map_err(|_| "PE CLR MethodDef index out of range")?;
                 if name == "clr_method_name" {
@@ -6577,6 +6577,8 @@ impl Runtime {
                     Ok(Value::UInt(report.clr_method_max_stack(source.bytes(), index)?))
                 } else if name == "clr_method_local_sig_token" {
                     Ok(Value::UInt(report.clr_method_local_sig_token(source.bytes(), index)?))
+                } else if name == "clr_method_eh_count" {
+                    Ok(Value::Int(report.clr_method_eh_count(source.bytes(), index)? as i64))
                 } else {
                     Ok(Value::UInt(report.clr_method_rva(source.bytes(), index)?))
                 }
@@ -6597,6 +6599,13 @@ impl Runtime {
                 let index = usize::try_from(index.as_int()?)
                     .map_err(|_| "PE CLR MethodDef index out of range")?;
                 Ok(Value::Str(report.clr_method_signature_text(source.bytes(), index)?))
+            }
+            ("clr_method_eh_field", [Value::Format(source, report), method, clause, Value::Str(field)]) => {
+                let method = usize::try_from(method.as_int()?)
+                    .map_err(|_| "PE CLR MethodDef index out of range")?;
+                let clause = usize::try_from(clause.as_int()?)
+                    .map_err(|_| "PE CLR exception clause index out of range")?;
+                Ok(Value::UInt(report.clr_method_eh_field(source.bytes(), method, clause, field)?))
             }
             ("clr_table_present" | "clr_table_rows", [Value::Format(source, report), index]) => {
                 let index = match index {
@@ -8735,6 +8744,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_method_name") => (&[Format, Int], Str),
         ("formats", "clr_method_signature_text") => (&[Format, Int], Str),
         ("formats", "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags" | "clr_method_max_stack" | "clr_method_local_sig_token") => (&[Format, Int], UInt),
+        ("formats", "clr_method_eh_count") => (&[Format, Int], Int),
+        ("formats", "clr_method_eh_field") => (&[Format, Int, Int, Str], UInt),
         ("formats", "clr_method_owner") => (&[Format, Int], Int),
         ("formats", "clr_method_signature" | "clr_method_il") => (&[Format, Int], Source),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),

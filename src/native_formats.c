@@ -4210,7 +4210,8 @@ void *gak_native_formats_clr_method_signature(const void *value, int64_t index) 
 }
 
 static GakFormatRange *gak_clr_method_body(const void *value, int64_t index,
-                                           uint64_t *max_stack, uint64_t *local_sig_token) {
+                                           uint64_t *max_stack, uint64_t *local_sig_token,
+                                           int *more_sections) {
     gak_formats_error = NULL;
     uint64_t rva = 0, impl_flags = 0, flags = 0, name = 0, signature = 0;
     if (!gak_clr_method_fields(value, index, &rva, &impl_flags, &flags, &name, &signature)) return NULL;
@@ -4230,6 +4231,7 @@ static GakFormatRange *gak_clr_method_body(const void *value, int64_t index,
         code_size = first >> 2;
         if (max_stack) *max_stack = 8;
         if (local_sig_token) *local_sig_token = 0;
+        if (more_sections) *more_sections = 0;
     } else if ((first & 3u) == 3u) {
         if (rva & 3u) {
             gak_format_fail("unaligned PE CLR fat method header"); return NULL;
@@ -4241,6 +4243,7 @@ static GakFormatRange *gak_clr_method_body(const void *value, int64_t index,
         code_size = gak_number(bytes, start + 4u, 4, 0);
         if (max_stack) *max_stack = gak_number(bytes, start + 2u, 2, 0);
         if (local_sig_token) *local_sig_token = gak_number(bytes, start + 8u, 4, 0);
+        if (more_sections) *more_sections = (flags_size & 8u) != 0;
         format_memory -= sizeof(*header);
         free(header);
         if ((flags_size >> 12) != 3u) {
@@ -4257,12 +4260,12 @@ static GakFormatRange *gak_clr_method_body(const void *value, int64_t index,
 }
 
 void *gak_native_formats_clr_method_il(const void *value, int64_t index) {
-    return gak_clr_method_body(value, index, NULL, NULL);
+    return gak_clr_method_body(value, index, NULL, NULL, NULL);
 }
 
 uint64_t gak_native_formats_clr_method_max_stack(const void *value, int64_t index) {
     uint64_t result = 0;
-    GakFormatRange *body = gak_clr_method_body(value, index, &result, NULL);
+    GakFormatRange *body = gak_clr_method_body(value, index, &result, NULL, NULL);
     if (!body) return 0;
     format_memory -= sizeof(*body);
     free(body);
@@ -4271,11 +4274,123 @@ uint64_t gak_native_formats_clr_method_max_stack(const void *value, int64_t inde
 
 uint64_t gak_native_formats_clr_method_local_sig_token(const void *value, int64_t index) {
     uint64_t result = 0;
-    GakFormatRange *body = gak_clr_method_body(value, index, NULL, &result);
+    GakFormatRange *body = gak_clr_method_body(value, index, NULL, &result, NULL);
     if (!body) return 0;
     format_memory -= sizeof(*body);
     free(body);
     return result;
+}
+
+static void gak_clr_release_range(GakFormatRange *range) {
+    format_memory -= sizeof(*range);
+    free(range);
+}
+
+static int gak_clr_method_eh_scan(const void *value, int64_t method_index,
+                                  int64_t selected, uint64_t *count, uint64_t fields[6]) {
+    int more_sections = 0;
+    GakFormatRange *body = gak_clr_method_body(value, method_index, NULL, NULL, &more_sections);
+    if (!body) return 0;
+    uint64_t code_size = body->end - body->start;
+    uint64_t code_rva = body->address;
+    gak_clr_release_range(body);
+    *count = 0;
+    if (!more_sections) {
+        if (selected >= 0) { gak_format_fail("PE CLR exception clause index out of range"); return 0; }
+        return 1;
+    }
+    if (code_rva > UINT64_MAX - code_size - 3u) {
+        gak_format_fail("PE CLR method section RVA overflow"); return 0;
+    }
+    uint64_t section_rva = (code_rva + code_size + 3u) & ~UINT64_C(3);
+    int found = 0;
+    const GakFormat *format = value;
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    for (;;) {
+        GakFormatRange *header = gak_pe_rva(value, section_rva, 4);
+        if (!header) return 0;
+        uint64_t start = header->start;
+        uint8_t kind = bytes[start];
+        uint64_t size = (kind & 0x40u) ? gak_number(bytes, start + 1u, 3, 0)
+                                         : bytes[start + 1u];
+        int fat = (kind & 0x40u) != 0;
+        int bad_kind = (kind & 0x3fu) != 1u;
+        int bad_header = size < 4u ||
+                         (size - 4u) % (fat ? 24u : 12u) != 0u ||
+                         (!fat && (bytes[start + 2u] || bytes[start + 3u]));
+        gak_clr_release_range(header);
+        if (bad_kind) {
+            gak_format_fail("unsupported PE CLR method section kind"); return 0;
+        }
+        if (bad_header) {
+            gak_format_fail("invalid PE CLR exception section size or header"); return 0;
+        }
+        GakFormatRange *section = gak_pe_rva(value, section_rva, size);
+        if (!section) return 0;
+        uint64_t stride = fat ? 24u : 12u;
+        for (uint64_t offset = 4; offset < size; offset += stride) {
+            uint64_t at = section->start + offset;
+            uint64_t item[6];
+            if (fat) {
+                for (unsigned part = 0; part < 6; part++)
+                    item[part] = gak_number(bytes, at + (uint64_t)part * 4u, 4, 0);
+            } else {
+                item[0] = gak_number(bytes, at, 2, 0);
+                item[1] = gak_number(bytes, at + 2u, 2, 0);
+                item[2] = bytes[at + 4u];
+                item[3] = gak_number(bytes, at + 5u, 2, 0);
+                item[4] = bytes[at + 7u];
+                item[5] = gak_number(bytes, at + 8u, 4, 0);
+            }
+            if (!item[2] || !item[4] || item[1] + item[2] > code_size ||
+                item[3] + item[4] > code_size ||
+                ((item[0] & 7u) == 1u && item[5] >= item[3])) {
+                gak_clr_release_range(section);
+                gak_format_fail("PE CLR exception clause outside method IL"); return 0;
+            }
+            if (selected >= 0 && (uint64_t)selected == *count) {
+                memcpy(fields, item, sizeof(item));
+                found = 1;
+            }
+            (*count)++;
+        }
+        gak_clr_release_range(section);
+        if (!(kind & 0x80u)) break;
+        if (section_rva > UINT64_MAX - size - 3u) {
+            gak_format_fail("PE CLR method section RVA overflow"); return 0;
+        }
+        section_rva = (section_rva + size + 3u) & ~UINT64_C(3);
+    }
+    if (selected >= 0 && !found) {
+        gak_format_fail("PE CLR exception clause index out of range"); return 0;
+    }
+    return 1;
+}
+
+uint64_t gak_native_formats_clr_method_eh_count(const void *value, int64_t method_index) {
+    uint64_t count = 0, fields[6] = {0};
+    if (!gak_clr_method_eh_scan(value, method_index, -1, &count, fields)) return 0;
+    return count;
+}
+
+uint64_t gak_native_formats_clr_method_eh_field(const void *value, int64_t method_index,
+                                                 int64_t clause_index, const void *field) {
+    gak_formats_error = NULL;
+    unsigned part;
+    if (gak_format_name(field, "flags")) part = 0;
+    else if (gak_format_name(field, "try_offset")) part = 1;
+    else if (gak_format_name(field, "try_length")) part = 2;
+    else if (gak_format_name(field, "handler_offset")) part = 3;
+    else if (gak_format_name(field, "handler_length")) part = 4;
+    else if (gak_format_name(field, "token_or_filter")) part = 5;
+    else { gak_format_fail("unknown PE CLR exception clause field"); return 0; }
+    if (clause_index < 0) {
+        gak_format_fail("PE CLR exception clause index out of range"); return 0;
+    }
+    uint64_t count = 0, fields[6] = {0};
+    if (!gak_clr_method_eh_scan(value, method_index, clause_index, &count, fields)) return 0;
+    return fields[part];
 }
 
 typedef struct {

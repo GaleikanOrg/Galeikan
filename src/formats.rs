@@ -283,6 +283,20 @@ pub struct ClrMetadata {
     pub streams: Vec<ClrStream>,
 }
 
+struct ClrMethodBody {
+    start: usize,
+    end: usize,
+    code_rva: u64,
+    max_stack: u64,
+    local_sig_token: u64,
+    more_sections: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ClrEhClause {
+    fields: [u64; 6],
+}
+
 pub fn clr_table_index(name: &str) -> Result<usize, String> {
     let index = match name {
         "Module" => 0,
@@ -1196,14 +1210,14 @@ impl FormatReport {
         &self,
         bytes: &[u8],
         index: usize,
-    ) -> Result<(usize, usize, u64, u64, u64), String> {
+    ) -> Result<ClrMethodBody, String> {
         let (rva, impl_flags, _, _, _) = self.clr_method_fields(bytes, index)?;
         if rva == 0 || impl_flags & 3 != 0 {
             return Err("PE CLR MethodDef has no IL body".into());
         }
         let (header, _) = self.pe_rva_range(bytes.len(), rva, 1)?;
-        let (header_size, code_size, max_stack, local_sig_token) = match bytes[header] & 3 {
-            2 => (1_u64, usize::from(bytes[header] >> 2), 8, 0),
+        let (header_size, code_size, max_stack, local_sig_token, more_sections) = match bytes[header] & 3 {
+            2 => (1_u64, usize::from(bytes[header] >> 2), 8, 0, false),
             3 => {
                 if rva & 3 != 0 {
                     return Err("unaligned PE CLR fat method header".into());
@@ -1217,7 +1231,7 @@ impl FormatReport {
                     .map_err(|_| "PE CLR method code size outside address space")?;
                 let max_stack = number(bytes, start + 2, 2, false)?;
                 let local_sig_token = number(bytes, start + 8, 4, false)?;
-                (12, code_size, max_stack, local_sig_token)
+                (12, code_size, max_stack, local_sig_token, flags_size & 8 != 0)
             }
             _ => return Err("invalid PE CLR method header".into()),
         };
@@ -1226,7 +1240,7 @@ impl FormatReport {
         }
         let code_rva = rva.checked_add(header_size).ok_or("PE CLR method RVA overflow")?;
         let (start, end) = self.pe_rva_range(bytes.len(), code_rva, code_size)?;
-        Ok((start, end, code_rva, max_stack, local_sig_token))
+        Ok(ClrMethodBody { start, end, code_rva, max_stack, local_sig_token, more_sections })
     }
 
     pub fn clr_method_il_range(
@@ -1234,16 +1248,102 @@ impl FormatReport {
         bytes: &[u8],
         index: usize,
     ) -> Result<(usize, usize, u64), String> {
-        let (start, end, rva, _, _) = self.clr_method_body(bytes, index)?;
-        Ok((start, end, rva))
+        let body = self.clr_method_body(bytes, index)?;
+        Ok((body.start, body.end, body.code_rva))
     }
 
     pub fn clr_method_max_stack(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
-        Ok(self.clr_method_body(bytes, index)?.3)
+        Ok(self.clr_method_body(bytes, index)?.max_stack)
     }
 
     pub fn clr_method_local_sig_token(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
-        Ok(self.clr_method_body(bytes, index)?.4)
+        Ok(self.clr_method_body(bytes, index)?.local_sig_token)
+    }
+
+    fn clr_method_eh(
+        &self,
+        bytes: &[u8],
+        method_index: usize,
+        selected: Option<usize>,
+    ) -> Result<(usize, Option<ClrEhClause>), String> {
+        let body = self.clr_method_body(bytes, method_index)?;
+        if !body.more_sections {
+            return if selected.is_some() {
+                Err("PE CLR exception clause index out of range".into())
+            } else {
+                Ok((0, None))
+            };
+        }
+        let code_size = (body.end - body.start) as u64;
+        let code_end = body.code_rva.checked_add(code_size).ok_or("PE CLR method RVA overflow")?;
+        let mut section_rva = code_end.checked_add(3).ok_or("PE CLR method section RVA overflow")? & !3;
+        let mut count = 0_usize;
+        let mut found = None;
+        loop {
+            let (header, _) = self.pe_rva_range(bytes.len(), section_rva, 4)?;
+            let kind = bytes[header];
+            if kind & 0x3f != 1 {
+                return Err("unsupported PE CLR method section kind".into());
+            }
+            let fat = kind & 0x40 != 0;
+            let size = if fat {
+                usize::try_from(number(bytes, header + 1, 3, false)?)
+                    .map_err(|_| "PE CLR method section size outside address space")?
+            } else {
+                usize::from(bytes[header + 1])
+            };
+            let stride = if fat { 24 } else { 12 };
+            if size < 4 || (size - 4) % stride != 0 || (!fat && bytes[header + 2..header + 4] != [0, 0]) {
+                return Err("invalid PE CLR exception section size or header".into());
+            }
+            let (start, _) = self.pe_rva_range(bytes.len(), section_rva, size)?;
+            for offset in (4..size).step_by(stride) {
+                let at = start + offset;
+                let fields = if fat {
+                    [number(bytes, at, 4, false)?, number(bytes, at + 4, 4, false)?,
+                     number(bytes, at + 8, 4, false)?, number(bytes, at + 12, 4, false)?,
+                     number(bytes, at + 16, 4, false)?, number(bytes, at + 20, 4, false)?]
+                } else {
+                    [number(bytes, at, 2, false)?, number(bytes, at + 2, 2, false)?,
+                     u64::from(bytes[at + 4]), number(bytes, at + 5, 2, false)?,
+                     u64::from(bytes[at + 7]), number(bytes, at + 8, 4, false)?]
+                };
+                if fields[2] == 0 || fields[4] == 0
+                    || fields[1].checked_add(fields[2]).is_none_or(|end| end > code_size)
+                    || fields[3].checked_add(fields[4]).is_none_or(|end| end > code_size)
+                    || (fields[0] & 7 == 1 && fields[5] >= fields[3])
+                {
+                    return Err("PE CLR exception clause outside method IL".into());
+                }
+                if selected == Some(count) {
+                    found = Some(ClrEhClause { fields });
+                }
+                count = count.checked_add(1).ok_or("PE CLR exception clause count overflow")?;
+            }
+            if kind & 0x80 == 0 {
+                break;
+            }
+            let next = section_rva.checked_add(size as u64).ok_or("PE CLR method section RVA overflow")?;
+            section_rva = next.checked_add(3).ok_or("PE CLR method section RVA overflow")? & !3;
+        }
+        if selected.is_some() && found.is_none() {
+            return Err("PE CLR exception clause index out of range".into());
+        }
+        Ok((count, found))
+    }
+
+    pub fn clr_method_eh_count(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        Ok(self.clr_method_eh(bytes, index, None)?.0 as u64)
+    }
+
+    pub fn clr_method_eh_field(&self, bytes: &[u8], method_index: usize, clause_index: usize, field: &str) -> Result<u64, String> {
+        let field_index = match field {
+            "flags" => 0, "try_offset" => 1, "try_length" => 2,
+            "handler_offset" => 3, "handler_length" => 4, "token_or_filter" => 5,
+            _ => return Err("unknown PE CLR exception clause field".into()),
+        };
+        Ok(self.clr_method_eh(bytes, method_index, Some(clause_index))?.1
+            .ok_or("PE CLR exception clause index out of range")?.fields[field_index])
     }
 
     pub fn clr_method_owner(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
