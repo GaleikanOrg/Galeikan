@@ -514,9 +514,7 @@ fn executable_and_wx_regions_match_across_execution_modes() {
     let Some(helper) = MemoryChild::spawn_wx() else {
         return;
     };
-    if helper.address == 0 {
-        return;
-    }
+    assert_ne!(helper.address, 0, "RWX test mapping could not be allocated");
     let pid = helper.child.id();
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("galeikan-wx-regions-{pid}-{id}"));
