@@ -3914,7 +3914,7 @@ impl Codegen {
                 Ok(Scalar::Int)
             }
             (
-                "regions" | "images" | "writable_regions" | "modules" | "thread_ids" | "children"
+                "regions" | "images" | "writable_regions" | "executable_regions" | "wx_regions" | "modules" | "thread_ids" | "children"
                 | "executable" | "parent_pid",
                 [pid],
             ) => {
@@ -3947,6 +3947,8 @@ impl Codegen {
                         match name {
                             "images" => 1,
                             "writable_regions" => 2,
+                            "executable_regions" => 3,
+                            "wx_regions" => 4,
                             _ => 0,
                         }
                     )

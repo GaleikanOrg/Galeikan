@@ -39,6 +39,26 @@ sys.stdin.read(1)
         Self::spawn_source(source)
     }
 
+    fn spawn_wx() -> Option<Self> {
+        let source = r#"import ctypes, sys
+if sys.platform.startswith('win'):
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.VirtualAlloc.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.c_ulong]
+    kernel.VirtualAlloc.restype = ctypes.c_void_p
+    address = kernel.VirtualAlloc(None, 4096, 0x3000, 0x40)
+else:
+    libc = ctypes.CDLL(None)
+    libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_size_t]
+    libc.mmap.restype = ctypes.c_void_p
+    address = libc.mmap(None, 4096, 7, 0x22, -1, 0)
+    if address == ctypes.c_void_p(-1).value:
+        address = None
+print(address or 0, flush=True)
+sys.stdin.read(1)
+"#;
+        Self::spawn_source(source)
+    }
+
     fn spawn_source(source: &str) -> Option<Self> {
         let python = if cfg!(windows) { "python" } else { "python3" };
         if Command::new(python).arg("--version").output().is_err() {
@@ -486,6 +506,54 @@ fn native_process_snapshot_rejects_negative_inputs_like_vm() {
     );
     assert_eq!(native.stdout, vm.stdout);
     assert_eq!(native.stdout, b"process address out of range\nprocess length out of range\nregion offset out of range\nregion length out of range\nprocess address out of range\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn executable_and_wx_regions_match_across_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_wx() else {
+        return;
+    };
+    if helper.address == 0 {
+        return;
+    }
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-wx-regions-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("wx_regions.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nlet all: Regions = process.regions({pid})\nlet executable: Regions = process.executable_regions({pid})\nlet writable: Regions = process.writable_regions({pid})\nlet wx: Regions = process.wx_regions({pid})\nlet region: Region = process.locate_u64(wx, {}u64)\nprint process.count(executable) > 0\nprint process.count(wx) > 0\nprint process.count(all) >= process.count(executable)\nprint process.count(writable) >= process.count(wx)\nprint process.access(region) == \"rwx\"\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\n",
+        helper.address, helper.address, helper.address
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable)
+            .args(["--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -135,6 +135,21 @@ pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
         .collect())
 }
 
+pub fn executable_regions(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| region.access.as_bytes().get(2) == Some(&b'x'))
+        .collect())
+}
+
+pub fn wx_regions(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| region.access.as_bytes().get(1) == Some(&b'w')
+            && region.access.as_bytes().get(2) == Some(&b'x'))
+        .collect())
+}
+
 pub fn hunt_region(
     region: &Region,
     pattern: &[u8],
