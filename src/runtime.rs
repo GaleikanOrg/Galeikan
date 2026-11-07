@@ -6562,11 +6562,15 @@ impl Runtime {
                     report.clr_type_ref_namespace(source.bytes(), index)?
                 }))
             }
-            ("clr_method_name" | "clr_method_rva", [Value::Format(source, report), index]) => {
+            ("clr_method_name" | "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags", [Value::Format(source, report), index]) => {
                 let index = usize::try_from(index.as_int()?)
                     .map_err(|_| "PE CLR MethodDef index out of range")?;
                 if name == "clr_method_name" {
                     Ok(Value::Str(report.clr_method_name(source.bytes(), index)?))
+                } else if name == "clr_method_impl_flags" {
+                    Ok(Value::UInt(report.clr_method_impl_flags(source.bytes(), index)?))
+                } else if name == "clr_method_flags" {
+                    Ok(Value::UInt(report.clr_method_flags(source.bytes(), index)?))
                 } else {
                     Ok(Value::UInt(report.clr_method_rva(source.bytes(), index)?))
                 }
@@ -8720,7 +8724,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "clr_type_ref_name" | "clr_type_ref_namespace" | "clr_type_ref_full_name") => (&[Format, Int], Str),
         ("formats", "clr_method_name") => (&[Format, Int], Str),
         ("formats", "clr_method_signature_text") => (&[Format, Int], Str),
-        ("formats", "clr_method_rva") => (&[Format, Int], UInt),
+        ("formats", "clr_method_rva" | "clr_method_impl_flags" | "clr_method_flags") => (&[Format, Int], UInt),
         ("formats", "clr_method_signature") => (&[Format, Int], Source),
         ("formats", "clr_stream_rva" | "clr_stream_size") => (&[Format, Int], UInt),
         ("formats", "clr_stream_data") => (&[Format, Int], Source),

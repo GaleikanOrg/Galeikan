@@ -1099,7 +1099,11 @@ impl FormatReport {
         Ok(full)
     }
 
-    fn clr_method_fields(&self, bytes: &[u8], index: usize) -> Result<(u64, usize, usize), String> {
+    fn clr_method_fields(
+        &self,
+        bytes: &[u8],
+        index: usize,
+    ) -> Result<(u64, u64, u64, usize, usize), String> {
         let table = self
             .clr_metadata(bytes)?
             .streams
@@ -1158,22 +1162,34 @@ impl FormatReport {
             return Err("truncated PE CLR MethodDef row".into());
         }
         let rva = number(data, start, 4, false)?;
+        let impl_flags = number(data, start + 4, 2, false)?;
+        let flags = number(data, start + 6, 2, false)?;
         let name = number(data, start + 8, strings_width, false)? as usize;
         let signature = number(data, start + 8 + strings_width, blob_width, false)? as usize;
         if name == 0 {
             return Err("PE CLR MethodDef name is empty".into());
         }
-        Ok((rva, name, signature))
+        Ok((rva, impl_flags, flags, name, signature))
     }
 
     pub fn clr_method_name(&self, bytes: &[u8], index: usize) -> Result<String, String> {
-        let (_, name, _) = self.clr_method_fields(bytes, index)?;
+        let (_, _, _, name, _) = self.clr_method_fields(bytes, index)?;
         self.clr_string(bytes, name)
     }
 
     pub fn clr_method_rva(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
-        let (rva, _, _) = self.clr_method_fields(bytes, index)?;
+        let (rva, _, _, _, _) = self.clr_method_fields(bytes, index)?;
         Ok(rva)
+    }
+
+    pub fn clr_method_impl_flags(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        let (_, impl_flags, _, _, _) = self.clr_method_fields(bytes, index)?;
+        Ok(impl_flags)
+    }
+
+    pub fn clr_method_flags(&self, bytes: &[u8], index: usize) -> Result<u64, String> {
+        let (_, _, flags, _, _) = self.clr_method_fields(bytes, index)?;
+        Ok(flags)
     }
 
     pub fn clr_method_signature_range(
@@ -1181,7 +1197,7 @@ impl FormatReport {
         bytes: &[u8],
         index: usize,
     ) -> Result<(usize, usize, u64), String> {
-        let (_, _, signature) = self.clr_method_fields(bytes, index)?;
+        let (_, _, _, _, signature) = self.clr_method_fields(bytes, index)?;
         if signature == 0 {
             return Err("PE CLR MethodDef signature is empty".into());
         }
