@@ -85,7 +85,8 @@ const SHA256_K: [u32; 64] = [
 ];
 const CRC32_RUNTIME: &str = r#"gak_crc32:
     mov r10, rax
-    mov eax, 0xffffffff
+    mov eax, r11d
+    not eax
     xor r8d, r8d
 gak_crc32_byte:
     cmp r8, rdx
@@ -334,6 +335,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_binary_length_negative", "length must not be negative"),
     ("gak_binary_range_overflow", "range overflow"),
     ("gak_binary_out_of_bounds", "out of bounds"),
+    ("gak_crc32_seed_range", "crc32 previous value exceeds u32"),
     ("gak_bits_offset", "bit offset must not be negative"),
     ("gak_bits_count", "bit count must be between 1 and 64"),
     ("gak_bits_bounds", "bit range out of bounds"),
@@ -6033,8 +6035,22 @@ impl Codegen {
                 }
                 Ok(Scalar::Str)
             }
-            ("crc32", [data]) => {
-                match self.expr(data, scope)? {
+            ("crc32", args) if matches!(args.len(), 1 | 2) => {
+                let kind = self.expr(&args[0], scope)?;
+                let data_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", data_slot * 8).unwrap();
+                if args.len() == 2 {
+                    if self.expr(&args[1], scope)? != Scalar::UInt {
+                        return Err("binary.crc32 previous value must be u64".into());
+                    }
+                    self.code.push_str(
+                        "    mov r11, rax\n    shr rax, 32\n    jnz gak_crc32_seed_range\n",
+                    );
+                } else {
+                    self.code.push_str("    xor r11d, r11d\n");
+                }
+                writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]", data_slot * 8).unwrap();
+                match kind {
                     Scalar::Bytes => self.code.push_str(
                         "    mov rdx, QWORD PTR [rax]\n    lea rax, [rax+8]\n    call gak_crc32\n",
                     ),
@@ -8015,6 +8031,7 @@ impl Codegen {
             writeln!(out, "    .long 0x{value:08x}").unwrap();
         }
         out.push_str("gak_binary_offset_negative_msg: .ascii \"offset must not be negative\\n\"\ngak_binary_offset_negative_msg_end:\ngak_binary_length_negative_msg: .ascii \"length must not be negative\\n\"\ngak_binary_length_negative_msg_end:\ngak_binary_range_overflow_msg: .ascii \"range overflow\\n\"\ngak_binary_range_overflow_msg_end:\ngak_binary_out_of_bounds_msg: .ascii \"out of bounds\\n\"\ngak_binary_out_of_bounds_msg_end:\ngak_binary_unknown_decoder_msg: .ascii \"unknown decoder\\n\"\ngak_binary_unknown_decoder_msg_end:\ngak_hexdump_limit_msg: .ascii \"hexdump length exceeds 4096 bytes\\n\"\ngak_hexdump_limit_msg_end:\ngak_observation_value_range_msg: .ascii \"Observation value does not fit i64\\n\"\ngak_observation_value_range_msg_end:\ngak_observation_limit_msg: .ascii \"native Observation memory exceeds 64 MiB\\n\"\ngak_observation_limit_msg_end:\n");
+        out.push_str("gak_crc32_seed_range_msg: .ascii \"crc32 previous value exceeds u32\\n\"\ngak_crc32_seed_range_msg_end:\n");
         for (label, message) in [
             ("gak_bits_offset", "bit offset must not be negative"),
             ("gak_bits_count", "bit count must be between 1 and 64"),
@@ -9159,6 +9176,7 @@ gak_cli_utf8_done:
             ),
             ("gak_binary_range_overflow", "gak_binary_range_overflow_msg"),
             ("gak_binary_out_of_bounds", "gak_binary_out_of_bounds_msg"),
+            ("gak_crc32_seed_range", "gak_crc32_seed_range_msg"),
             ("gak_bits_offset", "gak_bits_offset_msg"),
             ("gak_bits_count", "gak_bits_count_msg"),
             ("gak_bits_bounds", "gak_bits_bounds_msg"),

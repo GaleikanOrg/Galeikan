@@ -7944,10 +7944,10 @@ fn crc32_matches_known_vector_across_all_execution_modes_and_views() {
     let s = Sandbox::new();
     let script = s.write(
         "crc32.gaks",
-        "from std.binary import crc32, from_hex, snapshot, view\nlet source = snapshot(from_hex(\"ff 31 32 33 34 35 36 37 38 39 00\"))\nprint crc32(from_hex(\"\"))\nprint crc32(from_hex(\"31 32 33 34 35 36 37 38 39\"))\nprint crc32(view(source, 1, 9))\nprint crc32(snapshot(from_hex(\"31 32 33 34 35 36 37 38 39\")))\n",
+        "from std.binary import crc32, from_hex, snapshot, view\nfrom std.result import is_error, message\nfn invalid() -> Result<u64> = crc32(from_hex(\"00\"), 4294967296u64)\nlet source = snapshot(from_hex(\"ff 31 32 33 34 35 36 37 38 39 00\"))\nprint crc32(from_hex(\"\"))\nprint crc32(from_hex(\"31 32 33 34 35 36 37 38 39\"))\nprint crc32(view(source, 1, 9))\nprint crc32(snapshot(from_hex(\"31 32 33 34 35 36 37 38 39\")))\nprint crc32(view(source, 1, 9), 0u64) == crc32(view(source, 1, 9))\nprint crc32(view(source, 5, 5), crc32(view(source, 1, 4))) == crc32(view(source, 1, 9))\nprint crc32(from_hex(\"\"), crc32(view(source, 1, 9))) == crc32(view(source, 1, 9))\nprint is_error(invalid())\nprint message(invalid())\n",
     );
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"0\n3421780262\n3421780262\n3421780262\n";
+    let expected = b"0\n3421780262\n3421780262\n3421780262\ntrue\ntrue\ntrue\ntrue\ncrc32 previous value exceeds u32\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine]).output().unwrap();

@@ -3,7 +3,11 @@ use std::fmt::Write as _;
 pub const MAX_BYTES_VALUE: usize = 1024 * 1024;
 
 pub fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = !0_u32;
+    crc32_update(bytes, 0)
+}
+
+pub fn crc32_update(bytes: &[u8], previous: u32) -> u32 {
+    let mut crc = !previous;
     for &byte in bytes {
         crc ^= u32::from(byte);
         for _ in 0..8 {
@@ -290,6 +294,9 @@ mod tests {
     fn crc32_matches_standard_check_value() {
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+        let first = crc32_update(b"1234", 0);
+        assert_eq!(crc32_update(b"56789", first), crc32(b"123456789"));
+        assert_eq!(crc32_update(b"", first), first);
     }
 
     #[test]

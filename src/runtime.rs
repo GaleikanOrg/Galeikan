@@ -5563,12 +5563,16 @@ impl Runtime {
                 }
                 Err("unterminated string within max_units".into())
             }
-            ("crc32", [Value::Bytes(data)]) => {
-                Ok(Value::UInt(u64::from(bytes::crc32(data))))
-            }
-            ("crc32", [source]) => {
-                let source = source.as_source()?;
-                Ok(Value::UInt(u64::from(bytes::crc32(source.bytes()))))
+            ("crc32", [data]) => Ok(Value::UInt(u64::from(bytes::crc32(
+                data.as_binary_bytes()?,
+            )))),
+            ("crc32", [data, previous]) => {
+                let previous = u32::try_from(previous.as_uint()?)
+                    .map_err(|_| "crc32 previous value exceeds u32")?;
+                Ok(Value::UInt(u64::from(bytes::crc32_update(
+                    data.as_binary_bytes()?,
+                    previous,
+                ))))
             }
             ("sha256", [Value::Bytes(bytes)]) => {
                 let digest = Sha256::digest(bytes.as_slice());
@@ -8413,6 +8417,18 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         }
         return Ok(if name == "find" { Int } else { Bool });
     }
+    if module == "binary" && name == "crc32" {
+        let expected: &[Type] = match args.len() {
+            1 => &[Type::Any],
+            2 => &[Type::Any, UInt],
+            _ => return Err(format!("{qualified} expects 1 or 2 arguments")),
+        };
+        check_arguments(&qualified, args, expected)?;
+        if !matches!(args[0], Source | Bytes | Type::Any) {
+            return Err(format!("{qualified} expects Source or bytes"));
+        }
+        return Ok(UInt);
+    }
     if module == "syscall" {
         if name != "call" {
             return Err(format!("unknown standard function {qualified}"));
@@ -8697,7 +8713,6 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "read_wstring") => (&[Source, Int, Int, Str], Str),
         ("binary", "size") => (&[Type::Any], Int),
         ("binary", "sha256") => (&[Type::Any], Str),
-        ("binary", "crc32") => (&[Type::Any], UInt),
         ("formats", "probe") => (&[Source], Format),
         ("formats", "kind" | "endian" | "arch" | "build_id") => (&[Format], Str),
         ("formats", "bits") => (&[Format], Int),
@@ -8903,7 +8918,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
                 ));
             }
         }
-        ("binary", "size" | "sha256" | "crc32" | "extract")
+        ("binary", "size" | "sha256" | "extract")
             if !matches!(args[0], Source | Bytes | Type::Any) =>
         {
             return Err(format!("{qualified} expects Source or bytes"));
