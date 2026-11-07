@@ -83,6 +83,31 @@ const SHA256_K: [u32; 64] = [
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
+const CRC32_RUNTIME: &str = r#"gak_crc32:
+    mov r10, rax
+    mov eax, 0xffffffff
+    xor r8d, r8d
+gak_crc32_byte:
+    cmp r8, rdx
+    jae gak_crc32_done
+    movzx r9d, BYTE PTR [r10+r8]
+    xor eax, r9d
+    mov ecx, 8
+gak_crc32_bit:
+    mov r9d, eax
+    and r9d, 1
+    neg r9d
+    and r9d, 0xedb88320
+    shr eax, 1
+    xor eax, r9d
+    dec ecx
+    jnz gak_crc32_bit
+    inc r8
+    jmp gak_crc32_byte
+gak_crc32_done:
+    not eax
+    ret
+"#;
 const SHA256_RUNTIME: &str = r#"gak_sha256:
     push rbp
     mov rbp, rsp
@@ -6008,6 +6033,18 @@ impl Codegen {
                 }
                 Ok(Scalar::Str)
             }
+            ("crc32", [data]) => {
+                match self.expr(data, scope)? {
+                    Scalar::Bytes => self.code.push_str(
+                        "    mov rdx, QWORD PTR [rax]\n    lea rax, [rax+8]\n    call gak_crc32\n",
+                    ),
+                    Scalar::Source => self.code.push_str(
+                        "    mov rdx, QWORD PTR [rax+24]\n    sub rdx, QWORD PTR [rax+16]\n    mov r10, QWORD PTR [rax+16]\n    mov rax, QWORD PTR [rax]\n    lea rax, [rax+r10+8]\n    call gak_crc32\n",
+                    ),
+                    _ => return Err("binary.crc32 expects bytes or Source".into()),
+                }
+                Ok(Scalar::UInt)
+            }
             ("entropy", [source]) => {
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.entropy expects Source".into());
@@ -8881,6 +8918,7 @@ gak_from_hex_exit:
         }
         out.push_str("    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
         out.push_str(SHA256_RUNTIME);
+        out.push_str(CRC32_RUNTIME);
         out.push_str(".globl gak_native_call_hash\ngak_native_call_hash:\n");
         writeln!(
             out,

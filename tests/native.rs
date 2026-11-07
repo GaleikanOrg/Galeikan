@@ -7940,6 +7940,37 @@ fn native_source_view_errors_match_vm() {
 }
 
 #[test]
+fn crc32_matches_known_vector_across_all_execution_modes_and_views() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "crc32.gaks",
+        "from std.binary import crc32, from_hex, snapshot, view\nlet source = snapshot(from_hex(\"ff 31 32 33 34 35 36 37 38 39 00\"))\nprint crc32(from_hex(\"\"))\nprint crc32(from_hex(\"31 32 33 34 35 36 37 38 39\"))\nprint crc32(view(source, 1, 9))\nprint crc32(snapshot(from_hex(\"31 32 33 34 35 36 37 38 39\")))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"0\n3421780262\n3421780262\n3421780262\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundled = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb")).output().unwrap();
+    assert!(bundled.status.success(), "{}", String::from_utf8_lossy(&bundled.stderr));
+    assert_eq!(bundled.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let native = Command::new(PathBuf::from(String::from_utf8(built.stdout).unwrap().trim()))
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_sha256_matches_vm_for_bytes_and_source_views() {
     if !gcc_available() {
         return;

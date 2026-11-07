@@ -2,6 +2,17 @@ use std::fmt::Write as _;
 
 pub const MAX_BYTES_VALUE: usize = 1024 * 1024;
 
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    !crc
+}
+
 pub fn hex_dump(bytes: &[u8], start: usize) -> String {
     let mut output = String::new();
     for (row_index, row) in bytes.chunks(16).enumerate() {
@@ -274,6 +285,12 @@ pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crc32_matches_standard_check_value() {
+        assert_eq!(crc32(b""), 0);
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+    }
 
     #[test]
     fn hex_dump_shows_logical_offsets_and_printable_ascii() {
