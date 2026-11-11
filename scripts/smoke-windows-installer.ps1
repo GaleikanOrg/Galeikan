@@ -6,7 +6,7 @@ if ($cargoManifest -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') { throw 'Missin
 $expectedVersion = "Galeikan $($Matches[1])"
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsixName = "galeikan-language-$($extensionManifest.version).vsix"
-$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview2-windows-x64-setup.exe'
+$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview3-windows-x64-setup.exe'
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
 if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -142,7 +142,7 @@ if ($bundleAssociation -ne 'Galeikan.Bundle' -or
     throw 'Installed Galeikan bytecode bundle association is invalid'
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
-if ($productName -ne 'Galeikan 0.1.0 Preview 2') { throw 'Installed product name is not Galeikan' }
+if ($productName -ne 'Galeikan 0.1.0 Preview 3') { throw 'Installed product name is not Galeikan' }
 $installedGuide = Join-Path $smokeRoot 'docs\quickstart.md'
 $sourceGuide = Join-Path $projectRoot 'packaging\docs\quickstart.md'
 if (-not (Test-Path -LiteralPath $installedGuide) -or

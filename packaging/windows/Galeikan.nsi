@@ -11,7 +11,7 @@ Unicode true
   !error "Pass -DVSIX_FILE=<absolute path> to makensis"
 !endif
 
-Name "Galeikan 0.1.0 Preview 2"
+Name "Galeikan 0.1.0 Preview 3"
 OutFile "${OUTPUT_EXE}"
 InstallDir "$LOCALAPPDATA\Programs\Galeikan"
 RequestExecutionLevel user
@@ -111,7 +111,7 @@ Section "Galeikan CLI" SEC_CLI
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview 2"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayName" "Galeikan 0.1.0 Preview 3"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "DisplayIcon" "$INSTDIR\icons\galeikan.ico"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan" "InstallLocation" "$INSTDIR"

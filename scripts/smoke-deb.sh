@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0~preview2_amd64.deb"
+package="$project_root/dist/galeikan_0.1.0~preview3_amd64.deb"
 if [[ ! -f "$package" ]]; then
   printf 'Missing package: %s\n' "$package" >&2
   exit 1
@@ -11,8 +11,8 @@ fi
   printf 'Debian product name is not Galeikan.\n' >&2
   exit 1
 }
-[[ "$(dpkg-deb --field "$package" Version)" == '0.1.0~preview2' ]] || {
-  printf 'Debian package version is not Preview 2.\n' >&2
+[[ "$(dpkg-deb --field "$package" Version)" == '0.1.0~preview3' ]] || {
+  printf 'Debian package version is not Preview 3.\n' >&2
   exit 1
 }
 staging="$(mktemp -d)"

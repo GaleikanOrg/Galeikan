@@ -76,7 +76,7 @@ fi
 mkdir -p "$staging/DEBIAN" "$project_root/dist"
 cat > "$staging/DEBIAN/control" <<EOF
 Package: galeikan
-Version: ${version}~preview2
+Version: ${version}~preview3
 Section: devel
 Priority: optional
 Architecture: amd64
@@ -88,6 +88,6 @@ Description: Galeikan research language (Debian 13 development preview)
  The native compiler supports a limited x86-64 subset of the language.
 EOF
 
-package="$project_root/dist/galeikan_${version}~preview2_${architecture}.deb"
+package="$project_root/dist/galeikan_${version}~preview3_${architecture}.deb"
 dpkg-deb --root-owner-group --build "$staging" "$package"
 printf '%s\n' "$package"

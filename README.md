@@ -11,22 +11,22 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%7C%20Debian%2013-16344b?style=flat-square)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-7ccfff?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
-**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical overview](docs/technical.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
+**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical overview](docs/technical.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
 > [!IMPORTANT]
 > Galeikan is a **0.1.0 development preview**. The native compiler supports a smaller subset than the interpreter and VM. Downloads are unsigned, and declared effects are not an operating-system sandbox.
 
 ## Start in a few minutes
 
-Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 package from the [current release](https://github.com/GaleikanOrg/Galeikan/releases/tag/v0.1.0-preview1.1). The Windows installer adds `galeikan` to your user PATH; open a **new terminal** after setup. The Debian package installs the CLI at `/usr/bin/galeikan`.
+Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 package from the [current release](https://github.com/GaleikanOrg/Galeikan/releases/tag/v0.1.0-preview3). The Windows installer adds `galeikan` to your user PATH; open a **new terminal** after setup. The Debian package installs the CLI at `/usr/bin/galeikan`.
 
 | Download | Current artifact |
 | :--- | :--- |
-| Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview1.1/Galeikan-0.1.0-preview1.1-windows-x64-setup.exe) |
-| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview1.1/galeikan_0.1.0.preview1_amd64.deb) |
-| Visual Studio Code | [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VSIX download](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview1.1/galeikan-language-0.1.0.vsix) |
+| Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/Galeikan-0.1.0-preview3-windows-x64-setup.exe) |
+| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan_0.1.0~preview3_amd64.deb) |
+| Visual Studio Code | [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VSIX download](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan-language-0.1.3.vsix) |
 
-The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview1.1/SHA256SUMS.txt). The Debian and VSIX artifacts retain their Preview 1 filenames in the Windows installer update.
+The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/SHA256SUMS.txt). The VSIX keeps its independent extension version, 0.1.3.
 
 The commands below use examples from this repository. Clone it first if you installed a binary package:
 
