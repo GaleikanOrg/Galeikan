@@ -5739,7 +5739,7 @@ impl Runtime {
                 }
                 Ok(Value::Int(i64::from(process::parent_pid(pid)?)))
             }
-            ("regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions", [pid]) => {
+            ("regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions" | "heap_candidates", [pid]) => {
                 self.check_effect(module, "process.inspect")?;
                 let pid = u32::try_from(pid.as_int()?).map_err(|_| "pid out of range")?;
                 if !self.allowed_processes.contains(&pid) {
@@ -5751,6 +5751,7 @@ impl Runtime {
                     "writable_regions" => process::writable_regions(pid)?,
                     "executable_regions" => process::executable_regions(pid)?,
                     "wx_regions" => process::wx_regions(pid)?,
+                    "heap_candidates" => process::heap_candidates(pid)?,
                     _ => process::regions(pid)?,
                 }
                 .into_iter()
@@ -8932,7 +8933,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "snapshot") => (&[Int, Int, Int], Source),
         ("process", "self_pid") => (&[], Int),
         ("process", "snapshot_u64") => (&[Int, UInt, Int], Source),
-        ("process", "regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions") => (&[Int], Regions),
+        ("process", "regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions" | "heap_candidates") => (&[Int], Regions),
         ("process", "modules") => (&[Int], Type::List(Some(ResultKind::Str))),
         ("process", "thread_ids" | "children") => (&[Int], Type::List(Some(ResultKind::Int))),
         ("process", "executable") => (&[Int], Str),

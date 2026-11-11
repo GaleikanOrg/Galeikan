@@ -510,6 +510,50 @@ fn native_process_snapshot_rejects_negative_inputs_like_vm() {
 }
 
 #[test]
+fn heap_candidates_match_across_execution_modes() {
+    let Some(helper) = MemoryChild::spawn() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-heap-candidates-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("heap-candidates.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nprint process.count(maps) > 0\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\nprint process.access(region) == \"rw-\"\nprint process.image_backed(region) == false\nprint process.kind(region) == \"private\" or process.kind(region) == \"heap\" or process.kind(region) == \"anonymous\"\n",
+        helper.address, helper.address, helper.address
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn readable_executable_and_wx_regions_match_across_execution_modes() {
     let Some(helper) = MemoryChild::spawn_wx() else {
         return;

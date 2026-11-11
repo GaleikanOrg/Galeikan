@@ -135,6 +135,17 @@ pub fn writable_regions(pid: u32) -> Result<Vec<Region>, String> {
         .collect())
 }
 
+pub fn heap_candidates(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| {
+            region.access.starts_with("rw")
+                && !region.image_backed
+                && matches!(kind(region), "heap" | "anonymous" | "private")
+        })
+        .collect())
+}
+
 pub fn readable_regions(pid: u32) -> Result<Vec<Region>, String> {
     Ok(regions(pid)?
         .into_iter()
@@ -988,7 +999,7 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::{
-        executable, hunt_region, kind, module_paths, regions, snapshot, thread_ids,
+        executable, heap_candidates, hunt_region, kind, module_paths, regions, snapshot, thread_ids,
         writable_regions, Region, MAX_READ, MAX_SCAN,
     };
 
@@ -1147,6 +1158,21 @@ mod tests {
         assert!(maps
             .iter()
             .all(|region| region.access.as_bytes().get(1) == Some(&b'w')));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn heap_candidates_include_local_mutable_memory_and_exclude_other_mappings() {
+        let mut data = Box::new(*b"GALEIKAN");
+        std::hint::black_box(&mut data);
+        let address = data.as_ptr() as usize;
+        let maps = heap_candidates(std::process::id()).unwrap();
+        assert!(maps.iter().any(|region| region.contains(address)));
+        assert!(maps.iter().all(|region| {
+            region.access.starts_with("rw")
+                && !region.image_backed
+                && matches!(kind(region), "heap" | "anonymous" | "private")
+        }));
     }
 
     #[test]

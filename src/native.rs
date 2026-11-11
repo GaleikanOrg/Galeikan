@@ -3944,7 +3944,7 @@ impl Codegen {
                 Ok(Scalar::Int)
             }
             (
-                "regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions" | "modules" | "thread_ids" | "children"
+                "regions" | "images" | "readable_regions" | "writable_regions" | "executable_regions" | "wx_regions" | "heap_candidates" | "modules" | "thread_ids" | "children"
                 | "executable" | "parent_pid",
                 [pid],
             ) => {
@@ -3980,6 +3980,7 @@ impl Codegen {
                             "executable_regions" => 3,
                             "wx_regions" => 4,
                             "readable_regions" => 5,
+                            "heap_candidates" => 6,
                             _ => 0,
                         }
                     )

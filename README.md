@@ -11,7 +11,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%7C%20Debian%2013-16344b?style=flat-square)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-7ccfff?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
-**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical overview](docs/technical.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
+**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical reference](docs/technical.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
 > [!IMPORTANT]
 > Galeikan is a **0.1.0 development preview**. The native compiler supports a smaller subset than the interpreter and VM. Downloads are unsigned, and declared effects are not an operating-system sandbox.
@@ -121,7 +121,7 @@ The example prints `44`. The bridge exchanges bounded typed values (`i64`, `u64`
 
 An effectful operation needs both a declaration in the source and a matching launch grant. For example, a file-reading program declares `requires { file.read }` and runs with `--allow-read <directory>`. Network and process access have separate grants. `galeikan check` checks source without executing its effects.
 
-These checks make access visible and bounded, **not isolated**. Python modules run with their normal OS permissions; Galeikan does not yet provide a complete sandbox for untrusted source. Format metadata and hardening signals are observations, not malware verdicts or proof of runtime protection. The [technical overview](docs/technical.md) describes the current implementation and limits.
+These checks make access visible and bounded, **not isolated**. Python modules run with their normal OS permissions; Galeikan does not yet provide a complete sandbox for untrusted source. Format metadata and hardening signals are observations, not malware verdicts or proof of runtime protection. The [technical reference](docs/technical.md) describes the current implementation and limits.
 
 ## Build and explore the source
 
