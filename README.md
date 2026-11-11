@@ -23,7 +23,7 @@ Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 packa
 | Download | Current artifact |
 | :--- | :--- |
 | Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/Galeikan-0.1.0-preview3-windows-x64-setup.exe) |
-| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan_0.1.0~preview3_amd64.deb) |
+| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan_0.1.0.preview3_amd64.deb) |
 | Visual Studio Code | [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VSIX download](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan-language-0.1.3.vsix) |
 
 The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/SHA256SUMS.txt). The VSIX keeps its independent extension version, 0.1.3.

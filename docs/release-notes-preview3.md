@@ -13,7 +13,7 @@ Preview 3 packages the latest Galeikan research language for Windows x64 and Deb
 ## Downloads
 
 - `Galeikan-0.1.0-preview3-windows-x64-setup.exe`: Windows installer with user PATH registration.
-- `galeikan_0.1.0~preview3_amd64.deb`: Debian 13 amd64 package with `/usr/bin/galeikan`.
+- `galeikan_0.1.0.preview3_amd64.deb`: Debian 13 amd64 package with `/usr/bin/galeikan` (Debian package version `0.1.0~preview3`).
 - `galeikan-language-0.1.3.vsix`: VS Code syntax and color theme, versioned separately from the language release.
 - `SHA256SUMS.txt`: SHA-256 digests for the three binary artifacts.
 

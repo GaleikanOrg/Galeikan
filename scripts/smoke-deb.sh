@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0~preview3_amd64.deb"
+package="$project_root/dist/galeikan_0.1.0.preview3_amd64.deb"
 if [[ ! -f "$package" ]]; then
   printf 'Missing package: %s\n' "$package" >&2
   exit 1
