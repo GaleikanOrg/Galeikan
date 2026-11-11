@@ -9881,6 +9881,48 @@ fn native_binary_hunt_errors_and_hit_limit_match_vm() {
 }
 
 #[test]
+fn binary_histogram_counts_bytes_and_views_across_execution_modes() {
+    let s = Sandbox::new();
+    let mut program = String::from(
+        "from std.binary import from_hex, histogram, snapshot, view\nfn bins(source: Source) -> List<i64> = histogram(source)\nlet raw = from_hex(\"00 41 41 ff\")\nlet direct: List<i64> = histogram(raw)\nlet source = snapshot(from_hex(\"ff 00 41 41 ff 00\"))\nlet selected: List<i64> = bins(view(source, 1, 4))\nlet empty = histogram(from_hex(\"\"))\nvar total = 0\n",
+    );
+    let all_bytes = (0_u16..=255)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    program.push_str(&format!(
+        "let complete = histogram(from_hex(\"{all_bytes}\"))\n"
+    ));
+    program.push_str("print len(direct)\nprint direct[0]\nprint direct[65]\nprint direct[255]\nprint selected[0]\nprint selected[65]\nprint selected[255]\nprint empty[65]\nfor count in selected {\n    total = total + count\n}\nprint total\nprint complete[0]\nprint complete[127]\nprint complete[255]\n");
+    let script = s.write("histogram.gaks", &program);
+    let expected = b"256\n1\n2\n1\n1\n2\n1\n0\n4\n1\n1\n1\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundled = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb")).output().unwrap();
+    assert!(bundled.status.success(), "{}", String::from_utf8_lossy(&bundled.stderr));
+    assert_eq!(bundled.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let native = Command::new(PathBuf::from(String::from_utf8(built.stdout).unwrap().trim()))
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    let wrong_type = s.write("invalid-histogram.gak", "from std.binary import histogram\nprint histogram(42)\n");
+    let checked = Command::new(galeikan).arg("check").arg(wrong_type).output().unwrap();
+    assert!(!checked.status.success());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("expects Source or bytes"));
+}
+
+#[test]
 fn entropy_windows_track_local_changes_across_execution_modes() {
     let s = Sandbox::new();
     let script = s.write(

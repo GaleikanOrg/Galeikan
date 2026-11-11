@@ -2,6 +2,14 @@ use std::fmt::Write as _;
 
 pub const MAX_BYTES_VALUE: usize = 1024 * 1024;
 
+pub fn histogram(bytes: &[u8]) -> [u64; 256] {
+    let mut counts = [0_u64; 256];
+    for &byte in bytes {
+        counts[usize::from(byte)] += 1;
+    }
+    counts
+}
+
 pub fn crc32(bytes: &[u8]) -> u32 {
     crc32_update(bytes, 0)
 }

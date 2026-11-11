@@ -5431,6 +5431,15 @@ impl Runtime {
             ("size", [Value::Source(source)]) => Ok(Value::Int(
                 i64::try_from(source.bytes().len()).map_err(|_| "size out of range")?,
             )),
+            ("histogram", [data]) => Ok(Value::List(
+                Arc::new(
+                    bytes::histogram(data.as_binary_bytes()?)
+                        .into_iter()
+                        .map(|count| Value::Int(count as i64))
+                        .collect(),
+                ),
+                Some(ResultKind::Int),
+            )),
             ("entropy", [source]) => {
                 let source = source.as_source()?;
                 let width = source.bytes().len();
@@ -8463,6 +8472,15 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             return Err(format!("{qualified} expects Source or bytes"));
         }
         return Ok(UInt);
+    }
+    if module == "binary" && name == "histogram" {
+        let [value] = args else {
+            return Err(format!("{qualified} expects 1 argument"));
+        };
+        if !matches!(value, Source | Bytes | Type::Any) {
+            return Err(format!("{qualified} expects Source or bytes"));
+        }
+        return Ok(Type::List(Some(ResultKind::Int)));
     }
     if module == "syscall" {
         if name != "call" {

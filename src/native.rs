@@ -6065,6 +6065,22 @@ impl Codegen {
                 }
                 Ok(Scalar::UInt)
             }
+            ("histogram", [data]) => {
+                let kind = self.expr(data, scope)?;
+                let data_slot = self.reserve_slot()?;
+                let list_slot = self.reserve_slot()?;
+                let zero = self.label();
+                let scan = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov rax, 256\n    call gak_alloc_list\n    mov QWORD PTR [rbp-{}], rax\n    mov rdx, rax\n    xor r10d, r10d\n{zero}:\n    mov QWORD PTR [rdx+r10*8+8], 0\n    inc r10\n    cmp r10, 256\n    jb {zero}", data_slot * 8, list_slot * 8).unwrap();
+                match kind {
+                    Scalar::Bytes => writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10]\n    lea r10, [r10+8]", data_slot * 8).unwrap(),
+                    Scalar::Source => writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r10+24]\n    sub r11, QWORD PTR [r10+16]\n    mov rax, QWORD PTR [r10]\n    add rax, QWORD PTR [r10+16]\n    lea r10, [rax+8]", data_slot * 8).unwrap(),
+                    _ => return Err("binary.histogram expects bytes or Source".into()),
+                }
+                writeln!(self.code, "    mov rdx, QWORD PTR [rbp-{}]\n    xor ecx, ecx\n{scan}:\n    cmp rcx, r11\n    jae {done}\n    movzx eax, BYTE PTR [r10+rcx]\n    inc QWORD PTR [rdx+rax*8+8]\n    inc rcx\n    jmp {scan}\n{done}:\n    mov rax, rdx", list_slot * 8).unwrap();
+                Ok(Scalar::ListInt)
+            }
             ("entropy", [source]) => {
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.entropy expects Source".into());
