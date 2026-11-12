@@ -937,6 +937,43 @@ uint8_t *gak_native_process_executable(uint64_t pid) {
     return result;
 }
 
+static int gak_process_read_raw(uint64_t pid, uint64_t address,
+                                uint8_t *bytes, size_t length) {
+#ifdef _WIN32
+    HANDLE process = OpenProcess(PROCESS_VM_READ, FALSE, (DWORD)pid);
+    if (!process) {
+        gak_failf("cannot open process %llu for memory reading: %lu",
+                  (unsigned long long)pid, GetLastError());
+        return 0;
+    }
+    SIZE_T read = 0;
+    BOOL ok = ReadProcessMemory(process, (const void *)(uintptr_t)address,
+                                bytes, (SIZE_T)length, &read);
+    DWORD error = ok ? 0 : GetLastError();
+    CloseHandle(process);
+    if (!ok) {
+        gak_failf("cannot read process %llu memory: %lu", (unsigned long long)pid, error);
+        return 0;
+    }
+    size_t received = (size_t)read;
+#else
+    struct iovec local = {bytes, length};
+    struct iovec remote = {(void *)(uintptr_t)address, length};
+    ssize_t read = process_vm_readv((pid_t)pid, &local, 1, &remote, 1, 0);
+    if (read < 0) {
+        gak_failf("cannot read process %llu memory: %s", (unsigned long long)pid, strerror(errno));
+        return 0;
+    }
+    size_t received = (size_t)read;
+#endif
+    if (received != length) {
+        gak_failf("process %llu memory read was incomplete: %zu of %llu bytes",
+                  (unsigned long long)pid, received, (unsigned long long)length);
+        return 0;
+    }
+    return 1;
+}
+
 GakFileResult *gak_native_process_snapshot(uint64_t pid, uint64_t address, uint64_t length) {
     gak_file_error = NULL;
     if (!pid || pid > 2147483647u) {
@@ -960,39 +997,7 @@ GakFileResult *gak_native_process_snapshot(uint64_t pid, uint64_t address, uint6
         gak_failf("native allocation failed");
         return NULL;
     }
-#ifdef _WIN32
-    HANDLE process = OpenProcess(PROCESS_VM_READ, FALSE, (DWORD)pid);
-    if (!process) {
-        gak_failf("cannot open process %llu for memory reading: %lu",
-                  (unsigned long long)pid, GetLastError());
-        free(backing);
-        return NULL;
-    }
-    SIZE_T read = 0;
-    BOOL ok = ReadProcessMemory(process, (const void *)(uintptr_t)address,
-                                backing + 8, (SIZE_T)length, &read);
-    DWORD error = ok ? 0 : GetLastError();
-    CloseHandle(process);
-    if (!ok) {
-        gak_failf("cannot read process %llu memory: %lu", (unsigned long long)pid, error);
-        free(backing);
-        return NULL;
-    }
-    size_t received = (size_t)read;
-#else
-    struct iovec local = {backing + 8, (size_t)length};
-    struct iovec remote = {(void *)(uintptr_t)address, (size_t)length};
-    ssize_t read = process_vm_readv((pid_t)pid, &local, 1, &remote, 1, 0);
-    if (read < 0) {
-        gak_failf("cannot read process %llu memory: %s", (unsigned long long)pid, strerror(errno));
-        free(backing);
-        return NULL;
-    }
-    size_t received = (size_t)read;
-#endif
-    if (received != (size_t)length) {
-        gak_failf("process %llu memory read was incomplete: %zu of %llu bytes",
-                  (unsigned long long)pid, received, (unsigned long long)length);
+    if (!gak_process_read_raw(pid, address, backing + 8, (size_t)length)) {
         free(backing);
         return NULL;
     }
@@ -1769,7 +1774,8 @@ metadata_failed:
 static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
                                                   const uint8_t *pattern,
                                                   const uint8_t *masks,
-                                                  int64_t offset, int64_t length) {
+                                                  int64_t offset, int64_t length,
+                                                  size_t *allocated_bytes) {
     gak_file_error = NULL;
     if (!region || !pattern) {
         gak_failf("invalid process search arguments");
@@ -1835,23 +1841,36 @@ static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
         return NULL;
     }
     uint64_t *hits = malloc((capacity + 1) * sizeof(uint64_t));
-    if (!hits) { gak_failf("native allocation failed"); return NULL; }
+    if (!hits) {
+        gak_file_metadata_bytes -= (capacity + 1) * sizeof(uint64_t);
+        gak_failf("native allocation failed");
+        return NULL;
+    }
     uint64_t hit_count = 0;
     uint16_t matched = 0;
     uint64_t state = 0;
     uint64_t scanned = 0;
-    GakFileResult *chunk = NULL;
+    uint8_t *chunk = NULL;
+    if (length > 0) {
+        size_t chunk_capacity = (size_t)length;
+        if (chunk_capacity > 1048576) chunk_capacity = 1048576;
+        chunk = malloc(chunk_capacity);
+        if (!chunk) {
+            gak_failf("native allocation failed");
+            goto failed;
+        }
+    }
     while (scanned < (uint64_t)length) {
         uint64_t count = (uint64_t)length - scanned;
         if (count > 1048576) count = 1048576;
         uint64_t relative = (uint64_t)offset + scanned;
-        if (region->start > UINTPTR_MAX - relative) {
+        if (relative > UINTPTR_MAX || region->start > UINTPTR_MAX - relative) {
             gak_failf("process region address overflow");
             goto failed;
         }
-        chunk = gak_native_process_snapshot(region->pid, region->start + relative, count);
-        if (!chunk) goto failed;
-        const uint8_t *bytes = chunk->backing + 8;
+        if (!gak_process_read_raw(region->pid, region->start + relative, chunk, (size_t)count))
+            goto failed;
+        const uint8_t *bytes = chunk;
         for (uint64_t index = 0; index < count; index++) {
             int found;
             if (masked) {
@@ -1876,7 +1895,11 @@ static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
                         goto failed;
                     }
                     uint64_t *grown = realloc(hits, (next + 1) * sizeof(uint64_t));
-                    if (!grown) { gak_failf("native allocation failed"); goto failed; }
+                    if (!grown) {
+                        gak_file_metadata_bytes -= (next - capacity) * sizeof(uint64_t);
+                        gak_failf("native allocation failed");
+                        goto failed;
+                    }
                     hits = grown;
                     capacity = next;
                 }
@@ -1885,22 +1908,15 @@ static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
                 if (!masked) matched = prefix[matched - 1];
             }
         }
-        free(chunk->backing);
-        free(chunk->label);
-        free(chunk->origin);
-        free(chunk);
-        chunk = NULL;
         scanned += count;
     }
+    free(chunk);
     hits[0] = hit_count;
+    if (allocated_bytes) *allocated_bytes = (capacity + 1) * sizeof(uint64_t);
     return hits;
 failed:
-    if (chunk) {
-        free(chunk->backing);
-        free(chunk->label);
-        free(chunk->origin);
-        free(chunk);
-    }
+    free(chunk);
+    gak_file_metadata_bytes -= (capacity + 1) * sizeof(uint64_t);
     free(hits);
     return NULL;
 }
@@ -1908,7 +1924,7 @@ failed:
 uint64_t *gak_native_process_hunt_region(GakRegion *region,
                                          const uint8_t *pattern,
                                          int64_t offset, int64_t length) {
-    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
+    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length, NULL);
 }
 
 uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
@@ -1919,7 +1935,7 @@ uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
     memcpy(pattern, &width, sizeof(width));
     for (unsigned index = 0; index < 8; index++)
         pattern[8 + index] = (uint8_t)(target >> (index * 8));
-    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
+    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length, NULL);
 }
 
 static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
@@ -2097,7 +2113,12 @@ uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
     const uint8_t *decoded, *decoded_masks;
     if (!gak_process_decode_hunt_text(pattern, boxed, masks, &decoded, &decoded_masks))
         return NULL;
-    return gak_process_hunt_region_pattern(region, decoded, decoded_masks, offset, length);
+    return gak_process_hunt_region_pattern(region, decoded, decoded_masks, offset, length, NULL);
+}
+
+static void gak_release_temporary_hits(uint64_t *hits, size_t bytes) {
+    free(hits);
+    gak_file_metadata_bytes -= bytes;
 }
 
 static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
@@ -2155,16 +2176,18 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
         uint64_t length = region->size;
         if (length > (uint64_t)per_region) length = (uint64_t)per_region;
         if (length > remaining) length = remaining;
-        uint64_t *hits = gak_process_hunt_region_pattern(region, pattern, masks, 0, (int64_t)length);
+        size_t hits_bytes = 0;
+        uint64_t *hits = gak_process_hunt_region_pattern(
+            region, pattern, masks, 0, (int64_t)length, &hits_bytes);
         if (!hits) goto failed;
         for (uint64_t hit = 0; hit < hits[0]; hit++) {
             if (found == GAK_MAX_SCAN_HITS) {
-                free(hits);
+                gak_release_temporary_hits(hits, hits_bytes);
                 gak_failf("process search exceeds 10000 matches");
                 goto failed;
             }
             if (region->start > UINT64_MAX - hits[hit + 1]) {
-                free(hits);
+                gak_release_temporary_hits(hits, hits_bytes);
                 gak_failf("process region address overflow");
                 goto failed;
             }
@@ -2172,14 +2195,14 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
                 size_t next = capacity * 2;
                 if (next > GAK_MAX_SCAN_HITS) next = GAK_MAX_SCAN_HITS;
                 if (!gak_account_metadata((next - capacity) * sizeof(uint64_t))) {
-                    free(hits);
+                    gak_release_temporary_hits(hits, hits_bytes);
                     gak_failf("native metadata memory exceeds 64 MiB");
                     goto failed;
                 }
                 uint64_t *grown = realloc(result, (next + 1) * sizeof(uint64_t));
                 if (!grown) {
                     gak_file_metadata_bytes -= (next - capacity) * sizeof(uint64_t);
-                    free(hits);
+                    gak_release_temporary_hits(hits, hits_bytes);
                     gak_failf("native allocation failed");
                     goto failed;
                 }
@@ -2188,7 +2211,7 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
             }
             result[++found] = region->start + hits[hit + 1];
         }
-        free(hits);
+        gak_release_temporary_hits(hits, hits_bytes);
         remaining -= length;
     }
     result[0] = found;

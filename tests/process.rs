@@ -284,15 +284,15 @@ print is_error(invalid_limit(maps))
 }
 
 #[test]
-fn repeated_empty_region_searches_do_not_exhaust_native_metadata() {
+fn repeated_sparse_region_searches_do_not_exhaust_native_metadata() {
     let pid = std::process::id();
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("galeikan-empty-region-search-{pid}-{id}"));
+    let root = std::env::temp_dir().join(format!("galeikan-sparse-region-search-{pid}-{id}"));
     fs::create_dir_all(&root).unwrap();
-    let script = root.join("empty-region-search.gaks");
+    let script = root.join("sparse-region-search.gaks");
     fs::write(
         &script,
-        "requires { process.inspect }\nimport std.process\nlet maps = process.heap_candidates(process.self_pid())\nvar count = 0\nvar all_empty = true\nwhile count < 900 {\n    let hits = process.hunt_regions(maps, hex\"ff\", 4096, 0)\n    if len(hits) != 0 {\n        all_empty = false\n    }\n    count = count + 1\n}\nprint count\nprint all_empty\n",
+        "requires { process.inspect }\nimport std.process\nlet maps = process.images(process.self_pid())\nvar count = 0\nvar all_empty = true\nwhile count < 900 {\n    let hits = process.hunt_regions(maps, hex\"01 02 03 04 05 06 07 08\", 1, 1)\n    if len(hits) != 0 {\n        all_empty = false\n    }\n    count = count + 1\n}\nprint count\nprint all_empty\n",
     )
     .unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
