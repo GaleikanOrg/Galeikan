@@ -57,6 +57,59 @@ sys.stdin.read(1)
         Self::spawn_source(source)
     }
 
+    fn spawn_pointer_chain() -> Option<Self> {
+        let source = r#"import ctypes, sys
+data = ctypes.create_string_buffer(64)
+address = ctypes.addressof(data)
+ctypes.memmove(address, (address + 16).to_bytes(8, 'little'), 8)
+ctypes.memmove(address + 16, (address + 32).to_bytes(8, 'little'), 8)
+ctypes.memmove(address + 24, (address + 48).to_bytes(8, 'little'), 8)
+ctypes.memmove(address + 32, (address + 16).to_bytes(8, 'little'), 8)
+if sys.platform.startswith('linux'):
+    libc = ctypes.CDLL(None)
+    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    assert libc.prctl(0x59616d61, ctypes.c_ulong(-1).value, 0, 0, 0) == 0
+print(address, flush=True)
+sys.stdin.read(1)
+"#;
+        Self::spawn_source(source)
+    }
+
+    fn spawn_scattered_pointer_refs() -> Option<Self> {
+        let source = r#"import ctypes, sys
+page = 4096
+if sys.platform.startswith('win'):
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.VirtualAlloc.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.c_ulong]
+    kernel.VirtualAlloc.restype = ctypes.c_void_p
+    kernel.VirtualProtect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    reserved = kernel.VirtualAlloc(None, page * 5, 0x3000, 0x01)
+    assert reserved
+    address = reserved + page
+    old = ctypes.c_ulong()
+    assert kernel.VirtualProtect(ctypes.c_void_p(address), page, 0x04, ctypes.byref(old))
+    assert kernel.VirtualProtect(ctypes.c_void_p(address + page * 2), page, 0x04, ctypes.byref(old))
+else:
+    libc = ctypes.CDLL(None)
+    libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_size_t]
+    libc.mmap.restype = ctypes.c_void_p
+    libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+    reserved = libc.mmap(None, page * 5, 0, 0x22, -1, 0)
+    assert reserved != ctypes.c_void_p(-1).value
+    address = reserved + page
+    assert libc.mprotect(ctypes.c_void_p(address), page, 3) == 0
+    assert libc.mprotect(ctypes.c_void_p(address + page * 2), page, 3) == 0
+    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    assert libc.prctl(0x59616d61, ctypes.c_ulong(-1).value, 0, 0, 0) == 0
+value = (0x0123456789abcdef).to_bytes(8, 'little')
+ctypes.memmove(address + 8, value, 8)
+ctypes.memmove(address + page * 2 + 32, value, 8)
+print(address, flush=True)
+sys.stdin.read(1)
+"#;
+        Self::spawn_source(source)
+    }
+
     fn spawn_wx() -> Option<Self> {
         let source = r#"import ctypes, sys
 if sys.platform.startswith('win'):
@@ -105,6 +158,111 @@ impl Drop for MemoryChild {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[test]
+fn pointer_refs_across_regions_match_all_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_scattered_pointer_refs() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let address = helper.address;
+    let target = 0x0123456789abcdef_u64;
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-pointer-regions-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pointer-regions.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(maps: Regions, target: u64, per_region: i64, total: i64) -> Result<List<u64>> = process.pointer_refs_regions_u64(maps, target, per_region, total)\nlet maps = process.heap_candidates({pid})\nlet hits = process.pointer_refs_regions_u64(maps, {target}u64, 4096, 16777216)\nvar first = false\nvar second = false\nfor hit in hits {{\n    if hit == {address}u64 + 8u64 {{\n        first = true\n    }}\n    if hit == {address}u64 + 8224u64 {{\n        second = true\n    }}\n}}\nprint first\nprint second\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 0, 16777216)) == 0\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 4096, 0)) == 0\nprint is_error(bad(maps, {target}u64, -1, 4096))\nprint is_error(bad(maps, {target}u64, 4096, 16777217))\n"
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let undeclared = root.join("undeclared.gaks");
+    fs::write(&undeclared, "import std.process\nfn refs(maps: Regions) -> List<u64> = process.pointer_refs_regions_u64(maps, 1u64, 8, 8)\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pointer_chain_is_bounded_and_matches_all_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_pointer_chain() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-pointer-chain-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pointer-chain.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(maps: Regions, address: u64, depth: i64) -> Result<List<u64>> = process.pointer_chain_u64(maps, address, depth)\nfn bad_path(maps: Regions, address: u64, offsets: List<i64>) -> Result<List<u64>> = process.pointer_path_u64(maps, address, offsets)\nlet maps = process.heap_candidates({pid})\nlet chain: List<u64> = process.pointer_chain_u64(maps, {}u64, 2)\nlet path = process.pointer_path_u64(maps, chain[0], [0, 8])\nprint len(chain) == 3\nprint chain[0] == {}u64\nprint chain[1] == {}u64\nprint chain[2] == {}u64\nprint len(process.pointer_chain_u64(maps, {}u64, 0)) == 1\nprint is_error(bad(maps, {}u64, 3))\nprint is_error(bad(maps, {}u64, 1))\nprint is_error(bad(maps, {}u64, -1))\nprint is_error(bad(maps, {}u64, 33))\nprint len(path) == 3\nprint path[1] == {}u64\nprint path[2] == {}u64\nprint len(process.pointer_path_u64(maps, {}u64, [])) == 1\nprint process.pointer_path_u64(maps, {}u64, [-8])[1] == {}u64\nprint is_error(bad_path(maps, {}u64, [0, 0, 0]))\nprint is_error(bad_path(maps, {}u64, [0, -1000000000000000]))\n",
+        helper.address, helper.address, helper.address + 16, helper.address + 32,
+        helper.address, helper.address, helper.address + 40, helper.address,
+        helper.address, helper.address + 16, helper.address + 48, helper.address,
+        helper.address + 32, helper.address + 48, helper.address, helper.address
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let undeclared = root.join("undeclared.gaks");
+    fs::write(&undeclared, "import std.process\nfn chain(maps: Regions) -> List<u64> = process.pointer_chain_u64(maps, 1u64, 1)\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let undeclared_path = root.join("undeclared-path.gaks");
+    fs::write(&undeclared_path, "import std.process\nfn path(maps: Regions) -> List<u64> = process.pointer_path_u64(maps, 1u64, [0])\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared_path).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

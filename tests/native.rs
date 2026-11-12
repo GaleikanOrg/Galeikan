@@ -2209,6 +2209,43 @@ fn native_executables_have_platform_hardening_signals() {
 }
 
 #[test]
+fn scalar_list_membership_matches_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "list-membership.gak",
+        "from std.list import contains, index_of\nfrom std.bytes import from_hex\nlet empty: List<u64> = []\nprint contains([1, 2, 3], 2)\nprint not contains([1, 2, 3], 4)\nprint contains([1u64, 18446744073709551615u64], 18446744073709551615u64)\nprint contains([true, false], false)\nprint contains([\"alpha\", \"研究\"], \"研究\")\nprint contains([from_hex(\"00\"), from_hex(\"ff\")], from_hex(\"ff\"))\nprint not contains(empty, 1u64)\nprint not contains([], 1)\nprint index_of([9, 8, 9], 9) == 0\nprint index_of([9, 8], 7) == -1\nprint index_of([\"alpha\", \"研究\"], \"研究\") == 1\nprint index_of([from_hex(\"00\"), from_hex(\"ff\")], from_hex(\"ff\")) == 1\nprint index_of(empty, 1u64) == -1\nprint index_of([], 1) == -1\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let bad = s.write("list-membership-bad.gak", "from std.list import contains\nprint contains([1], \"1\")\n");
+    let check = Command::new(galeikan).arg("check").arg(&bad).output().unwrap();
+    assert!(!check.status.success());
+    let bad_index = s.write("list-index-bad.gak", "from std.list import index_of\nprint index_of([1], \"1\")\n");
+    let check = Command::new(galeikan).arg("check").arg(&bad_index).output().unwrap();
+    assert!(!check.status.success());
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_empty_lists_keep_their_declared_element_type() {
     if !gcc_available() {
         return;

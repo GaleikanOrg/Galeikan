@@ -4365,6 +4365,9 @@ impl Runtime {
                             | "hunt_region"
                             | "pointer_refs_u64"
                             | "read_pointer_u64"
+                            | "pointer_chain_u64"
+                            | "pointer_path_u64"
+                            | "pointer_refs_regions_u64"
                     ) {
                         self.check_effect(module, "process.inspect")?;
                     }
@@ -5803,6 +5806,47 @@ impl Runtime {
                     region, target, offset, length,
                 )?))
             }
+            ("pointer_refs_regions_u64", [Value::Regions(regions), target, per_region, total]) => {
+                self.check_effect(module, "process.inspect")?;
+                let target = target.as_uint()?;
+                let per_region = usize::try_from(per_region.as_int()?)
+                    .map_err(|_| "per-region scan length out of range")?;
+                let total = usize::try_from(total.as_int()?)
+                    .map_err(|_| "total scan length out of range")?;
+                if per_region > process::MAX_SCAN || total > process::MAX_SCAN {
+                    return Err(format!("process scan length exceeds {} bytes", process::MAX_SCAN));
+                }
+                let mut remaining = total;
+                let mut pid = None;
+                let mut addresses = Vec::new();
+                for region in regions.iter() {
+                    if pid.is_some_and(|pid| pid != region.pid) {
+                        return Err("process regions contain multiple pids".into());
+                    }
+                    pid = Some(region.pid);
+                    if !self.allowed_processes.contains(&region.pid) {
+                        return Err(format!("process access not allowed: {}", region.pid));
+                    }
+                    if remaining == 0 || per_region == 0 {
+                        break;
+                    }
+                    if !region.access.starts_with('r') {
+                        continue;
+                    }
+                    let length = region.size.min(per_region).min(remaining);
+                    for offset in process::pointer_refs_u64(region, target, 0, length)? {
+                        let address = region.start.checked_add(offset)
+                            .ok_or("process region address overflow")?;
+                        addresses.push(Value::UInt(u64::try_from(address)
+                            .map_err(|_| "process address outside u64 range")?));
+                        if addresses.len() > process::MAX_SCAN_HITS {
+                            return Err(format!("process search exceeds {} matches", process::MAX_SCAN_HITS));
+                        }
+                    }
+                    remaining -= length;
+                }
+                make_list(addresses)
+            }
             ("read_pointer_u64", [Value::Region(region), offset]) => {
                 self.check_effect(module, "process.inspect")?;
                 if !self.allowed_processes.contains(&region.pid) {
@@ -5811,6 +5855,23 @@ impl Runtime {
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "region offset out of range")?;
                 Ok(Value::UInt(process::read_pointer_u64(region, offset)?))
+            }
+            ("pointer_chain_u64", [Value::Regions(regions), address, depth]) => {
+                self.check_effect(module, "process.inspect")?;
+                let depth = usize::try_from(depth.as_int()?)
+                    .map_err(|_| "pointer chain depth must be 0..32")?;
+                if depth > 32 {
+                    return Err("pointer chain depth must be 0..32".into());
+                }
+                follow_pointer_path(regions, address.as_uint()?, &[0; 32][..depth], &self.allowed_processes)
+            }
+            ("pointer_path_u64", [Value::Regions(regions), address, Value::List(offsets, _)]) => {
+                self.check_effect(module, "process.inspect")?;
+                if offsets.len() > 32 {
+                    return Err("pointer path must contain 0..32 offsets".into());
+                }
+                let offsets = offsets.iter().map(Value::as_int).collect::<Result<Vec<_>, _>>()?;
+                follow_pointer_path(regions, address.as_uint()?, &offsets, &self.allowed_processes)
             }
             ("count", [Value::Regions(regions)]) => Ok(Value::Int(
                 i64::try_from(regions.len()).map_err(|_| "region count out of range")?,
@@ -7641,6 +7702,21 @@ impl Runtime {
     fn list_ops(&self, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
             ("count", [Value::List(items, _)]) => Ok(Value::Int(items.len() as i64)),
+            ("contains" | "index_of", [Value::List(items, _), value]) => {
+                if !matches!(value, Value::Int(_) | Value::UInt(_) | Value::Bool(_) | Value::Str(_) | Value::Bytes(_)) {
+                    return Err(format!("list.{name} needs an i64, u64, bool, str, or bytes value"));
+                }
+                for (index, item) in items.iter().enumerate() {
+                    if matches!(apply_binary(item.clone(), Op::Eq, value.clone())?, Value::Bool(true)) {
+                        return Ok(if name == "contains" {
+                            Value::Bool(true)
+                        } else {
+                            Value::Int(index as i64)
+                        });
+                    }
+                }
+                Ok(if name == "contains" { Value::Bool(false) } else { Value::Int(-1) })
+            }
             ("append", [Value::List(items, kind), value]) => {
                 if matches!(value, Value::List(_, _) | Value::Result(_)) {
                     return Err("list.append cannot add nested List or Result".into());
@@ -8075,6 +8151,49 @@ fn locate_region(
         .find(|region| region.contains(address))
         .cloned()
         .ok_or_else(|| "no process region contains address".into())
+}
+
+fn follow_pointer_path(
+    regions: &[Arc<process::Region>],
+    mut current: u64,
+    offsets: &[i64],
+    allowed_processes: &HashSet<u32>,
+) -> Result<Value, String> {
+    let first_address = usize::try_from(current).map_err(|_| "process address out of range")?;
+    let first = locate_region(regions, first_address)?;
+    let pid = first.pid;
+    if !allowed_processes.contains(&pid) {
+        return Err(format!("process access not allowed: {pid}"));
+    }
+    let mut chain = vec![Value::UInt(current)];
+    for &field_offset in offsets {
+        let read_address = if field_offset >= 0 {
+            current.checked_add(field_offset as u64)
+        } else {
+            current.checked_sub(field_offset.unsigned_abs())
+        }
+        .ok_or("pointer path address overflow")?;
+        let read_address = usize::try_from(read_address)
+            .map_err(|_| "process address out of range")?;
+        let region = locate_region(regions, read_address)?;
+        if region.pid != pid {
+            return Err("pointer chain crosses process regions".into());
+        }
+        let offset = region.offset_of(read_address)?;
+        let next = process::read_pointer_u64(&region, offset)?;
+        if chain.iter().any(|value| matches!(value, Value::UInt(address) if *address == next)) {
+            return Err("pointer chain cycle".into());
+        }
+        let next_address = usize::try_from(next)
+            .map_err(|_| "process address out of range")?;
+        let next_region = locate_region(regions, next_address)?;
+        if next_region.pid != pid {
+            return Err("pointer chain crosses process regions".into());
+        }
+        chain.push(Value::UInt(next));
+        current = next;
+    }
+    make_list(chain)
 }
 
 fn index_value(value: Value, index: Value) -> Result<Value, String> {
@@ -8579,6 +8698,21 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
     if module == "list" {
         return match (name, args) {
             ("count", [Type::List(_) | Type::Any]) => Ok(Int),
+            ("contains" | "index_of", [Type::List(kind), value]) => {
+                if !matches!(value, Int | UInt | Bool | Str | Bytes | Type::Any) {
+                    return Err(format!("{qualified} needs an i64, u64, bool, str, or bytes value"));
+                }
+                if let Some(kind) = kind {
+                    if !matches!(kind, ResultKind::Int | ResultKind::UInt | ResultKind::Bool | ResultKind::Str | ResultKind::Bytes) {
+                        return Err(format!("{qualified} needs a scalar List"));
+                    }
+                    require_type(kind.as_type(), *value)?;
+                }
+                Ok(if name == "contains" { Bool } else { Int })
+            }
+            ("contains" | "index_of", [Type::Any, Int | UInt | Bool | Str | Bytes | Type::Any]) => {
+                Ok(if name == "contains" { Bool } else { Int })
+            }
             ("append", [Type::List(kind), value]) => {
                 if matches!(value, Type::List(_) | Type::Result(_)) {
                     return Err(format!("{qualified} cannot append {value}"));
@@ -8604,7 +8738,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             ("append", [Type::Any, _])
             | ("concat", [Type::Any, _])
             | ("concat", [_, Type::Any]) => Ok(Type::Any),
-            ("count" | "append" | "concat", _) => Err(format!("{qualified} has invalid arguments")),
+            ("count" | "append" | "concat" | "contains" | "index_of", _) => Err(format!("{qualified} has invalid arguments")),
             _ => Err(format!("unknown standard function {qualified}")),
         };
     }
@@ -8986,7 +9120,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),
         ("process", "hunt_region") => (&[Region, Type::Any, Int, Int], Offsets),
         ("process", "pointer_refs_u64") => (&[Region, UInt, Int, Int], Offsets),
+        ("process", "pointer_refs_regions_u64") => (&[Regions, UInt, Int, Int], Type::List(Some(ResultKind::UInt))),
         ("process", "read_pointer_u64") => (&[Region, Int], UInt),
+        ("process", "pointer_chain_u64") => (&[Regions, UInt, Int], Type::List(Some(ResultKind::UInt))),
+        ("process", "pointer_path_u64") => (&[Regions, UInt, Type::List(Some(ResultKind::Int))], Type::List(Some(ResultKind::UInt))),
         ("process", "snapshot_ref") => (&[Region, Str, Int], Source),
         ("process", "snapshot_at") => (&[Regions, Int, Int], Source),
         ("process", "snapshot_at_u64") => (&[Regions, UInt, Int], Source),

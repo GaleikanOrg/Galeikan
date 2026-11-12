@@ -1922,6 +1922,69 @@ uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
     return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
 }
 
+uint64_t *gak_native_process_pointer_refs_regions_u64(GakRegions *regions,
+                                                       uint64_t target,
+                                                       int64_t per_region,
+                                                       int64_t total) {
+    gak_file_error = NULL;
+    if (!regions) { gak_failf("invalid process regions"); return NULL; }
+    if (per_region < 0) { gak_failf("per-region scan length out of range"); return NULL; }
+    if (total < 0) { gak_failf("total scan length out of range"); return NULL; }
+    if (per_region > GAK_MAX_SCAN || total > GAK_MAX_SCAN) {
+        gak_failf("process scan length exceeds 16777216 bytes");
+        return NULL;
+    }
+    const size_t capacity = GAK_MAX_SCAN_HITS + 1;
+    if (!gak_account_metadata(capacity * sizeof(uint64_t))) {
+        gak_failf("native metadata memory exceeds 64 MiB");
+        return NULL;
+    }
+    uint64_t *result = malloc(capacity * sizeof(uint64_t));
+    if (!result) { gak_failf("native allocation failed"); return NULL; }
+    uint64_t found = 0;
+    uint64_t remaining = (uint64_t)total;
+    uint64_t pid = 0;
+    for (uint64_t index = 0; index < regions->count; index++) {
+        GakRegion *region = regions->items[index];
+        if (index && region->pid != pid) {
+            gak_failf("process regions contain multiple pids");
+            goto failed;
+        }
+        pid = region->pid;
+        if (!gak_process_allowed((uint32_t)pid)) {
+            gak_failf("process access not allowed: %llu", (unsigned long long)pid);
+            goto failed;
+        }
+        if (!remaining || !per_region) break;
+        if (region->access[8] != 'r') continue;
+        uint64_t length = region->size;
+        if (length > (uint64_t)per_region) length = (uint64_t)per_region;
+        if (length > remaining) length = remaining;
+        uint64_t *hits = gak_native_process_pointer_refs_u64(region, target, 0, (int64_t)length);
+        if (!hits) goto failed;
+        for (uint64_t hit = 0; hit < hits[0]; hit++) {
+            if (found == GAK_MAX_SCAN_HITS) {
+                free(hits);
+                gak_failf("process search exceeds 10000 matches");
+                goto failed;
+            }
+            if (region->start > UINT64_MAX - hits[hit + 1]) {
+                free(hits);
+                gak_failf("process region address overflow");
+                goto failed;
+            }
+            result[++found] = region->start + hits[hit + 1];
+        }
+        free(hits);
+        remaining -= length;
+    }
+    result[0] = found;
+    return result;
+failed:
+    free(result);
+    return NULL;
+}
+
 uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) {
     GakFileResult *source = gak_native_process_snapshot_region(region, offset, 8);
     if (!source) return 0;
@@ -1933,6 +1996,99 @@ uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) 
     free(source->origin);
     free(source);
     return value;
+}
+
+static uint64_t *gak_process_pointer_path_u64(GakRegions *regions,
+                                              uint64_t address,
+                                              const int64_t *offsets, size_t count) {
+    gak_file_error = NULL;
+    GakRegion *first = gak_native_process_locate(regions, address);
+    if (!first) return NULL;
+    uint64_t pid = first->pid;
+    if (!gak_process_allowed((uint32_t)pid)) {
+        gak_failf("process access not allowed: %llu", (unsigned long long)pid);
+        return NULL;
+    }
+    size_t bytes = (count + 2) * sizeof(uint64_t);
+    if (!gak_account_metadata(bytes)) {
+        gak_failf("native metadata limit exceeded");
+        return NULL;
+    }
+    uint64_t *chain = malloc(bytes);
+    if (!chain) {
+        gak_failf("native allocation failed");
+        return NULL;
+    }
+    chain[0] = (uint64_t)count + 1;
+    chain[1] = address;
+    for (size_t hop = 0; hop < count; hop++) {
+        int64_t field_offset = offsets[hop];
+        uint64_t read_address;
+        if (field_offset >= 0) {
+            if (address > UINT64_MAX - (uint64_t)field_offset) {
+                gak_failf("pointer path address overflow");
+                goto failed;
+            }
+            read_address = address + (uint64_t)field_offset;
+        } else {
+            uint64_t magnitude = 0 - (uint64_t)field_offset;
+            if (address < magnitude) {
+                gak_failf("pointer path address overflow");
+                goto failed;
+            }
+            read_address = address - magnitude;
+        }
+        GakRegion *region = gak_native_process_locate(regions, read_address);
+        if (!region) goto failed;
+        if (region->pid != pid) {
+            gak_failf("pointer chain crosses process regions");
+            goto failed;
+        }
+        uint64_t offset = read_address - region->start;
+        if (offset > INT64_MAX) {
+            gak_failf("region offset outside i64 range");
+            goto failed;
+        }
+        uint64_t next = gak_native_process_read_pointer_u64(region, (int64_t)offset);
+        if (gak_file_error) goto failed;
+        for (size_t prior = 0; prior <= hop; prior++) {
+            if (chain[prior + 1] == next) {
+                gak_failf("pointer chain cycle");
+                goto failed;
+            }
+        }
+        GakRegion *target = gak_native_process_locate(regions, next);
+        if (!target) goto failed;
+        if (target->pid != pid) {
+            gak_failf("pointer chain crosses process regions");
+            goto failed;
+        }
+        chain[hop + 2] = next;
+        address = next;
+    }
+    return chain;
+failed:
+    free(chain);
+    return NULL;
+}
+
+uint64_t *gak_native_process_pointer_chain_u64(GakRegions *regions,
+                                                uint64_t address, int64_t depth) {
+    if (depth < 0 || depth > 32) {
+        gak_failf("pointer chain depth must be 0..32");
+        return NULL;
+    }
+    const int64_t offsets[32] = {0};
+    return gak_process_pointer_path_u64(regions, address, offsets, (size_t)depth);
+}
+
+uint64_t *gak_native_process_pointer_path_u64(GakRegions *regions,
+                                               uint64_t address, const int64_t *offsets) {
+    if (!offsets || (uint64_t)offsets[0] > 32) {
+        gak_failf("pointer path must contain 0..32 offsets");
+        return NULL;
+    }
+    return gak_process_pointer_path_u64(regions, address, offsets + 1, (size_t)offsets[0]);
 }
 
 uint64_t *gak_native_process_hunt_region_text(GakRegion *region,

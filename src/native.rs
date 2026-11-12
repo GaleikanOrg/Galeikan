@@ -4225,10 +4225,35 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::UInt)
             }
-            ("hunt_region" | "pointer_refs_u64", [_, _, _, _]) => {
-                let pointer_refs = name == "pointer_refs_u64";
+            ("pointer_chain_u64" | "pointer_path_u64", [regions, address, steps]) => {
+                let path = name == "pointer_path_u64";
+                let arguments = [regions, address, steps];
+                let expected = [Scalar::Regions, Scalar::UInt, if path { Scalar::ListInt } else { Scalar::Int }];
+                let mut slots = Vec::with_capacity(3);
+                for (index, (argument, kind)) in arguments.into_iter().zip(expected).enumerate() {
+                    let actual = self.expr(argument, scope)?;
+                    if actual != kind && !(path && index == 2 && actual == Scalar::ListEmpty) {
+                        return Err(if path {
+                            "process.pointer_path_u64 expects Regions, u64, List<i64>".into()
+                        } else {
+                            "process.pointer_chain_u64 expects Regions, u64, i64".into()
+                        });
+                    }
+                    let slot = self.reserve_slot()?;
+                    writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                    slots.push(slot);
+                }
+                let target = if path { "gak_native_process_pointer_path_u64" } else { "gak_native_process_pointer_chain_u64" };
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {target}", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8).unwrap();
+                self.process_checked_result();
+                self.uses_process = true;
+                Ok(Scalar::ListUInt)
+            }
+            ("hunt_region" | "pointer_refs_u64" | "pointer_refs_regions_u64", [_, _, _, _]) => {
+                let regions_refs = name == "pointer_refs_regions_u64";
+                let pointer_refs = name == "pointer_refs_u64" || regions_refs;
                 let expected = [
-                    Scalar::Region,
+                    if regions_refs { Scalar::Regions } else { Scalar::Region },
                     if pointer_refs { Scalar::UInt } else { Scalar::Bytes },
                     Scalar::Int,
                     Scalar::Int,
@@ -4243,7 +4268,9 @@ impl Codegen {
                         }
                         text_pattern = actual == Scalar::Str;
                     } else if actual != kind {
-                        return Err(if pointer_refs {
+                        return Err(if regions_refs {
+                            "process.pointer_refs_regions_u64 expects Regions, u64, i64, i64".into()
+                        } else if pointer_refs {
                             "process.pointer_refs_u64 expects Region, u64, i64, i64".into()
                         } else {
                             "process.hunt_region expects Region, bytes or str, i64, i64".into()
@@ -4253,7 +4280,9 @@ impl Codegen {
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     slots.push(slot);
                 }
-                let target = if pointer_refs {
+                let target = if regions_refs {
+                    "gak_native_process_pointer_refs_regions_u64"
+                } else if pointer_refs {
                     "gak_native_process_pointer_refs_u64"
                 } else if text_pattern {
                     "gak_native_process_hunt_region_text"
@@ -4263,7 +4292,7 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {target}", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), slots[3] * 8).unwrap();
                 self.process_checked_result();
                 self.uses_process = true;
-                Ok(Scalar::Offsets)
+                Ok(if regions_refs { Scalar::ListUInt } else { Scalar::Offsets })
             }
             (
                 "snapshot_region" | "snapshot_ref" | "snapshot_at" | "snapshot_at_u64",
@@ -7188,6 +7217,51 @@ impl Codegen {
                 }
                 self.code.push_str("    mov rax, QWORD PTR [rax]\n");
                 Ok(Scalar::Int)
+            }
+            ("contains" | "index_of", [list, value]) => {
+                let position = name == "index_of";
+                let list_kind = self.expr(list, scope)?;
+                let element = match list_kind {
+                    Scalar::ListInt => Some(Scalar::Int),
+                    Scalar::ListUInt => Some(Scalar::UInt),
+                    Scalar::ListBool => Some(Scalar::Bool),
+                    Scalar::ListStr => Some(Scalar::Str),
+                    Scalar::ListBytes => Some(Scalar::Bytes),
+                    Scalar::ListEmpty => None,
+                    _ => return Err(format!("list.{name} needs a scalar List")),
+                };
+                let list_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", list_slot * 8).unwrap();
+                let value_kind = self.expr(value, scope)?;
+                if !matches!(value_kind, Scalar::Int | Scalar::UInt | Scalar::Bool | Scalar::Str | Scalar::Bytes)
+                    || element.is_some_and(|kind| kind != value_kind)
+                {
+                    return Err(format!("list.{name} value has the wrong type"));
+                }
+                if element.is_none() {
+                    self.code.push_str(if position { "    mov rax, -1\n" } else { "    xor eax, eax\n" });
+                    return Ok(if position { Scalar::Int } else { Scalar::Bool });
+                }
+                let value_slot = self.reserve_slot()?;
+                let index_slot = self.reserve_slot()?;
+                let loop_label = self.label();
+                let found = self.label();
+                let absent = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0\n{loop_label}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    cmp r11, QWORD PTR [r10]\n    jae {absent}", value_slot * 8, index_slot * 8, list_slot * 8, index_slot * 8).unwrap();
+                if matches!(value_kind, Scalar::Str | Scalar::Bytes) {
+                    writeln!(self.code, "    mov {}, QWORD PTR [r10+r11*8+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_str_eq\n    test eax, eax\n    jnz {found}", self.arg0(), self.arg1(), value_slot * 8).unwrap();
+                } else {
+                    writeln!(self.code, "    mov rax, QWORD PTR [r10+r11*8+8]\n    cmp rax, QWORD PTR [rbp-{}]\n    je {found}", value_slot * 8).unwrap();
+                }
+                let found_value = if position {
+                    format!("mov rax, QWORD PTR [rbp-{}]", index_slot * 8)
+                } else {
+                    "mov eax, 1".into()
+                };
+                let absent_value = if position { "mov rax, -1" } else { "xor eax, eax" };
+                writeln!(self.code, "    inc QWORD PTR [rbp-{}]\n    jmp {loop_label}\n{found}:\n    {found_value}\n    jmp {done}\n{absent}:\n    {absent_value}\n{done}:", index_slot * 8).unwrap();
+                Ok(if position { Scalar::Int } else { Scalar::Bool })
             }
             ("append", [list, value]) => {
                 let list_kind = self.expr(list, scope)?;
