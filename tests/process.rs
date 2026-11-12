@@ -103,6 +103,8 @@ else:
     assert libc.prctl(0x59616d61, ctypes.c_ulong(-1).value, 0, 0, 0) == 0
 value = (0x0123456789abcdef).to_bytes(8, 'little')
 ctypes.memmove(address + 8, value, 8)
+for index in range(20):
+    ctypes.memmove(address + 64 + index * 16, value, 8)
 ctypes.memmove(address + page * 2 + 32, value, 8)
 print(address, flush=True)
 sys.stdin.read(1)
@@ -240,6 +242,7 @@ for hit in hits {{
 }}
 print first
 print second
+print len(hits) >= 22
 print len(masked) >= 2
 print len(process.hunt_regions(maps, hex"ef", 0, 16777216)) == 0
 print len(process.hunt_regions(maps, hex"ef", 4096, 0)) == 0
@@ -252,7 +255,7 @@ print is_error(invalid_limit(maps))
     let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
     assert!(!check.status.success());
     assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
@@ -276,6 +279,40 @@ print is_error(invalid_limit(maps))
             .output().unwrap();
         assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
         assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn repeated_empty_region_searches_do_not_exhaust_native_metadata() {
+    let pid = std::process::id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-empty-region-search-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("empty-region-search.gaks");
+    fs::write(
+        &script,
+        "requires { process.inspect }\nimport std.process\nlet maps = process.heap_candidates(process.self_pid())\nvar count = 0\nvar all_empty = true\nwhile count < 900 {\n    let hits = process.hunt_regions(maps, hex\"ff\", 4096, 0)\n    if len(hits) != 0 {\n        all_empty = false\n    }\n    count = count + 1\n}\nprint count\nprint all_empty\n",
+    )
+    .unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-process", "self"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, b"900\ntrue\n", "{engine}");
+    }
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let output = Command::new(executable).args(["--allow-process", "self"]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, b"900\ntrue\n");
     }
     fs::remove_dir_all(root).unwrap();
 }

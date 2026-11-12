@@ -2127,13 +2127,17 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
         gak_failf("process scan length exceeds 16777216 bytes");
         return NULL;
     }
-    const size_t capacity = GAK_MAX_SCAN_HITS + 1;
-    if (!gak_account_metadata(capacity * sizeof(uint64_t))) {
+    size_t capacity = 16;
+    if (!gak_account_metadata((capacity + 1) * sizeof(uint64_t))) {
         gak_failf("native metadata memory exceeds 64 MiB");
         return NULL;
     }
-    uint64_t *result = malloc(capacity * sizeof(uint64_t));
-    if (!result) { gak_failf("native allocation failed"); return NULL; }
+    uint64_t *result = malloc((capacity + 1) * sizeof(uint64_t));
+    if (!result) {
+        gak_file_metadata_bytes -= (capacity + 1) * sizeof(uint64_t);
+        gak_failf("native allocation failed");
+        return NULL;
+    }
     uint64_t found = 0, remaining = (uint64_t)total, pid = 0;
     for (uint64_t index = 0; index < regions->count; index++) {
         GakRegion *region = regions->items[index];
@@ -2164,6 +2168,24 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
                 gak_failf("process region address overflow");
                 goto failed;
             }
+            if (found == capacity) {
+                size_t next = capacity * 2;
+                if (next > GAK_MAX_SCAN_HITS) next = GAK_MAX_SCAN_HITS;
+                if (!gak_account_metadata((next - capacity) * sizeof(uint64_t))) {
+                    free(hits);
+                    gak_failf("native metadata memory exceeds 64 MiB");
+                    goto failed;
+                }
+                uint64_t *grown = realloc(result, (next + 1) * sizeof(uint64_t));
+                if (!grown) {
+                    gak_file_metadata_bytes -= (next - capacity) * sizeof(uint64_t);
+                    free(hits);
+                    gak_failf("native allocation failed");
+                    goto failed;
+                }
+                result = grown;
+                capacity = next;
+            }
             result[++found] = region->start + hits[hit + 1];
         }
         free(hits);
@@ -2172,6 +2194,7 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
     result[0] = found;
     return result;
 failed:
+    gak_file_metadata_bytes -= (capacity + 1) * sizeof(uint64_t);
     free(result);
     return NULL;
 }
