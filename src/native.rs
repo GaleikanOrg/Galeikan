@@ -478,6 +478,46 @@ const DYNAMIC_RESULT_ERRORS: &[&str] = &[
     "gak_python_error_dynamic",
 ];
 
+fn rewrite_runtime_error_branches(
+    segment: &str,
+    mut next_label: impl FnMut() -> String,
+) -> (String, Vec<(String, Option<&'static str>)>) {
+    let mut rewritten = String::with_capacity(segment.len());
+    let mut labels = HashMap::<&str, String>::new();
+    let mut catches = Vec::new();
+    for line in segment.split_inclusive('\n') {
+        let mut words = line.split_whitespace();
+        let (Some(instruction), Some(target), None) = (words.next(), words.next(), words.next())
+        else {
+            rewritten.push_str(line);
+            continue;
+        };
+        if !instruction.starts_with('j') {
+            rewritten.push_str(line);
+            continue;
+        }
+        let message = CATCHABLE_RESULT_ERRORS
+            .iter()
+            .find(|(name, _)| *name == target)
+            .map(|(_, message)| Some(*message))
+            .or_else(|| DYNAMIC_RESULT_ERRORS.contains(&target).then_some(None));
+        let Some(message) = message else {
+            rewritten.push_str(line);
+            continue;
+        };
+        let label = labels.entry(target).or_insert_with(|| {
+            let label = next_label();
+            catches.push((label.clone(), message));
+            label
+        });
+        let at = line.rfind(target).expect("branch target occurs in its line");
+        rewritten.push_str(&line[..at]);
+        rewritten.push_str(label);
+        rewritten.push_str(&line[at + target.len()..]);
+    }
+    (rewritten, catches)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scalar {
     Int,
@@ -3524,22 +3564,8 @@ impl Codegen {
             .rev()
             .find(|context| context.result_type.is_some())
             .cloned();
-        let mut segment = self.code[start..].to_owned();
-        let mut catches = Vec::new();
-        for &(target, message) in CATCHABLE_RESULT_ERRORS {
-            if segment.contains(target) {
-                let label = self.label();
-                segment = segment.replace(target, &label);
-                catches.push((label, Some(message)));
-            }
-        }
-        for &target in DYNAMIC_RESULT_ERRORS {
-            if segment.contains(target) {
-                let label = self.label();
-                segment = segment.replace(target, &label);
-                catches.push((label, None));
-            }
-        }
+        let source = self.code[start..].to_owned();
+        let (segment, catches) = rewrite_runtime_error_branches(&source, || self.label());
         if catches.is_empty() {
             return Ok(());
         }
@@ -9502,6 +9528,27 @@ gak_cli_utf8_done:
 #[cfg(test)]
 mod source_validation_tests {
     use super::*;
+
+    #[test]
+    fn runtime_error_rewriting_only_changes_exact_branch_targets() {
+        let source = "    jne gak_divzero\n    lea rax, [rip+gak_divzero_msg]\n    jmp gak_divzero\n    jmp gak_divzero_extra\n    jmp gak_analyze_error_dynamic\n";
+        let mut number = 0;
+        let (rewritten, catches) = rewrite_runtime_error_branches(source, || {
+            number += 1;
+            format!("case_{number}")
+        });
+        assert_eq!(
+            rewritten,
+            "    jne case_1\n    lea rax, [rip+gak_divzero_msg]\n    jmp case_1\n    jmp gak_divzero_extra\n    jmp case_2\n"
+        );
+        assert_eq!(
+            catches,
+            [
+                ("case_1".into(), Some("division by zero")),
+                ("case_2".into(), None)
+            ]
+        );
+    }
 
     #[test]
     fn native_collection_rejects_sources_changed_after_validation() {
