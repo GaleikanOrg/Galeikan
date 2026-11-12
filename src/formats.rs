@@ -425,7 +425,7 @@ impl FormatReport {
                     let tail = &bytes[strings + offset..strings + string_size];
                     let length = tail.iter().take(MAX_COFF_NAME_BYTES + 1)
                         .position(|&byte| byte == 0)
-                        .ok_or_else(|| if tail.len() > MAX_COFF_NAME_BYTES + 1 {
+                        .ok_or(if tail.len() > MAX_COFF_NAME_BYTES + 1 {
                             "PE COFF symbol name exceeds 4096 bytes"
                         } else {
                             "unterminated PE COFF symbol name"
@@ -1537,10 +1537,8 @@ impl FormatReport {
                     if method == 0 || method > rows[6] {
                         return Err("invalid PE CLR MethodPtr target".into());
                     }
-                    if method == index as u64 {
-                        if owner.replace(type_index - 1).is_some() {
-                            return Err("duplicate PE CLR MethodDef owner".into());
-                        }
+                    if method == index as u64 && owner.replace(type_index - 1).is_some() {
+                        return Err("duplicate PE CLR MethodDef owner".into());
                     }
                 }
             }

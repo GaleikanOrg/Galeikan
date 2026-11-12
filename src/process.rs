@@ -666,13 +666,11 @@ fn module_paths(images: &[Region]) -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 fn map_field<'a>(rest: &mut &'a str) -> Result<&'a str, String> {
-    let current = rest.trim_start_matches(|ch| ch == ' ' || ch == '\t');
+    let current = rest.trim_start_matches([' ', '\t']);
     if current.is_empty() {
         return Err("malformed process memory map".into());
     }
-    let end = current
-        .find(|ch| ch == ' ' || ch == '\t')
-        .unwrap_or(current.len());
+    let end = current.find([' ', '\t']).unwrap_or(current.len());
     let (field, tail) = current.split_at(end);
     *rest = tail;
     Ok(field)
@@ -705,7 +703,7 @@ fn parse_linux_map_line(pid: u32, line: &str) -> Result<Region, String> {
         return Err("invalid process memory access flags".into());
     }
     let label = rest
-        .trim_start_matches(|ch| ch == ' ' || ch == '\t')
+        .trim_start_matches([' ', '\t'])
         .to_owned();
     let image_backed = inode != 0 && label.starts_with('/');
     Ok(Region {
