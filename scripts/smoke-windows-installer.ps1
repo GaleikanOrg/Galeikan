@@ -133,6 +133,23 @@ $bundleIcon = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Class
 if ($langIcon -ne (Join-Path $smokeRoot 'icons\galeikan.ico') -or $scriptIcon -ne $langIcon -or $bundleIcon -ne $langIcon) {
     throw 'Installed Galeikan file type icon registration is invalid'
 }
+foreach ($association in @(
+    @{ Extension = '.gak'; Program = 'Galeikan.Lang' },
+    @{ Extension = '.gaks'; Program = 'Galeikan.Script' }
+)) {
+    $base = "Registry::HKEY_CURRENT_USER\Software\Classes\$($association.Extension)"
+    $program = "Registry::HKEY_CURRENT_USER\Software\Classes\$($association.Program)"
+    $openWith = (Get-Item -LiteralPath "$base\OpenWithProgids").GetValueNames()
+    if ($openWith -notcontains $association.Program) {
+        throw "Installer did not register $($association.Extension) as a Galeikan source file"
+    }
+    $runCommand = (Get-Item -LiteralPath "$program\shell\run\command").GetValue('')
+    $compileCommand = (Get-Item -LiteralPath "$program\shell\compile\command").GetValue('')
+    if ($runCommand -ne ('"' + $binary + '" run "%1"') -or
+        $compileCommand -ne ('"' + $binary + '" compile "%1"')) {
+        throw "Installed $($association.Extension) actions do not use the Galeikan CLI"
+    }
+}
 $bundleAssociation = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\.gakb').GetValue('')
 $bundleCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\open\command').GetValue('')
 $bundleRunCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\run\command').GetValue('')

@@ -32,19 +32,34 @@ done
 for asset in pyproject.toml galeikan_bridge/__init__.py galeikan_bridge/_runner.py; do
   cmp "$project_root/python/$asset" "$staging/usr/share/galeikan/python/$asset"
 done
-update-mime-database "$staging/usr/share/mime"
+XDG_DATA_DIRS="$staging/usr/share:/usr/share" update-mime-database "$staging/usr/share/mime"
 grep -Fq 'text/x-galeikan:*.gak' "$staging/usr/share/mime/globs2"
 grep -Fq 'text/x-galeikan-script:*.gaks' "$staging/usr/share/mime/globs2"
 grep -Fq 'application/x-galeikan-bytecode:*.gakb' "$staging/usr/share/mime/globs2"
+grep -Fq 'text/x-galeikan:text-x-galeikan' "$staging/usr/share/mime/icons"
+grep -Fq 'text/x-galeikan-script:text-x-galeikan-script' "$staging/usr/share/mime/icons"
 grep -Fq 'application/x-galeikan-bytecode:text-x-galeikan' "$staging/usr/share/mime/icons"
+if command -v xdg-mime >/dev/null 2>&1; then
+  mime_type() {
+    XDG_DATA_HOME="$staging/usr/share" XDG_DATA_DIRS="$staging/usr/share:/usr/share" \
+      xdg-mime query filetype "$1"
+  }
+  [[ "$(mime_type "$example")" == text/x-galeikan ]]
+fi
 cmp "$project_root/packaging/README.md" "$staging/usr/share/doc/galeikan/README.md"
 cmp "$project_root/packaging/docs/quickstart.md" "$staging/usr/share/doc/galeikan/docs/quickstart.md"
 [[ "$(find "$staging/usr/share/doc/galeikan/docs" -type f | wc -l)" -eq 1 ]]
 "$binary" check "$example"
 printf 'print 42\n' > "$staging/syntax-smoke.gaks"
+if command -v xdg-mime >/dev/null 2>&1; then
+  [[ "$(mime_type "$staging/syntax-smoke.gaks")" == text/x-galeikan-script ]]
+fi
 "$binary" check "$staging/syntax-smoke.gaks"
 [[ "$("$binary" run "$staging/syntax-smoke.gaks" --engine vm)" == 42 ]]
 "$binary" build "$staging/syntax-smoke.gaks"
+if command -v xdg-mime >/dev/null 2>&1; then
+  [[ "$(mime_type "$staging/syntax-smoke.gakb")" == application/x-galeikan-bytecode ]]
+fi
 [[ "$("$binary" exec "$staging/syntax-smoke.gakb")" == 42 ]]
 "$binary" compile "$staging/syntax-smoke.gaks"
 [[ "$("$staging/syntax-smoke.gaks.native")" == 42 ]]
