@@ -1926,6 +1926,39 @@ fn native_python_module_hash_and_result_types_are_checked() {
 }
 
 #[test]
+fn native_python_rechecks_cached_module_after_file_changes() {
+    if !gcc_available() || !python_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write(
+        "helper.py",
+        "def number():\n    return 7\n\ndef mutate():\n    with open(__file__, 'ab') as handle:\n        handle.write(b'# changed\\n')\n",
+    );
+    let script = s.write(
+        "main.gak",
+        "requires { python.exec }\nimport py.helper\nfrom std.result import is_error\nfn checked() -> Result<i64> {\n    let value: i64 = helper.number()\n    return value\n}\nlet first: i64 = helper.number()\nprint first\nhelper.mutate()\nprint is_error(checked())\n",
+    );
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let result = Command::new(&executable)
+        .args(["--allow-python", python_command()])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(result.stdout, b"7\ntrue\n");
+}
+
+#[test]
 fn native_python_modules_follow_relocated_executable_and_remain_hash_checked() {
     if !gcc_available() || !python_available() {
         return;

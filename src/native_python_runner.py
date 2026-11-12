@@ -144,16 +144,19 @@ def load_module(path, expected_sha256):
     if cached is not None:
         if cached[0] != expected_sha256:
             raise ValueError("Python module changed after load")
-        return cached[1]
-    if len(modules) >= MAX_MODULES:
-        raise ValueError("Python module cache exceeds 64 modules")
     with open(path, "rb") as handle:
         source = handle.read(8 * 1024 * 1024 + 1)
-    if len(source) > 8 * 1024 * 1024 or module_bytes + len(source) > MAX_MODULE_BYTES:
+    if len(source) > 8 * 1024 * 1024:
         raise ValueError("Python module exceeds worker limits")
     digest = hashlib.sha256(source).hexdigest()
     if digest != expected_sha256:
         raise ValueError("Python module changed after compilation")
+    if cached is not None:
+        return cached[1]
+    if len(modules) >= MAX_MODULES:
+        raise ValueError("Python module cache exceeds 64 modules")
+    if module_bytes + len(source) > MAX_MODULE_BYTES:
+        raise ValueError("Python module exceeds worker limits")
     module_name, qualified = module_identity(path)
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
