@@ -39,6 +39,23 @@ sys.stdin.read(1)
         Self::spawn_source(source)
     }
 
+    fn spawn_pointer_refs() -> Option<Self> {
+        let source = r#"import ctypes, sys
+data = ctypes.create_string_buffer(1048576 + 32)
+address = ctypes.addressof(data)
+pointer = address.to_bytes(8, 'little')
+ctypes.memmove(address + 1048576 - 4, pointer, 8)
+ctypes.memmove(address + 1048576 + 16, pointer, 8)
+if sys.platform.startswith('linux'):
+    libc = ctypes.CDLL(None)
+    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    assert libc.prctl(0x59616d61, ctypes.c_ulong(-1).value, 0, 0, 0) == 0
+print(address, flush=True)
+sys.stdin.read(1)
+"#;
+        Self::spawn_source(source)
+    }
+
     fn spawn_wx() -> Option<Self> {
         let source = r#"import ctypes, sys
 if sys.platform.startswith('win'):
@@ -87,6 +104,54 @@ impl Drop for MemoryChild {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[test]
+fn pointer_refs_find_live_cross_chunk_values_in_all_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_pointer_refs() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-pointer-refs-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pointer-refs.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(region: Region, target: u64, offset: i64) -> Result<Offsets> = process.pointer_refs_u64(region, target, offset, -1)\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nlet offset = process.offset_u64(region, {}u64)\nlet hits = process.pointer_refs_u64(region, {}u64, offset, 1048608)\nprint len(hits) == 2\nprint hits[0] - offset == 1048572\nprint hits[1] - offset == 1048592\nprint len(process.pointer_refs_u64(region, {}u64, offset, 0)) == 0\nprint is_error(bad(region, {}u64, offset))\n",
+        helper.address, helper.address, helper.address, helper.address, helper.address
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let undeclared = root.join("undeclared.gaks");
+    fs::write(&undeclared, "import std.process\nfn find(region: Region) -> Offsets = process.pointer_refs_u64(region, 1u64, 0, 8)\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

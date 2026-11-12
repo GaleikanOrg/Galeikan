@@ -8,7 +8,7 @@ Use this page to find current functions by module, learn what each group returns
 
 ## Availability and conventions
 
-The Preview 3 downloads do not yet include `binary.histogram` or `process.heap_candidates`; both are implemented in the current source tree. `check` validates source without running it. The AST interpreter and VM cover more language constructs than the native compiler, so compile and test a program before relying on native delivery. All byte counts and offsets are bounded; invalid ranges return errors. Functions that access files, processes, networks, Python, or raw syscalls require the corresponding declared effect and runtime grant.
+The Preview 3 downloads do not yet include `binary.histogram`, `process.heap_candidates`, or `process.pointer_refs_u64`; these are implemented in the current source tree. `check` validates source without running it. The AST interpreter and VM cover more language constructs than the native compiler, so compile and test a program before relying on native delivery. All byte counts and offsets are bounded; invalid ranges return errors. Functions that access files, processes, networks, Python, or raw syscalls require the corresponding declared effect and runtime grant.
 
 Functions are written below without the `std.` prefix for readability: `binary.deep` means `std.binary.deep` after importing `std.binary`. A vertical bar in a table groups related calls; it does not indicate that they all take the same arguments or return the same type.
 
@@ -168,6 +168,7 @@ The decoder provides static instruction observations. Indirect control flow can 
 | `reference`, `resolve`, `advance_ref` | Create, resolve, or move a checked process-region reference. |
 | `snapshot`, `snapshot_u64`, `snapshot_region`, `snapshot_ref`, `snapshot_at`, `snapshot_at_u64` | Capture a bounded process-memory range as a `Source`, by PID/address, region, or reference. |
 | `hunt_region` | Search an accessible region for a bounded byte pattern. |
+| `pointer_refs_u64` | Search a readable region for the little-endian bytes of a `u64` pointer value and return matching region-relative offsets, including unaligned matches. It does not dereference or validate those values. |
 
 Mapping enumeration is not a snapshot of an entire process; regions can change between lookup and read, and permission grants do not override OS access controls.
 

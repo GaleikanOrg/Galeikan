@@ -263,6 +263,15 @@ pub fn hunt_region(
     Ok(hits)
 }
 
+pub fn pointer_refs_u64(
+    region: &Region,
+    target: u64,
+    offset: usize,
+    length: usize,
+) -> Result<Vec<usize>, String> {
+    hunt_region(region, &target.to_le_bytes(), None, offset, length)
+}
+
 /// Paths of executable, image-backed mappings in address order, once per path.
 pub fn modules(pid: u32) -> Result<Vec<String>, String> {
     Ok(module_paths(&images(pid)?))
@@ -999,8 +1008,8 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::{
-        executable, heap_candidates, hunt_region, kind, module_paths, regions, snapshot, thread_ids,
-        writable_regions, Region, MAX_READ, MAX_SCAN,
+        executable, heap_candidates, hunt_region, kind, module_paths, pointer_refs_u64, regions,
+        snapshot, thread_ids, writable_regions, Region, MAX_READ, MAX_SCAN,
     };
 
     #[test]
@@ -1123,6 +1132,29 @@ mod tests {
         )
         .is_err());
         assert!(hunt_region(&region, &[0], None, 0, 10_001).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn pointer_refs_find_unaligned_full_width_values_across_read_chunks() {
+        let mut data = vec![0_u8; MAX_READ + 32];
+        let target = 0xfedc_ba98_7654_3210_u64;
+        data[MAX_READ - 4..MAX_READ + 4].copy_from_slice(&target.to_le_bytes());
+        data[MAX_READ + 16..MAX_READ + 24].copy_from_slice(&target.to_le_bytes());
+        let region = Region {
+            pid: std::process::id(),
+            start: data.as_ptr() as usize,
+            size: data.len(),
+            access: "rw-".into(),
+            label: String::new(),
+            image_backed: false,
+        };
+        assert_eq!(
+            pointer_refs_u64(&region, target, 0, data.len()).unwrap(),
+            [MAX_READ - 4, MAX_READ + 16]
+        );
+        assert!(pointer_refs_u64(&region, target, 0, 0).unwrap().is_empty());
+        assert!(pointer_refs_u64(&region, target, data.len(), 1).is_err());
     }
 
     #[test]

@@ -4211,27 +4211,37 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::Str)
             }
-            ("hunt_region", [_, _, _, _]) => {
-                let expected = [Scalar::Region, Scalar::Bytes, Scalar::Int, Scalar::Int];
+            ("hunt_region" | "pointer_refs_u64", [_, _, _, _]) => {
+                let pointer_refs = name == "pointer_refs_u64";
+                let expected = [
+                    Scalar::Region,
+                    if pointer_refs { Scalar::UInt } else { Scalar::Bytes },
+                    Scalar::Int,
+                    Scalar::Int,
+                ];
                 let mut slots = Vec::with_capacity(4);
                 let mut text_pattern = false;
                 for (index, (argument, kind)) in args.iter().zip(expected).enumerate() {
                     let actual = self.expr(argument, scope)?;
-                    if index == 1 {
+                    if index == 1 && !pointer_refs {
                         if !matches!(actual, Scalar::Bytes | Scalar::Str) {
                             return Err("process.hunt_region pattern must be bytes or str".into());
                         }
                         text_pattern = actual == Scalar::Str;
                     } else if actual != kind {
-                        return Err(
+                        return Err(if pointer_refs {
+                            "process.pointer_refs_u64 expects Region, u64, i64, i64".into()
+                        } else {
                             "process.hunt_region expects Region, bytes or str, i64, i64".into()
-                        );
+                        });
                     }
                     let slot = self.reserve_slot()?;
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     slots.push(slot);
                 }
-                let target = if text_pattern {
+                let target = if pointer_refs {
+                    "gak_native_process_pointer_refs_u64"
+                } else if text_pattern {
                     "gak_native_process_hunt_region_text"
                 } else {
                     "gak_native_process_hunt_region"
