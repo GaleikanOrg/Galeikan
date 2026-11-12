@@ -99,15 +99,32 @@ pub fn repeat(data: &[u8], count: i64) -> Result<Vec<u8>, String> {
 }
 
 pub fn xor(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
+    apply_key(data, key, "xor", |byte, mask| byte ^ mask)
+}
+
+pub fn bit_and(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
+    apply_key(data, key, "bitwise", |byte, mask| byte & mask)
+}
+
+pub fn bit_or(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
+    apply_key(data, key, "bitwise", |byte, mask| byte | mask)
+}
+
+fn apply_key(
+    data: &[u8],
+    key: &[u8],
+    operation: &str,
+    combine: fn(u8, u8) -> u8,
+) -> Result<Vec<u8>, String> {
     if key.is_empty() {
-        return Err("xor key must not be empty".into());
+        return Err(format!("{operation} key must not be empty"));
     }
     bounded(data.len())?;
     bounded(key.len())?;
     Ok(data
         .iter()
         .enumerate()
-        .map(|(index, byte)| byte ^ key[index % key.len()])
+        .map(|(index, byte)| combine(*byte, key[index % key.len()]))
         .collect())
 }
 

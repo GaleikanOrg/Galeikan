@@ -444,6 +444,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_repeat_negative", "repeat count must not be negative"),
     ("gak_repeat_count_limit", "repeat count exceeds 1048576"),
     ("gak_xor_empty_key", "xor key must not be empty"),
+    ("gak_bitwise_empty_key", "bitwise key must not be empty"),
     ("gak_rotate_count", "rotate count must be in 0..7"),
     ("gak_pack_negative", "pack expects a nonnegative value"),
     (
@@ -6937,7 +6938,7 @@ impl Codegen {
                     Ok(Scalar::Int)
                 }
             }
-            ("concat" | "xor", [left, right]) => {
+            ("concat" | "xor" | "bit_and" | "bit_or", [left, right]) => {
                 if self.expr(left, scope)? != Scalar::Bytes {
                     return Err(format!("bytes.{name} expects bytes arguments"));
                 }
@@ -6949,7 +6950,12 @@ impl Codegen {
                 if name == "concat" {
                     writeln!(self.code, "    mov rdx, rax\n    mov rax, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rax]\n    add r10, QWORD PTR [rdx]\n    jc gak_bytes_limit\n    cmp r10, 1048576\n    ja gak_bytes_limit\n    call gak_bytes_concat", slot * 8).unwrap();
                 } else {
-                    writeln!(self.code, "    cmp QWORD PTR [rax], 0\n    je gak_xor_empty_key\n    mov rdx, rax\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_bytes_xor", slot * 8).unwrap();
+                    let empty_key = if name == "xor" {
+                        "gak_xor_empty_key"
+                    } else {
+                        "gak_bitwise_empty_key"
+                    };
+                    writeln!(self.code, "    cmp QWORD PTR [rax], 0\n    je {empty_key}\n    mov rdx, rax\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_bytes_{name}", slot * 8).unwrap();
                 }
                 Ok(Scalar::Bytes)
             }
@@ -8324,7 +8330,7 @@ impl Codegen {
         out.push_str("gak_splice_insert_limit_msg: .ascii \"LimitExceeded: splice insertion exceeds 1048576 bytes\\n\"\ngak_splice_insert_limit_msg_end:\ngak_splice_empty_msg: .ascii \"splice must insert or remove at least one byte\\n\"\ngak_splice_empty_msg_end:\ngak_splice_size_overflow_msg: .ascii \"splice size overflow\\n\"\ngak_splice_size_overflow_msg_end:\ngak_splice_size_limit_msg: .ascii \"LimitExceeded: Source exceeds 536870912 bytes\\n\"\ngak_splice_size_limit_msg_end:\n");
         out.push_str("gak_text_limit_prefix: .ascii \"LimitExceeded: text exceeds \"\ngak_text_limit_prefix_end:\ngak_text_limit_suffix: .ascii \" characters\"\ngak_text_limit_suffix_end:\n");
         out.push_str("gak_source_depth_msg: .ascii \"LimitExceeded: Source derivation depth exceeds 64\\n\"\ngak_source_depth_msg_end:\ngak_source_limit_msg: .ascii \"native Source memory exceeds 64 MiB\\n\"\ngak_source_limit_msg_end:\ngak_source_backing_limit_msg: .ascii \"native Source backing memory exceeds 512 MiB\\n\"\ngak_source_backing_limit_msg_end:\n");
-        out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\n");
+        out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\ngak_bitwise_empty_key_msg: .ascii \"bitwise key must not be empty\\n\"\ngak_bitwise_empty_key_msg_end:\n");
         out.push_str("gak_rotate_count_msg: .ascii \"rotate count must be in 0..7\\n\"\ngak_rotate_count_msg_end:\n");
         out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128\\n\"\ngak_pack_encoding_msg_end:\n");
         for format in [
@@ -9185,15 +9191,17 @@ gak_from_hex_exit:
             out.push_str("    add rsp, 8\n");
         }
         out.push_str("    pop rdi\n    pop rsi\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
-        out.push_str("gak_bytes_xor:\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n");
-        if self.windows {
-            out.push_str("    sub rsp, 32\n");
+        for (name, operation) in [("xor", "xor"), ("bit_and", "and"), ("bit_or", "or")] {
+            writeln!(out, "gak_bytes_{name}:\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15").unwrap();
+            if self.windows {
+                out.push_str("    sub rsp, 32\n");
+            }
+            writeln!(out, "    mov rbx, rax\n    mov r12, rdx\n    mov rax, QWORD PTR [rbx]\n    call gak_alloc_bytes\n    mov r13, rax\n    xor r14d, r14d\n    xor r15d, r15d\ngak_bytes_{name}_loop:\n    cmp r14, QWORD PTR [rbx]\n    jae gak_bytes_{name}_done\n    mov al, BYTE PTR [rbx+r14+8]\n    {operation} al, BYTE PTR [r12+r15+8]\n    mov BYTE PTR [r13+r14+8], al\n    inc r14\n    inc r15\n    cmp r15, QWORD PTR [r12]\n    jb gak_bytes_{name}_loop\n    xor r15d, r15d\n    jmp gak_bytes_{name}_loop\ngak_bytes_{name}_done:\n    mov rax, r13").unwrap();
+            if self.windows {
+                out.push_str("    add rsp, 32\n");
+            }
+            out.push_str("    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
         }
-        out.push_str("    mov rbx, rax\n    mov r12, rdx\n    mov rax, QWORD PTR [rbx]\n    call gak_alloc_bytes\n    mov r13, rax\n    xor r14d, r14d\n    xor r15d, r15d\ngak_bytes_xor_loop:\n    cmp r14, QWORD PTR [rbx]\n    jae gak_bytes_xor_done\n    mov al, BYTE PTR [rbx+r14+8]\n    xor al, BYTE PTR [r12+r15+8]\n    mov BYTE PTR [r13+r14+8], al\n    inc r14\n    inc r15\n    cmp r15, QWORD PTR [r12]\n    jb gak_bytes_xor_loop\n    xor r15d, r15d\n    jmp gak_bytes_xor_loop\ngak_bytes_xor_done:\n    mov rax, r13\n");
-        if self.windows {
-            out.push_str("    add rsp, 32\n");
-        }
-        out.push_str("    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
         out.push_str("gak_bytes_rotate:\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n");
         if self.windows {
             out.push_str("    sub rsp, 32\n");
@@ -9477,6 +9485,7 @@ gak_cli_utf8_done:
             ("gak_repeat_negative", "gak_repeat_negative_msg"),
             ("gak_repeat_count_limit", "gak_repeat_count_limit_msg"),
             ("gak_xor_empty_key", "gak_xor_empty_key_msg"),
+            ("gak_bitwise_empty_key", "gak_bitwise_empty_key_msg"),
             ("gak_rotate_count", "gak_rotate_count_msg"),
             ("gak_pack_negative", "gak_pack_negative_msg"),
             ("gak_pack_encoding", "gak_pack_encoding_msg"),

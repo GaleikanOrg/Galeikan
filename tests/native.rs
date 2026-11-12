@@ -7673,7 +7673,7 @@ fn native_bytes_transforms_match_vm() {
     let s = Sandbox::new();
     let script = s.write(
         "bytes-transforms.gak",
-        "from std.bytes import from_hex, to_hex, concat, repeat, xor, at\nlet left = from_hex(\"00 ff\")\nlet right = from_hex(\"41 42 43\")\nprint to_hex(concat(left, right))\nprint to_hex(repeat(right, 3))\nprint to_hex(repeat(left, 0))\nprint to_hex(repeat(from_hex(\"\"), 1048576))\nprint to_hex(xor(right, from_hex(\"ff 0f\")))\nprint to_hex(xor(left, from_hex(\"01\")))\nprint at(repeat(from_hex(\"7f\"), 1048576), 1048575)\n",
+        "from std.bytes import from_hex, to_hex, concat, repeat, xor, bit_and, bit_or, at\nlet left = from_hex(\"00 ff\")\nlet right = from_hex(\"41 42 43\")\nprint to_hex(concat(left, right))\nprint to_hex(repeat(right, 3))\nprint to_hex(repeat(left, 0))\nprint to_hex(repeat(from_hex(\"\"), 1048576))\nprint to_hex(xor(right, from_hex(\"ff 0f\")))\nprint to_hex(xor(left, from_hex(\"01\")))\nprint to_hex(bit_and(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_or(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_and(from_hex(\"\"), from_hex(\"01\")))\nprint at(repeat(from_hex(\"7f\"), 1048576), 1048575)\n",
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("run")
@@ -7702,7 +7702,7 @@ fn native_bytes_transforms_match_vm() {
     assert_eq!(native.stdout, vm.stdout);
     assert_eq!(
         native.stdout,
-        b"00ff414243\n414243414243414243\n\n\nbe4dbc\n01fe\n127\n"
+        b"00ff414243\n414243414243414243\n\n\nbe4dbc\n01fe\n410243\nff4fff\n\n127\n"
     );
 }
 
@@ -7717,10 +7717,12 @@ fn native_bytes_transform_errors_match_vm() {
         ("repeat-count.gak", "repeat(from_hex(\"\"), 1048577)"),
         ("repeat-size.gak", "repeat(from_hex(\"00 01\"), 524289)"),
         ("xor-empty.gak", "xor(from_hex(\"00\"), from_hex(\"\"))"),
+        ("and-empty.gak", "bit_and(from_hex(\"00\"), from_hex(\"\"))"),
+        ("or-empty.gak", "bit_or(from_hex(\"00\"), from_hex(\"\"))"),
         ("rotate-negative.gak", "rotate_left(from_hex(\"81\"), -1)"),
         ("rotate-large.gak", "rotate_right(from_hex(\"81\"), 8)"),
     ] {
-        let source = format!("from std.bytes import from_hex, repeat, xor, rotate_left, rotate_right\nprint {expression}\n");
+        let source = format!("from std.bytes import from_hex, repeat, xor, bit_and, bit_or, rotate_left, rotate_right\nprint {expression}\n");
         let script = s.write(name, &source);
         let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("run")

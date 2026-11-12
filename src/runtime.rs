@@ -4991,6 +4991,12 @@ impl Runtime {
             ("xor", [Value::Bytes(data), Value::Bytes(key)]) => {
                 Ok(Value::Bytes(Arc::new(bytes::xor(data, key)?)))
             }
+            ("bit_and", [Value::Bytes(data), Value::Bytes(key)]) => {
+                Ok(Value::Bytes(Arc::new(bytes::bit_and(data, key)?)))
+            }
+            ("bit_or", [Value::Bytes(data), Value::Bytes(key)]) => {
+                Ok(Value::Bytes(Arc::new(bytes::bit_or(data, key)?)))
+            }
             ("rotate_left", [Value::Bytes(data), count]) => Ok(Value::Bytes(Arc::new(
                 bytes::rotate_left(data, count.as_int()?)?,
             ))),
@@ -8948,7 +8954,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "from_hex") => (&[Str], Bytes),
         ("bytes", "pack") => (&[Type::Any, Str], Bytes),
         ("bytes", "to_hex") => (&[Bytes], Str),
-        ("bytes", "concat" | "xor") => (&[Bytes, Bytes], Bytes),
+        ("bytes", "concat" | "xor" | "bit_and" | "bit_or") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
         ("bytes", "rotate_left" | "rotate_right") => (&[Bytes, Int], Bytes),
         ("bytes", "at") => (&[Bytes, Int], Int),
