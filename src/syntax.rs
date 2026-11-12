@@ -678,6 +678,7 @@ fn lower_standard_calls(tokens: &mut [Token]) -> BTreeSet<String> {
                     | "cli"
                     | "net"
                     | "process"
+                    | "syscall"
                     | "result"
                     | "audit"
                     | "iter"
