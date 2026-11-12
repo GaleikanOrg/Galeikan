@@ -210,6 +210,77 @@ fn pointer_refs_across_regions_match_all_execution_modes() {
 }
 
 #[test]
+fn pattern_search_across_regions_matches_all_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_scattered_pointer_refs() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let address = helper.address;
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-pattern-regions-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pattern-regions.gaks");
+    fs::write(&script, format!(r#"requires {{ process.inspect }}
+import std.process
+from std.result import is_error
+fn invalid_pattern(maps: Regions) -> Result<List<u64>> = process.hunt_regions(maps, hex"", 4096, 0)
+fn invalid_limit(maps: Regions) -> Result<List<u64>> = process.hunt_regions(maps, hex"ef", 4096, 16777217)
+let maps = process.heap_candidates({pid})
+let hits = process.hunt_regions(maps, hex"ef cd ab 89 67 45 23 01", 4096, 16777216)
+let masked = process.hunt_regions(maps, "hex:ef cd ?? 89 67 45 23 01", 4096, 16777216)
+var first = false
+var second = false
+for hit in hits {{
+    if hit == {address}u64 + 8u64 {{
+        first = true
+    }}
+    if hit == {address}u64 + 8224u64 {{
+        second = true
+    }}
+}}
+print first
+print second
+print len(masked) >= 2
+print len(process.hunt_regions(maps, hex"ef", 0, 16777216)) == 0
+print len(process.hunt_regions(maps, hex"ef", 4096, 0)) == 0
+print is_error(invalid_pattern(maps))
+print is_error(invalid_limit(maps))
+"#)).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let undeclared = root.join("undeclared.gaks");
+    fs::write(&undeclared, "import std.process\nfn hunt(maps: Regions) -> List<u64> = process.hunt_regions(maps, hex\"ef\", 8, 8)\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pointer_chain_is_bounded_and_matches_all_execution_modes() {
     let Some(helper) = MemoryChild::spawn_pointer_chain() else {
         return;

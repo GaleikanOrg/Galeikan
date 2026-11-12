@@ -1922,67 +1922,22 @@ uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
     return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
 }
 
+static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
+                                                   const uint8_t *pattern,
+                                                   const uint8_t *masks,
+                                                   int64_t per_region,
+                                                   int64_t total);
+
 uint64_t *gak_native_process_pointer_refs_regions_u64(GakRegions *regions,
                                                        uint64_t target,
                                                        int64_t per_region,
                                                        int64_t total) {
-    gak_file_error = NULL;
-    if (!regions) { gak_failf("invalid process regions"); return NULL; }
-    if (per_region < 0) { gak_failf("per-region scan length out of range"); return NULL; }
-    if (total < 0) { gak_failf("total scan length out of range"); return NULL; }
-    if (per_region > GAK_MAX_SCAN || total > GAK_MAX_SCAN) {
-        gak_failf("process scan length exceeds 16777216 bytes");
-        return NULL;
-    }
-    const size_t capacity = GAK_MAX_SCAN_HITS + 1;
-    if (!gak_account_metadata(capacity * sizeof(uint64_t))) {
-        gak_failf("native metadata memory exceeds 64 MiB");
-        return NULL;
-    }
-    uint64_t *result = malloc(capacity * sizeof(uint64_t));
-    if (!result) { gak_failf("native allocation failed"); return NULL; }
-    uint64_t found = 0;
-    uint64_t remaining = (uint64_t)total;
-    uint64_t pid = 0;
-    for (uint64_t index = 0; index < regions->count; index++) {
-        GakRegion *region = regions->items[index];
-        if (index && region->pid != pid) {
-            gak_failf("process regions contain multiple pids");
-            goto failed;
-        }
-        pid = region->pid;
-        if (!gak_process_allowed((uint32_t)pid)) {
-            gak_failf("process access not allowed: %llu", (unsigned long long)pid);
-            goto failed;
-        }
-        if (!remaining || !per_region) break;
-        if (region->access[8] != 'r') continue;
-        uint64_t length = region->size;
-        if (length > (uint64_t)per_region) length = (uint64_t)per_region;
-        if (length > remaining) length = remaining;
-        uint64_t *hits = gak_native_process_pointer_refs_u64(region, target, 0, (int64_t)length);
-        if (!hits) goto failed;
-        for (uint64_t hit = 0; hit < hits[0]; hit++) {
-            if (found == GAK_MAX_SCAN_HITS) {
-                free(hits);
-                gak_failf("process search exceeds 10000 matches");
-                goto failed;
-            }
-            if (region->start > UINT64_MAX - hits[hit + 1]) {
-                free(hits);
-                gak_failf("process region address overflow");
-                goto failed;
-            }
-            result[++found] = region->start + hits[hit + 1];
-        }
-        free(hits);
-        remaining -= length;
-    }
-    result[0] = found;
-    return result;
-failed:
-    free(result);
-    return NULL;
+    uint8_t pattern[16];
+    const uint64_t width = 8;
+    memcpy(pattern, &width, sizeof(width));
+    for (unsigned index = 0; index < 8; index++)
+        pattern[8 + index] = (uint8_t)(target >> (index * 8));
+    return gak_process_hunt_regions_pattern(regions, pattern, NULL, per_region, total);
 }
 
 uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) {
@@ -2091,17 +2046,17 @@ uint64_t *gak_native_process_pointer_path_u64(GakRegions *regions,
     return gak_process_pointer_path_u64(regions, address, offsets + 1, (size_t)offsets[0]);
 }
 
-uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
-                                              const uint8_t *pattern,
-                                              int64_t offset, int64_t length) {
-    gak_file_error = NULL;
-    if (!pattern) { gak_failf("invalid process search arguments"); return NULL; }
+static int gak_process_decode_hunt_text(const uint8_t *pattern,
+                                        uint8_t boxed[8 + GAK_MAX_SCAN_PATTERN],
+                                        uint8_t masks[GAK_MAX_SCAN_PATTERN],
+                                        const uint8_t **decoded,
+                                        const uint8_t **decoded_masks) {
+    if (!pattern) { gak_failf("invalid process search arguments"); return 0; }
     uint64_t text_length;
     memcpy(&text_length, pattern, sizeof(text_length));
-    if (text_length < 4 || memcmp(pattern + 8, "hex:", 4) != 0)
-        return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
-    uint8_t boxed[8 + GAK_MAX_SCAN_PATTERN];
-    uint8_t masks[GAK_MAX_SCAN_PATTERN];
+    *decoded = pattern;
+    *decoded_masks = NULL;
+    if (text_length < 4 || memcmp(pattern + 8, "hex:", 4) != 0) return 1;
     uint64_t width = 0;
     int high = -1, high_mask = 0;
     for (uint64_t index = 4; index < text_length; index++) {
@@ -2113,12 +2068,12 @@ uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
         else if (ch >= '0' && ch <= '9') { nibble = ch - '0'; nibble_mask = 15; }
         else if (ch >= 'a' && ch <= 'f') { nibble = ch - 'a' + 10; nibble_mask = 15; }
         else if (ch >= 'A' && ch <= 'F') { nibble = ch - 'A' + 10; nibble_mask = 15; }
-        else { gak_failf("invalid hex pattern"); return NULL; }
+        else { gak_failf("invalid hex pattern"); return 0; }
         if (high < 0) { high = nibble; high_mask = nibble_mask; }
         else {
             if (width == GAK_MAX_SCAN_PATTERN) {
                 gak_failf("process search pattern must contain 1..4096 bytes");
-                return NULL;
+                return 0;
             }
             boxed[8 + width] = (uint8_t)((high << 4) | nibble);
             masks[width] = (uint8_t)((high_mask << 4) | nibble_mask);
@@ -2126,9 +2081,117 @@ uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
             high = -1;
         }
     }
-    if (high >= 0) { gak_failf("hex pattern needs an even number of nibbles"); return NULL; }
+    if (high >= 0) { gak_failf("hex pattern needs an even number of nibbles"); return 0; }
     memcpy(boxed, &width, sizeof(width));
-    return gak_process_hunt_region_pattern(region, boxed, masks, offset, length);
+    *decoded = boxed;
+    *decoded_masks = masks;
+    return 1;
+}
+
+uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
+                                              const uint8_t *pattern,
+                                              int64_t offset, int64_t length) {
+    gak_file_error = NULL;
+    uint8_t boxed[8 + GAK_MAX_SCAN_PATTERN];
+    uint8_t masks[GAK_MAX_SCAN_PATTERN];
+    const uint8_t *decoded, *decoded_masks;
+    if (!gak_process_decode_hunt_text(pattern, boxed, masks, &decoded, &decoded_masks))
+        return NULL;
+    return gak_process_hunt_region_pattern(region, decoded, decoded_masks, offset, length);
+}
+
+static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
+                                                   const uint8_t *pattern,
+                                                   const uint8_t *masks,
+                                                   int64_t per_region,
+                                                   int64_t total) {
+    gak_file_error = NULL;
+    if (!regions || !pattern) { gak_failf("invalid process search arguments"); return NULL; }
+    uint64_t width;
+    memcpy(&width, pattern, sizeof(width));
+    if (!width || width > GAK_MAX_SCAN_PATTERN) {
+        gak_failf("process search pattern must contain 1..4096 bytes");
+        return NULL;
+    }
+    if (masks && width > 64) {
+        for (uint64_t index = 0; index < width; index++) {
+            if (masks[index] != 0xff) {
+                gak_failf("invalid masked process search pattern");
+                return NULL;
+            }
+        }
+    }
+    if (per_region < 0) { gak_failf("per-region scan length out of range"); return NULL; }
+    if (total < 0) { gak_failf("total scan length out of range"); return NULL; }
+    if (per_region > GAK_MAX_SCAN || total > GAK_MAX_SCAN) {
+        gak_failf("process scan length exceeds 16777216 bytes");
+        return NULL;
+    }
+    const size_t capacity = GAK_MAX_SCAN_HITS + 1;
+    if (!gak_account_metadata(capacity * sizeof(uint64_t))) {
+        gak_failf("native metadata memory exceeds 64 MiB");
+        return NULL;
+    }
+    uint64_t *result = malloc(capacity * sizeof(uint64_t));
+    if (!result) { gak_failf("native allocation failed"); return NULL; }
+    uint64_t found = 0, remaining = (uint64_t)total, pid = 0;
+    for (uint64_t index = 0; index < regions->count; index++) {
+        GakRegion *region = regions->items[index];
+        if (index && region->pid != pid) {
+            gak_failf("process regions contain multiple pids");
+            goto failed;
+        }
+        pid = region->pid;
+        if (!gak_process_allowed((uint32_t)pid)) {
+            gak_failf("process access not allowed: %llu", (unsigned long long)pid);
+            goto failed;
+        }
+        if (!remaining || !per_region) break;
+        if (region->access[8] != 'r') continue;
+        uint64_t length = region->size;
+        if (length > (uint64_t)per_region) length = (uint64_t)per_region;
+        if (length > remaining) length = remaining;
+        uint64_t *hits = gak_process_hunt_region_pattern(region, pattern, masks, 0, (int64_t)length);
+        if (!hits) goto failed;
+        for (uint64_t hit = 0; hit < hits[0]; hit++) {
+            if (found == GAK_MAX_SCAN_HITS) {
+                free(hits);
+                gak_failf("process search exceeds 10000 matches");
+                goto failed;
+            }
+            if (region->start > UINT64_MAX - hits[hit + 1]) {
+                free(hits);
+                gak_failf("process region address overflow");
+                goto failed;
+            }
+            result[++found] = region->start + hits[hit + 1];
+        }
+        free(hits);
+        remaining -= length;
+    }
+    result[0] = found;
+    return result;
+failed:
+    free(result);
+    return NULL;
+}
+
+uint64_t *gak_native_process_hunt_regions(GakRegions *regions,
+                                          const uint8_t *pattern,
+                                          int64_t per_region, int64_t total) {
+    return gak_process_hunt_regions_pattern(regions, pattern, NULL, per_region, total);
+}
+
+uint64_t *gak_native_process_hunt_regions_text(GakRegions *regions,
+                                               const uint8_t *pattern,
+                                               int64_t per_region, int64_t total) {
+    gak_file_error = NULL;
+    uint8_t boxed[8 + GAK_MAX_SCAN_PATTERN];
+    uint8_t masks[GAK_MAX_SCAN_PATTERN];
+    const uint8_t *decoded, *decoded_masks;
+    if (!gak_process_decode_hunt_text(pattern, boxed, masks, &decoded, &decoded_masks))
+        return NULL;
+    return gak_process_hunt_regions_pattern(regions, decoded, decoded_masks, per_region, total);
 }
 
 GakFileResult *gak_native_process_snapshot_at(GakRegions *regions,

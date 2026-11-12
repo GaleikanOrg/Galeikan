@@ -4363,6 +4363,7 @@ impl Runtime {
                             | "snapshot_at"
                             | "snapshot_at_u64"
                             | "hunt_region"
+                            | "hunt_regions"
                             | "pointer_refs_u64"
                             | "read_pointer_u64"
                             | "pointer_chain_u64"
@@ -5781,15 +5782,7 @@ impl Runtime {
                 if !self.allowed_processes.contains(&region.pid) {
                     return Err(format!("process access not allowed: {}", region.pid));
                 }
-                let (needle, masks): (Cow<'_, [u8]>, Option<Vec<u8>>) = match pattern {
-                    Value::Bytes(bytes) => (Cow::Borrowed(bytes), None),
-                    Value::Str(text) if text.starts_with("hex:") => {
-                        let (needle, masks) = parse_hunt_hex(&text[4..])?;
-                        (Cow::Owned(needle), Some(masks))
-                    }
-                    Value::Str(text) => (Cow::Borrowed(text.as_bytes()), None),
-                    _ => return Err("process.hunt_region pattern must be bytes or str".into()),
-                };
+                let (needle, masks) = process_hunt_pattern(pattern, name)?;
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "region offset out of range")?;
                 let length = usize::try_from(length.as_int()?)
@@ -5797,6 +5790,59 @@ impl Runtime {
                 Ok(Value::Offsets(process::hunt_region(
                     region, &needle, masks.as_deref(), offset, length,
                 )?))
+            }
+            ("hunt_regions", [Value::Regions(regions), pattern, per_region, total]) => {
+                self.check_effect(module, "process.inspect")?;
+                let (needle, masks) = process_hunt_pattern(pattern, name)?;
+                let per_region = usize::try_from(per_region.as_int()?)
+                    .map_err(|_| "per-region scan length out of range")?;
+                let total = usize::try_from(total.as_int()?)
+                    .map_err(|_| "total scan length out of range")?;
+                if per_region > process::MAX_SCAN || total > process::MAX_SCAN {
+                    return Err(format!(
+                        "process scan length exceeds {} bytes",
+                        process::MAX_SCAN
+                    ));
+                }
+                let mut remaining = total;
+                let mut pid = None;
+                let mut addresses = Vec::new();
+                for region in regions.iter() {
+                    if pid.is_some_and(|pid| pid != region.pid) {
+                        return Err("process regions contain multiple pids".into());
+                    }
+                    pid = Some(region.pid);
+                    if !self.allowed_processes.contains(&region.pid) {
+                        return Err(format!("process access not allowed: {}", region.pid));
+                    }
+                    if remaining == 0 || per_region == 0 {
+                        break;
+                    }
+                    if !region.access.starts_with('r') {
+                        continue;
+                    }
+                    let length = region.size.min(per_region).min(remaining);
+                    for offset in
+                        process::hunt_region(region, &needle, masks.as_deref(), 0, length)?
+                    {
+                        let address = region
+                            .start
+                            .checked_add(offset)
+                            .ok_or("process region address overflow")?;
+                        addresses.push(Value::UInt(
+                            u64::try_from(address)
+                                .map_err(|_| "process address outside u64 range")?,
+                        ));
+                        if addresses.len() > process::MAX_SCAN_HITS {
+                            return Err(format!(
+                                "process search exceeds {} matches",
+                                process::MAX_SCAN_HITS
+                            ));
+                        }
+                    }
+                    remaining -= length;
+                }
+                make_list(addresses)
             }
             ("pointer_refs_u64", [Value::Region(region), target, offset, length]) => {
                 self.check_effect(module, "process.inspect")?;
@@ -9126,6 +9172,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "image_backed") => (&[Region], Type::Bool),
         ("process", "snapshot_region") => (&[Region, Int, Int], Source),
         ("process", "hunt_region") => (&[Region, Type::Any, Int, Int], Offsets),
+        ("process", "hunt_regions") => (
+            &[Regions, Type::Any, Int, Int],
+            Type::List(Some(ResultKind::UInt)),
+        ),
         ("process", "pointer_refs_u64") => (&[Region, UInt, Int, Int], Offsets),
         ("process", "pointer_refs_regions_u64") => (&[Regions, UInt, Int, Int], Type::List(Some(ResultKind::UInt))),
         ("process", "read_pointer_u64") => (&[Region, Int], UInt),
@@ -9139,7 +9189,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
     check_arguments(&qualified, args, expected)?;
     match (module, name) {
         ("binary" | "audit", "hunt")
-        | ("process", "hunt_region")
+        | ("process", "hunt_region" | "hunt_regions")
         | ("net", "exchange" | "datagram" | "request") => {
             let index = if module == "net" { 2 } else { 1 };
             let index = if name == "request" { 3 } else { index };
@@ -9340,6 +9390,35 @@ struct SearchResult {
     width: usize,
     kind: &'static str,
     sha256: String,
+}
+
+type ProcessHuntPattern<'a> = (Cow<'a, [u8]>, Option<Vec<u8>>);
+
+fn process_hunt_pattern<'a>(
+    pattern: &'a Value,
+    name: &str,
+) -> Result<ProcessHuntPattern<'a>, String> {
+    let (needle, masks): ProcessHuntPattern<'a> = match pattern {
+        Value::Bytes(bytes) => (Cow::Borrowed(&bytes[..]), None),
+        Value::Str(text) if text.starts_with("hex:") => {
+            let (needle, masks) = parse_hunt_hex(&text[4..])?;
+            (Cow::Owned(needle), Some(masks))
+        }
+        Value::Str(text) => (Cow::Borrowed(text.as_bytes()), None),
+        _ => return Err(format!("process.{name} pattern must be bytes or str")),
+    };
+    if needle.is_empty() || needle.len() > process::MAX_SCAN_PATTERN {
+        return Err(format!(
+            "process search pattern must contain 1..{} bytes",
+            process::MAX_SCAN_PATTERN
+        ));
+    }
+    if masks.as_ref().is_some_and(|masks| masks.iter().any(|mask| *mask != 0xff))
+        && needle.len() > 64
+    {
+        return Err("invalid masked process search pattern".into());
+    }
+    Ok((needle, masks))
 }
 
 fn search_pattern(
