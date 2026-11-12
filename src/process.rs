@@ -272,6 +272,19 @@ pub fn pointer_refs_u64(
     hunt_region(region, &target.to_le_bytes(), None, offset, length)
 }
 
+pub fn read_pointer_u64(region: &Region, offset: usize) -> Result<u64, String> {
+    if !region.access.starts_with('r') {
+        return Err("region is not marked readable".into());
+    }
+    if offset > region.size || region.size - offset < 8 {
+        return Err("snapshot exceeds region boundaries".into());
+    }
+    let address = region.address_of(offset)?;
+    let bytes = snapshot(region.pid, address, 8)?;
+    let bytes: [u8; 8] = bytes.try_into().map_err(|_| "short process read")?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
 /// Paths of executable, image-backed mappings in address order, once per path.
 pub fn modules(pid: u32) -> Result<Vec<String>, String> {
     Ok(module_paths(&images(pid)?))
@@ -1008,8 +1021,8 @@ fn read_memory(_pid: u32, _address: usize, _length: usize) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::{
-        executable, heap_candidates, hunt_region, kind, module_paths, pointer_refs_u64, regions,
-        snapshot, thread_ids, writable_regions, Region, MAX_READ, MAX_SCAN,
+        executable, heap_candidates, hunt_region, kind, module_paths, pointer_refs_u64,
+        read_pointer_u64, regions, snapshot, thread_ids, writable_regions, Region, MAX_READ, MAX_SCAN,
     };
 
     #[test]
@@ -1155,6 +1168,9 @@ mod tests {
         );
         assert!(pointer_refs_u64(&region, target, 0, 0).unwrap().is_empty());
         assert!(pointer_refs_u64(&region, target, data.len(), 1).is_err());
+        assert_eq!(read_pointer_u64(&region, MAX_READ - 4).unwrap(), target);
+        assert!(read_pointer_u64(&region, data.len() - 7).is_err());
+        assert!(read_pointer_u64(&Region { access: "---".into(), ..region }, 0).is_err());
     }
 
     #[test]

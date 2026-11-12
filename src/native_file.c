@@ -1922,6 +1922,19 @@ uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
     return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length);
 }
 
+uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) {
+    GakFileResult *source = gak_native_process_snapshot_region(region, offset, 8);
+    if (!source) return 0;
+    uint64_t value = 0;
+    for (unsigned index = 0; index < 8; index++)
+        value |= (uint64_t)source->backing[8 + index] << (index * 8);
+    free(source->backing);
+    free(source->label);
+    free(source->origin);
+    free(source);
+    return value;
+}
+
 uint64_t *gak_native_process_hunt_region_text(GakRegion *region,
                                               const uint8_t *pattern,
                                               int64_t offset, int64_t length) {

@@ -4211,6 +4211,20 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::Str)
             }
+            ("read_pointer_u64", [region, offset]) => {
+                if self.expr(region, scope)? != Scalar::Region {
+                    return Err("process.read_pointer_u64 expects Region, i64".into());
+                }
+                let region_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", region_slot * 8).unwrap();
+                if self.expr(offset, scope)? != Scalar::Int {
+                    return Err("process.read_pointer_u64 expects Region, i64".into());
+                }
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_process_read_pointer_u64\n    mov r10, QWORD PTR [rip+gak_file_error]\n    test r10, r10\n    jz {ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), region_slot * 8, self.arg1()).unwrap();
+                self.uses_process = true;
+                Ok(Scalar::UInt)
+            }
             ("hunt_region" | "pointer_refs_u64", [_, _, _, _]) => {
                 let pointer_refs = name == "pointer_refs_u64";
                 let expected = [

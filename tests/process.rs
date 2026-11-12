@@ -46,6 +46,7 @@ address = ctypes.addressof(data)
 pointer = address.to_bytes(8, 'little')
 ctypes.memmove(address + 1048576 - 4, pointer, 8)
 ctypes.memmove(address + 1048576 + 16, pointer, 8)
+ctypes.memmove(address + 1048576 + 24, b'\xff' * 8, 8)
 if sys.platform.startswith('linux'):
     libc = ctypes.CDLL(None)
     libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
@@ -117,8 +118,9 @@ fn pointer_refs_find_live_cross_chunk_values_in_all_execution_modes() {
     fs::create_dir_all(&root).unwrap();
     let script = root.join("pointer-refs.gaks");
     fs::write(&script, format!(
-        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(region: Region, target: u64, offset: i64) -> Result<Offsets> = process.pointer_refs_u64(region, target, offset, -1)\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nlet offset = process.offset_u64(region, {}u64)\nlet hits = process.pointer_refs_u64(region, {}u64, offset, 1048608)\nprint len(hits) == 2\nprint hits[0] - offset == 1048572\nprint hits[1] - offset == 1048592\nprint len(process.pointer_refs_u64(region, {}u64, offset, 0)) == 0\nprint is_error(bad(region, {}u64, offset))\n",
-        helper.address, helper.address, helper.address, helper.address, helper.address
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(region: Region, target: u64, offset: i64) -> Result<Offsets> = process.pointer_refs_u64(region, target, offset, -1)\nfn bad_read(region: Region) -> Result<u64> = process.read_pointer_u64(region, -1)\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nlet offset = process.offset_u64(region, {}u64)\nlet hits = process.pointer_refs_u64(region, {}u64, offset, 1048608)\nprint len(hits) == 2\nprint hits[0] - offset == 1048572\nprint hits[1] - offset == 1048592\nprint len(process.pointer_refs_u64(region, {}u64, offset, 0)) == 0\nprint is_error(bad(region, {}u64, offset))\nprint process.read_pointer_u64(region, offset + 1048572) == {}u64\nprint process.read_pointer_u64(region, offset + 1048592) == {}u64\nprint process.read_pointer_u64(region, offset + 1048600) == 18446744073709551615u64\nprint is_error(bad_read(region))\n",
+        helper.address, helper.address, helper.address, helper.address, helper.address,
+        helper.address, helper.address
     )).unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     let undeclared = root.join("undeclared.gaks");
@@ -126,7 +128,12 @@ fn pointer_refs_find_live_cross_chunk_values_in_all_execution_modes() {
     let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
     assert!(!check.status.success());
     assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\n";
+    let undeclared_read = root.join("undeclared-read.gaks");
+    fs::write(&undeclared_read, "import std.process\nfn read(region: Region) -> u64 = process.read_pointer_u64(region, 0)\n").unwrap();
+    let check = Command::new(galeikan).arg("check").arg(&undeclared_read).output().unwrap();
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
