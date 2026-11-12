@@ -7717,8 +7717,10 @@ fn native_bytes_transform_errors_match_vm() {
         ("repeat-count.gak", "repeat(from_hex(\"\"), 1048577)"),
         ("repeat-size.gak", "repeat(from_hex(\"00 01\"), 524289)"),
         ("xor-empty.gak", "xor(from_hex(\"00\"), from_hex(\"\"))"),
+        ("rotate-negative.gak", "rotate_left(from_hex(\"81\"), -1)"),
+        ("rotate-large.gak", "rotate_right(from_hex(\"81\"), 8)"),
     ] {
-        let source = format!("from std.bytes import from_hex, repeat, xor\nprint {expression}\n");
+        let source = format!("from std.bytes import from_hex, repeat, xor, rotate_left, rotate_right\nprint {expression}\n");
         let script = s.write(name, &source);
         let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("run")
@@ -7738,6 +7740,44 @@ fn native_bytes_transform_errors_match_vm() {
         assert!(!native.status.success());
         assert_eq!(native.stdout, vm.stdout, "{name}");
         assert_eq!(native.stderr, vm.stderr, "{name}");
+    }
+}
+
+#[test]
+fn byte_rotations_match_ast_vm_bundle_and_native() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "byte-rotations.gak",
+        "from std.bytes import from_hex, to_hex, rotate_left, rotate_right\nfrom std.result import is_error\nfn invalid_negative(data: bytes) -> Result<bytes> = rotate_left(data, -1)\nfn invalid_large(data: bytes) -> Result<bytes> = rotate_right(data, 8)\nlet data = from_hex(\"81 0f 00 ff\")\nprint to_hex(rotate_left(data, 1))\nprint to_hex(rotate_right(data, 1))\nprint to_hex(rotate_right(rotate_left(data, 7), 7))\nprint to_hex(rotate_left(from_hex(\"\"), 0))\nprint is_error(invalid_negative(data))\nprint is_error(invalid_large(data))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"031e00ff\nc08700ff\n810f00ff\n\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
     }
 }
 

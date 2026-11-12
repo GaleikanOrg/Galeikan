@@ -4990,6 +4990,12 @@ impl Runtime {
             ("xor", [Value::Bytes(data), Value::Bytes(key)]) => {
                 Ok(Value::Bytes(Arc::new(bytes::xor(data, key)?)))
             }
+            ("rotate_left", [Value::Bytes(data), count]) => Ok(Value::Bytes(Arc::new(
+                bytes::rotate_left(data, count.as_int()?)?,
+            ))),
+            ("rotate_right", [Value::Bytes(data), count]) => Ok(Value::Bytes(Arc::new(
+                bytes::rotate_right(data, count.as_int()?)?,
+            ))),
             ("find", [Value::Bytes(data), Value::Bytes(needle)]) => {
                 Ok(Value::Int(bytes::find(data, needle)?))
             }
@@ -8898,6 +8904,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "to_hex") => (&[Bytes], Str),
         ("bytes", "concat" | "xor") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
+        ("bytes", "rotate_left" | "rotate_right") => (&[Bytes, Int], Bytes),
         ("bytes", "at") => (&[Bytes, Int], Int),
         ("bytes", "find") => (&[Bytes, Bytes], Int),
         ("bytes", "contains") => (&[Bytes, Bytes], Bool),

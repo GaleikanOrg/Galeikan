@@ -444,6 +444,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_repeat_negative", "repeat count must not be negative"),
     ("gak_repeat_count_limit", "repeat count exceeds 1048576"),
     ("gak_xor_empty_key", "xor key must not be empty"),
+    ("gak_rotate_count", "rotate count must be in 0..7"),
     ("gak_pack_negative", "pack expects a nonnegative value"),
     (
         "gak_pack_encoding",
@@ -6917,6 +6918,24 @@ impl Codegen {
                 }
                 Ok(Scalar::Bytes)
             }
+            ("rotate_left" | "rotate_right", [data, count]) => {
+                if self.expr(data, scope)? != Scalar::Bytes {
+                    return Err(format!("bytes.{name} expects bytes and i64"));
+                }
+                let slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                if self.expr(count, scope)? != Scalar::Int {
+                    return Err(format!("bytes.{name} expects bytes and i64"));
+                }
+                writeln!(
+                    self.code,
+                    "    cmp rax, 7\n    ja gak_rotate_count\n    mov rdx, rax\n    mov rax, QWORD PTR [rbp-{}]\n    mov r10d, {}\n    call gak_bytes_rotate",
+                    slot * 8,
+                    u8::from(name == "rotate_right")
+                )
+                .unwrap();
+                Ok(Scalar::Bytes)
+            }
             ("repeat", [data, count]) => {
                 if self.expr(data, scope)? != Scalar::Bytes {
                     return Err("bytes.repeat expects bytes and i64".into());
@@ -8271,6 +8290,7 @@ impl Codegen {
         out.push_str("gak_text_limit_prefix: .ascii \"LimitExceeded: text exceeds \"\ngak_text_limit_prefix_end:\ngak_text_limit_suffix: .ascii \" characters\"\ngak_text_limit_suffix_end:\n");
         out.push_str("gak_source_depth_msg: .ascii \"LimitExceeded: Source derivation depth exceeds 64\\n\"\ngak_source_depth_msg_end:\ngak_source_limit_msg: .ascii \"native Source memory exceeds 64 MiB\\n\"\ngak_source_limit_msg_end:\ngak_source_backing_limit_msg: .ascii \"native Source backing memory exceeds 512 MiB\\n\"\ngak_source_backing_limit_msg_end:\n");
         out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\n");
+        out.push_str("gak_rotate_count_msg: .ascii \"rotate count must be in 0..7\\n\"\ngak_rotate_count_msg_end:\n");
         out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128\\n\"\ngak_pack_encoding_msg_end:\n");
         for format in [
             "u8", "u16le", "u16be", "u32le", "u32be", "i8", "i16le", "i16be", "i32le", "i32be",
@@ -9139,6 +9159,15 @@ gak_from_hex_exit:
             out.push_str("    add rsp, 32\n");
         }
         out.push_str("    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+        out.push_str("gak_bytes_rotate:\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n");
+        if self.windows {
+            out.push_str("    sub rsp, 32\n");
+        }
+        out.push_str("    mov rbx, rax\n    mov r12, rdx\n    mov r15d, r10d\n    mov rax, QWORD PTR [rbx]\n    call gak_alloc_bytes\n    mov r13, rax\n    xor r14d, r14d\ngak_bytes_rotate_loop:\n    cmp r14, QWORD PTR [rbx]\n    jae gak_bytes_rotate_done\n    mov al, BYTE PTR [rbx+r14+8]\n    mov cl, r12b\n    test r15d, r15d\n    jnz gak_bytes_rotate_right\n    rol al, cl\n    jmp gak_bytes_rotate_store\ngak_bytes_rotate_right:\n    ror al, cl\ngak_bytes_rotate_store:\n    mov BYTE PTR [r13+r14+8], al\n    inc r14\n    jmp gak_bytes_rotate_loop\ngak_bytes_rotate_done:\n    mov rax, r13\n");
+        if self.windows {
+            out.push_str("    add rsp, 32\n");
+        }
+        out.push_str("    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
         out.push_str("gak_check_result_message:\n    push rbx\n");
         if self.windows {
             out.push_str("    sub rsp, 32\n");
@@ -9413,6 +9442,7 @@ gak_cli_utf8_done:
             ("gak_repeat_negative", "gak_repeat_negative_msg"),
             ("gak_repeat_count_limit", "gak_repeat_count_limit_msg"),
             ("gak_xor_empty_key", "gak_xor_empty_key_msg"),
+            ("gak_rotate_count", "gak_rotate_count_msg"),
             ("gak_pack_negative", "gak_pack_negative_msg"),
             ("gak_pack_encoding", "gak_pack_encoding_msg"),
             ("gak_pack_range_u8", "gak_pack_range_u8_msg"),

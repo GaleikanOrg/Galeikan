@@ -111,6 +111,24 @@ pub fn xor(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
         .collect())
 }
 
+pub fn rotate_left(data: &[u8], count: i64) -> Result<Vec<u8>, String> {
+    let count = u32::try_from(count)
+        .ok()
+        .filter(|count| *count < 8)
+        .ok_or("rotate count must be in 0..7")?;
+    bounded(data.len())?;
+    Ok(data.iter().map(|byte| byte.rotate_left(count)).collect())
+}
+
+pub fn rotate_right(data: &[u8], count: i64) -> Result<Vec<u8>, String> {
+    let count = u32::try_from(count)
+        .ok()
+        .filter(|count| *count < 8)
+        .ok_or("rotate count must be in 0..7")?;
+    bounded(data.len())?;
+    Ok(data.iter().map(|byte| byte.rotate_right(count)).collect())
+}
+
 pub fn find(data: &[u8], needle: &[u8]) -> Result<i64, String> {
     if needle.is_empty() {
         return Ok(0);
@@ -336,6 +354,12 @@ mod tests {
         assert!(repeat(b"AB", MAX_BYTES_VALUE as i64).is_err());
         assert!(concat(&vec![0; MAX_BYTES_VALUE], b"A").is_err());
         assert_eq!(xor(b"A", b"").unwrap_err(), "xor key must not be empty");
+        assert_eq!(rotate_left(&[0x81, 0x0f], 1).unwrap(), [0x03, 0x1e]);
+        assert_eq!(rotate_right(&[0x81, 0x0f], 1).unwrap(), [0xc0, 0x87]);
+        assert_eq!(rotate_right(&rotate_left(b"GAK", 7).unwrap(), 7).unwrap(), b"GAK");
+        assert_eq!(rotate_left(b"", 0).unwrap(), b"");
+        assert_eq!(rotate_left(b"A", -1).unwrap_err(), "rotate count must be in 0..7");
+        assert_eq!(rotate_right(b"A", 8).unwrap_err(), "rotate count must be in 0..7");
     }
 
     #[test]
