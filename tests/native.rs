@@ -1578,7 +1578,7 @@ fn native_python_calls_are_typed_stateful_and_permission_gated() {
     }
     let s = Sandbox::new();
     s.write("helper.py", "count = 0\ndef bump(value):\n    global count\n    count += 1\n    return value + count\ndef upper(value):\n    return value.upper()\ndef even(value):\n    return value % 2 == 0\ndef small():\n    return 7\ndef flip(value):\n    return value[::-1]\n");
-    let script = s.write("main.gak", "requires { python.exec }\nimport py.helper\nfrom py.helper import bump as next\nfrom std.bytes import from_hex, to_hex\nfn call(value: i64) -> i64 = next(value)\nlet first: i64 = call(40)\nlet second: i64 = helper.bump(40)\nlet text: str = helper.upper(\"galeikan\")\nlet flag: bool = helper.even(42)\nlet count: u64 = helper.small()\nlet raw: bytes = helper.flip(from_hex(\"41 42\"))\nprint first\nprint second\nprint text\nprint flag\nprint count\nprint to_hex(raw)\n");
+    let script = s.write("main.gak", "requires { python.exec }\nimport py.helper\nfrom py.helper import bump as next\nfrom std.bytes import from_hex, to_hex\nfn call(value: i64) -> i64 = next(value)\nlet first: i64 = call(40)\nlet second: i64 = helper.bump(40)\nlet text: str = helper.upper(\"galeikan\")\nlet flag: bool = helper.even(42)\nlet count: i64 = helper.small()\nlet raw: bytes = helper.flip(from_hex(\"41 42\"))\nprint first\nprint second\nprint text\nprint flag\nprint count\nprint to_hex(raw)\n");
     let built = s.compile(&script);
     assert!(
         built.status.success(),
@@ -2087,6 +2087,38 @@ fn native_python_call_times_out_without_hanging() {
     assert!(started.elapsed() < Duration::from_secs(20));
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("timed out"));
+}
+
+#[test]
+fn native_python_unsigned_values_keep_their_type_across_engines() {
+    if !gcc_available() || !python_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write("helper.py", "def echo(value):\n    return value\ndef small():\n    return 7\ndef large():\n    return 2**63\n");
+    let script = s.write("main.gak", "requires { python.exec }\nimport py.helper\nfrom std.result import is_error\nfn wrong_i() -> Result<i64> {\n    let value: i64 = helper.echo(7u64)\n    return value\n}\nfn wrong_u() -> Result<u64> {\n    let value: u64 = helper.small()\n    return value\n}\nlet echoed: u64 = helper.echo(7u64)\nlet large: u64 = helper.large()\nprint echoed == 7u64\nprint large == 9223372036854775808u64\nprint is_error(wrong_i())\nprint is_error(wrong_u())\n");
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"true\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-python", python_command()])
+            .output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-python", python_command()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable)
+        .args(["--allow-python", python_command()]).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected);
 }
 
 #[test]

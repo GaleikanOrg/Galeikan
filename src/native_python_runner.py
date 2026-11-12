@@ -43,11 +43,16 @@ SCALARS = b"iubsx"
 LISTS = b"IUBSX"
 
 
+class U64(int):
+    pass
+
+
 def decode_scalar(kind, raw):
     if kind in (b"i", b"u"):
         if len(raw) != 8:
             raise ValueError("invalid native integer")
-        return int.from_bytes(raw, "little", signed=kind == b"i")
+        value = int.from_bytes(raw, "little", signed=kind == b"i")
+        return U64(value) if kind == b"u" else value
     if kind == b"b":
         if raw not in (b"\x00", b"\x01"):
             raise ValueError("invalid native boolean")
@@ -102,7 +107,7 @@ def encode_scalar(value, expected):
         return bytes([value])
     if expected == b"i" and type(value) is int and -(2**63) <= value < 2**63:
         return value.to_bytes(8, "little", signed=True)
-    if expected == b"u" and type(value) is int and 0 <= value < 2**64:
+    if expected == b"u" and (type(value) is U64 or (type(value) is int and value >= 2**63)) and 0 <= value < 2**64:
         return value.to_bytes(8, "little")
     if expected == b"s" and type(value) is str:
         return value.encode("utf-8")
