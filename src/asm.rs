@@ -37,14 +37,18 @@ impl Decoded {
         if matches!(
             self.flow,
             "next" | "conditional_branch" | "call" | "indirect_call"
-        ) {
+        ) || (self.flow == "transaction"
+            && matches!(self.mnemonic.as_str(), "xbegin" | "xabort" | "xend"))
+        {
             successors.push(
                 self.ip
                     .checked_add(self.size as u64)
                     .ok_or("instruction address overflow")?,
             );
         }
-        if matches!(self.flow, "conditional_branch" | "jump" | "call") {
+        if matches!(self.flow, "conditional_branch" | "jump" | "call")
+            || (self.flow == "transaction" && self.mnemonic == "xbegin")
+        {
             if let Some(target) = self.target {
                 if !successors.contains(&target) {
                     successors.push(target);
@@ -206,24 +210,15 @@ pub fn reachable(
             .checked_add(u64::try_from(offset).map_err(|_| "instruction offset out of range")?)
             .ok_or("instruction address overflow")?;
         let instruction = decoder.decode(bytes, offset, ip, bitness)?;
-        let next = offset + instruction.size;
         let mut enqueue = |candidate: usize| {
             if candidate < bytes.len() && queued.insert(candidate) {
                 pending.push_back(candidate);
             }
         };
-        if matches!(
-            instruction.flow,
-            "next" | "conditional_branch" | "call" | "indirect_call"
-        ) {
-            enqueue(next);
-        }
-        if matches!(instruction.flow, "conditional_branch" | "jump" | "call") {
-            if let Some(target) = instruction.target {
-                if let Some(relative) = target.checked_sub(base_ip) {
-                    if let Ok(relative) = usize::try_from(relative) {
-                        enqueue(relative);
-                    }
+        for target in instruction.successors()? {
+            if let Some(relative) = target.checked_sub(base_ip) {
+                if let Ok(relative) = usize::try_from(relative) {
+                    enqueue(relative);
                 }
             }
         }
@@ -250,7 +245,10 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
             if following.ip <= instruction.ip {
                 return Err("disassembly instructions are not in address order".into());
             }
-            if following.ip != next || instruction.flow != "next" {
+            if following.ip != next
+                || instruction.flow != "next"
+                || matches!(instruction.mnemonic.as_str(), "xabort" | "xend")
+            {
                 leaders.insert(following.ip);
             }
         }
@@ -268,6 +266,8 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
         }
         let last = instructions[index - 1];
         let successors = last.successors()?;
+        // The abort destination depends on the surrounding outermost XBEGIN.
+        let transaction_exit = matches!(last.mnemonic.as_str(), "xabort" | "xend");
         result.push(Block {
             start: instructions[first_index].ip,
             end: last
@@ -277,6 +277,7 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
             first_index,
             instruction_count: index - first_index,
             unresolved: matches!(last.flow, "indirect_jump" | "indirect_call")
+                || transaction_exit
                 || successors.iter().any(|target| !addresses.contains(target)),
             successors,
         });
@@ -290,7 +291,8 @@ pub fn xrefs(instructions: &[&Decoded], target: u64) -> Vec<u64> {
     instructions
         .iter()
         .filter(|instruction| {
-            matches!(instruction.flow, "conditional_branch" | "jump" | "call")
+            (matches!(instruction.flow, "conditional_branch" | "jump" | "call")
+                || (instruction.flow == "transaction" && instruction.mnemonic == "xbegin"))
                 && instruction.target == Some(target)
         })
         .map(|instruction| instruction.ip)
@@ -449,6 +451,43 @@ mod tests {
         let found = reachable(b"\xeb\x01\x90\xc3", 0, base, 64, 2).unwrap();
         assert_eq!(found[0].1.target, Some(base + 3));
         assert_eq!(found[1].1.ip, base + 3);
+    }
+
+    #[test]
+    fn transaction_instructions_preserve_fallback_and_fallthrough_paths() {
+        let bytes = b"\xc7\xf8\x04\0\0\0\x90\x0f\x01\xd5\xc3";
+        let found = reachable(bytes, 0, 0x1000, 64, 4).unwrap();
+        assert_eq!(
+            found.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(),
+            [0, 6, 7, 10]
+        );
+        let decoded = found
+            .iter()
+            .map(|(_, instruction)| instruction)
+            .collect::<Vec<_>>();
+        assert_eq!(decoded[0].mnemonic, "xbegin");
+        assert_eq!(decoded[0].target, Some(0x100a));
+        assert_eq!(decoded[0].successors().unwrap(), [0x1006, 0x100a]);
+        assert_eq!(decoded[2].mnemonic, "xend");
+        assert_eq!(decoded[2].successors().unwrap(), [0x100a]);
+        assert_eq!(xrefs(&decoded, 0x100a), [0x1000]);
+        let graph = blocks(&decoded).unwrap();
+        assert_eq!(graph.len(), 3);
+        assert_eq!(graph[0].successors, [0x1006, 0x100a]);
+        assert_eq!(graph[1].successors, [0x100a]);
+        assert!(!graph[0].unresolved);
+        assert!(graph[1].unresolved);
+
+        let abort = reachable(b"\xc6\xf8\0\xc3", 0, 0x2000, 64, 2).unwrap();
+        let decoded = abort
+            .iter()
+            .map(|(_, instruction)| instruction)
+            .collect::<Vec<_>>();
+        assert_eq!(decoded[0].mnemonic, "xabort");
+        assert_eq!(decoded[0].successors().unwrap(), [0x2003]);
+        let graph = blocks(&decoded).unwrap();
+        assert_eq!(graph[0].successors, [0x2003]);
+        assert!(graph[0].unresolved);
     }
 
     #[test]

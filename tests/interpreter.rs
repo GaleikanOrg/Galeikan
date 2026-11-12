@@ -224,6 +224,35 @@ fn reachable_disassembly_and_u64_addresses_match_ast_vm_and_bundle() {
 }
 
 #[test]
+fn transaction_control_flow_matches_ast_vm_and_bundle() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "transactions.gak",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"c7 f8 04 00 00 00 90 0f 01 d5 c3\"))\nlet lines = asm.reachable(source, 0, 0x1000u64, 64, 4)\nlet aborted = asm.reachable(binary.snapshot(binary.from_hex(\"c6 f8 00 c3\")), 0, 0x2000u64, 64, 2)\nprint asm.count(lines)\nprint asm.target_u64(asm.at(lines, 0))\nprint asm.successors(asm.at(lines, 0))[1]\nprint asm.xrefs(lines, 0x100au64)[0]\nprint asm.block_count(lines)\nprint asm.block_unresolved(lines, 1)\nprint asm.count(aborted)\nprint asm.block_unresolved(aborted, 0)\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "4\n4106\n4106\n4096\n3\ntrue\n2\ntrue\n");
+    }
+}
+
+#[test]
 fn unsigned_64_bit_values_match_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(
