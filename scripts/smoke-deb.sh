@@ -2,7 +2,20 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0.preview3_amd64.deb"
+version="$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p;}' "$project_root/Cargo.toml" | head -n 1)"
+[[ -n "$version" ]] || { printf 'Missing Galeikan package version.\n' >&2; exit 1; }
+release_channel="$(cat "$project_root/packaging/release-channel.txt")"
+[[ "$release_channel" =~ ^(stable|preview[1-9][0-9]*)$ ]] || {
+  printf 'Invalid Galeikan release channel.\n' >&2
+  exit 1
+}
+debian_version="$version"
+artifact_version="$version"
+if [[ "$release_channel" != stable ]]; then
+  debian_version+="~$release_channel"
+  artifact_version+=".$release_channel"
+fi
+package="$project_root/dist/galeikan_${artifact_version}_amd64.deb"
 if [[ ! -f "$package" ]]; then
   printf 'Missing package: %s\n' "$package" >&2
   exit 1
@@ -11,8 +24,8 @@ fi
   printf 'Debian product name is not Galeikan.\n' >&2
   exit 1
 }
-[[ "$(dpkg-deb --field "$package" Version)" == '0.1.0~preview3' ]] || {
-  printf 'Debian package version is not Preview 3.\n' >&2
+[[ "$(dpkg-deb --field "$package" Version)" == "$debian_version" ]] || {
+  printf 'Debian package version does not match the configured release.\n' >&2
   exit 1
 }
 staging="$(mktemp -d)"
@@ -20,7 +33,7 @@ trap 'rm -rf -- "$staging"' EXIT
 dpkg-deb --extract "$package" "$staging"
 binary="$staging/usr/bin/galeikan"
 "$binary" --help >/dev/null
-[[ "$("$binary" --version)" == "Galeikan 0.1.0" ]]
+[[ "$("$binary" --version)" == "Galeikan $version" ]]
 example="$staging/usr/share/doc/galeikan/examples/hello.gak"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan.png"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"

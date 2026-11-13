@@ -5,13 +5,26 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 architecture="$(dpkg --print-architecture)"
 if [[ "$architecture" != amd64 ]]; then
-  printf 'This preview packaging script supports amd64 only (got %s).\n' "$architecture" >&2
+  printf 'Debian packaging supports amd64 only (got %s).\n' "$architecture" >&2
   exit 1
 fi
 version="$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p;}' Cargo.toml | head -n 1)"
 if [[ -z "$version" ]]; then
   printf 'Could not read package version from Cargo.toml.\n' >&2
   exit 1
+fi
+release_channel="$(cat packaging/release-channel.txt)"
+if [[ ! "$release_channel" =~ ^(stable|preview[1-9][0-9]*)$ ]]; then
+  printf 'Invalid Galeikan release channel.\n' >&2
+  exit 1
+fi
+debian_version="$version"
+artifact_version="$version"
+description='Galeikan research language (Debian 13)'
+if [[ "$release_channel" != stable ]]; then
+  debian_version+="~$release_channel"
+  artifact_version+=".$release_channel"
+  description='Galeikan research language (Debian 13 development preview)'
 fi
 linux_target_dir="${GALEIKAN_LINUX_TARGET_DIR:-${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/galeikan-script-target}}"
 if [[ "${1:-}" != --skip-cargo-build ]]; then
@@ -76,18 +89,18 @@ fi
 mkdir -p "$staging/DEBIAN" "$project_root/dist"
 cat > "$staging/DEBIAN/control" <<EOF
 Package: galeikan
-Version: ${version}~preview3
+Version: ${debian_version}
 Section: devel
 Priority: optional
 Architecture: amd64
 Maintainer: Galeikan Project
 Depends: libc6 (>= ${glibc_version}), libgcc-s1
-Description: Galeikan research language (Debian 13 development preview)
+Description: ${description}
  Galeikan provides a research-oriented scripting language with explicit
  effects, bounded binary inspection, local modules and optional Python interop.
  The native compiler supports a limited x86-64 subset of the language.
 EOF
 
-package="$project_root/dist/galeikan_${version}.preview3_${architecture}.deb"
+package="$project_root/dist/galeikan_${artifact_version}_${architecture}.deb"
 dpkg-deb --root-owner-group --build "$staging" "$package"
 printf '%s\n' "$package"

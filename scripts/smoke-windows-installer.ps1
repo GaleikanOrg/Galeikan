@@ -4,9 +4,18 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $cargoManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'Cargo.toml') -Raw
 if ($cargoManifest -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') { throw 'Missing Galeikan package version' }
 $expectedVersion = "Galeikan $($Matches[1])"
+$packageVersion = $Matches[1]
+$releaseChannel = (Get-Content -LiteralPath (Join-Path $projectRoot 'packaging\release-channel.txt') -Raw).Trim()
+if ($releaseChannel -notmatch '^(stable|preview[1-9][0-9]*)$') { throw 'Invalid Galeikan release channel' }
+$suffix = if ($releaseChannel -eq 'stable') { '' } else { "-$releaseChannel" }
+$expectedProductName = if ($releaseChannel -eq 'stable') {
+    "Galeikan $packageVersion"
+} else {
+    "Galeikan $packageVersion Preview $($releaseChannel.Substring(7))"
+}
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsixName = "galeikan-language-$($extensionManifest.version).vsix"
-$installer = Join-Path $projectRoot 'dist\Galeikan-0.1.0-preview3-windows-x64-setup.exe'
+$installer = Join-Path $projectRoot "dist\Galeikan-$packageVersion$suffix-windows-x64-setup.exe"
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
 if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -159,7 +168,7 @@ if ($bundleAssociation -ne 'Galeikan.Bundle' -or
     throw 'Installed Galeikan bytecode bundle association is invalid'
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
-if ($productName -ne 'Galeikan 0.1.0 Preview 3') { throw 'Installed product name is not Galeikan' }
+if ($productName -ne $expectedProductName) { throw 'Installed product name is not Galeikan' }
 $installedGuide = Join-Path $smokeRoot 'docs\quickstart.md'
 $sourceGuide = Join-Path $projectRoot 'packaging\docs\quickstart.md'
 if (-not (Test-Path -LiteralPath $installedGuide) -or

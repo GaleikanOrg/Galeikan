@@ -2,7 +2,16 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-package="$project_root/dist/galeikan_0.1.0.preview3_amd64.deb"
+version="$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p;}' "$project_root/Cargo.toml" | head -n 1)"
+[[ -n "$version" ]] || { printf 'Missing Galeikan package version.\n' >&2; exit 1; }
+release_channel="$(cat "$project_root/packaging/release-channel.txt")"
+[[ "$release_channel" =~ ^(stable|preview[1-9][0-9]*)$ ]] || {
+  printf 'Invalid Galeikan release channel.\n' >&2
+  exit 1
+}
+artifact_version="$version"
+if [[ "$release_channel" != stable ]]; then artifact_version+=".$release_channel"; fi
+package="$project_root/dist/galeikan_${artifact_version}_amd64.deb"
 if [[ "$(id -u)" != 0 ]]; then
   printf 'Run this isolated Debian smoke test as root.\n' >&2
   exit 1
