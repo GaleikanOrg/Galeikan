@@ -158,6 +158,30 @@ pub fn from_base64(text: &str) -> Result<Vec<u8>, String> {
     Ok(result)
 }
 
+pub fn to_base64(data: &[u8]) -> Result<String, String> {
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    bounded(data.len())?;
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        result.push(char::from(DIGITS[usize::from(a >> 2)]));
+        result.push(char::from(DIGITS[usize::from(((a & 3) << 4) | (b >> 4))]));
+        result.push(if chunk.len() > 1 {
+            char::from(DIGITS[usize::from(((b & 15) << 2) | (c >> 6))])
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            char::from(DIGITS[usize::from(c & 63)])
+        } else {
+            '='
+        });
+    }
+    Ok(result)
+}
+
 fn apply_key(
     data: &[u8],
     key: &[u8],
@@ -393,6 +417,24 @@ mod tests {
         }
         let oversized = "AAAA".repeat(MAX_BYTES_VALUE / 3 + 1);
         assert!(from_base64(&oversized).unwrap_err().starts_with("LimitExceeded:"));
+    }
+
+    #[test]
+    fn base64_encoding_round_trips_binary() {
+        assert_eq!(to_base64(b"").unwrap(), "");
+        assert_eq!(to_base64(b"f").unwrap(), "Zg==");
+        assert_eq!(to_base64(b"fo").unwrap(), "Zm8=");
+        assert_eq!(to_base64(b"foo").unwrap(), "Zm9v");
+        let binary = [0, 0xff, 0x7f, 0x80, 0x01];
+        let encoded = to_base64(&binary).unwrap();
+        assert_eq!(from_base64(&encoded).unwrap(), binary);
+        assert_eq!(
+            to_base64(&vec![0; MAX_BYTES_VALUE]).unwrap().len(),
+            MAX_BYTES_VALUE.div_ceil(3) * 4
+        );
+        assert!(to_base64(&vec![0; MAX_BYTES_VALUE + 1])
+            .unwrap_err()
+            .starts_with("LimitExceeded:"));
     }
 
     #[test]

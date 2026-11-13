@@ -4984,6 +4984,7 @@ impl Runtime {
                 encoding.as_str()?,
             )?))),
             ("to_hex", [Value::Bytes(data)]) => Ok(Value::Str(bytes::to_hex(data)?)),
+            ("to_base64", [Value::Bytes(data)]) => Ok(Value::Str(bytes::to_base64(data)?)),
             ("concat", [Value::Bytes(left), Value::Bytes(right)]) => {
                 Ok(Value::Bytes(Arc::new(bytes::concat(left, right)?)))
             }
@@ -8963,6 +8964,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "from_hex" | "from_base64") => (&[Str], Bytes),
         ("bytes", "pack") => (&[Type::Any, Str], Bytes),
         ("bytes", "to_hex") => (&[Bytes], Str),
+        ("bytes", "to_base64") => (&[Bytes], Str),
         ("bytes", "concat" | "xor" | "bit_and" | "bit_or") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
         ("bytes", "rotate_left" | "rotate_right") => (&[Bytes, Int], Bytes),

@@ -6944,6 +6944,26 @@ impl Codegen {
                     .push_str("    mov rdx, QWORD PTR [rax]\n    call gak_to_hex\n");
                 Ok(Scalar::Str)
             }
+            ("to_base64", [data]) => {
+                if self.expr(data, scope)? != Scalar::Bytes {
+                    return Err("bytes.to_base64 expects bytes".into());
+                }
+                self.uses_text = true;
+                let input_slot = self.reserve_slot()?;
+                let result_slot = self.reserve_slot()?;
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    cmp r10, 1048576\n    ja gak_bytes_limit\n    lea rax, [r10+2]\n    xor edx, edx\n    mov r11, 3\n    div r11\n    shl rax, 2\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_base64_encode\n    mov rax, QWORD PTR [rbp-{}]",
+                    input_slot * 8,
+                    result_slot * 8,
+                    self.arg0(),
+                    input_slot * 8,
+                    self.arg1(),
+                    result_slot * 8
+                )
+                .unwrap();
+                Ok(Scalar::Str)
+            }
             ("at", [data, index]) => {
                 if self.expr(data, scope)? != Scalar::Bytes {
                     return Err("bytes.at expects bytes".into());

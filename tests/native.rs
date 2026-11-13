@@ -7802,6 +7802,44 @@ fn native_base64_error_can_be_caught_as_result() {
 }
 
 #[test]
+fn base64_round_trip_matches_all_execution_modes() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "base64-round-trip.gaks",
+        "from std.bytes import from_hex, from_base64, to_base64, to_hex\nlet sample = from_hex(\"00ff7f8001\")\nprint to_base64(sample)\nprint to_hex(from_base64(to_base64(sample)))\nprint to_base64(from_hex(\"\"))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, b"AP9/gAE=\n00ff7f8001\n\n", "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, b"AP9/gAE=\n00ff7f8001\n\n");
+    let compiled = s.compile(&script);
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, bundle.stdout);
+}
+
+#[test]
 fn byte_rotations_match_ast_vm_bundle_and_native() {
     let s = Sandbox::new();
     let script = s.write(

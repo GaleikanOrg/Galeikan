@@ -55,6 +55,24 @@ int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
     return count ? -1 : (int64_t)written;
 }
 
+/* The caller allocates 4 * ceil(input length / 3) output bytes. */
+void gak_native_base64_encode(const uint8_t *box, uint8_t *output) {
+    static const uint8_t digits[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint64_t size = gak_text_size(box);
+    const uint8_t *data = box + 8;
+    uint64_t written = 0;
+    for (uint64_t i = 0; i < size; i += 3) {
+        uint8_t a = data[i];
+        uint8_t b = i + 1 < size ? data[i + 1] : 0;
+        uint8_t c = i + 2 < size ? data[i + 2] : 0;
+        output[written++] = digits[a >> 2];
+        output[written++] = digits[((a & 3) << 4) | (b >> 4)];
+        output[written++] = i + 1 < size ? digits[((b & 15) << 2) | (c >> 6)] : '=';
+        output[written++] = i + 2 < size ? digits[c & 63] : '=';
+    }
+}
+
 static int gak_utf8_valid(const uint8_t *data, uint64_t count) {
     for (uint64_t i = 0; i < count;) {
         uint8_t a = data[i];
