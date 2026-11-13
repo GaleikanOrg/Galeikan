@@ -441,6 +441,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
         "gak_bytes_limit",
         "LimitExceeded: bytes result exceeds 1048576 bytes",
     ),
+    ("gak_base64_invalid", "invalid base64 data"),
     ("gak_repeat_negative", "repeat count must not be negative"),
     ("gak_repeat_count_limit", "repeat count exceeds 1048576"),
     ("gak_xor_empty_key", "xor key must not be empty"),
@@ -6896,6 +6897,37 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
         match (name, args) {
+            ("from_base64", [text]) => {
+                if self.expr(text, scope)? != Scalar::Str {
+                    return Err("bytes.from_base64 expects str".into());
+                }
+                self.uses_text = true;
+                let input_slot = self.reserve_slot()?;
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", input_slot * 8).unwrap();
+                writeln!(
+                    self.code,
+                    "    mov {}, rax\n    xor {}, {}\n    xor {}, {}\n    call gak_native_base64_decode\n    cmp rax, -1\n    je gak_base64_invalid\n    cmp rax, -2\n    je gak_bytes_limit\n    test rax, rax\n    js gak_base64_invalid\n    call gak_alloc_bytes",
+                    self.arg0(),
+                    self.arg1(),
+                    self.arg1(),
+                    self.arg2(),
+                    self.arg2()
+                )
+                .unwrap();
+                writeln!(
+                    self.code,
+                    "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    mov {}, QWORD PTR [rax]\n    call gak_native_base64_decode\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jne gak_base64_invalid\n    mov rax, r10",
+                    result_slot * 8,
+                    self.arg0(),
+                    input_slot * 8,
+                    self.arg1(),
+                    self.arg2(),
+                    result_slot * 8
+                )
+                .unwrap();
+                Ok(Scalar::Bytes)
+            }
             ("from_hex", [text]) => {
                 if self.expr(text, scope)? != Scalar::Str {
                     return Err("bytes.from_hex expects str".into());
@@ -8237,7 +8269,7 @@ impl Codegen {
             "gak_text_index_msg: .ascii \"text index out of range\\n\"\ngak_text_index_msg_end:\n",
         );
         out.push_str("gak_text_search_alloc_msg: .ascii \"text search allocation failed\\n\"\ngak_text_search_alloc_msg_end:\n");
-        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
+        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_base64_invalid_msg: .ascii \"invalid base64 data\\n\"\ngak_base64_invalid_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str("gak_slice_start_msg: .ascii \"slice start must not be negative\\n\"\ngak_slice_start_msg_end:\ngak_slice_end_msg: .ascii \"slice end must not be negative\\n\"\ngak_slice_end_msg_end:\ngak_slice_bounds_msg: .ascii \"slice out of range\\n\"\ngak_slice_bounds_msg_end:\n");
         out.push_str(".p2align 2\ngak_sha_iv:\n");
         for value in SHA256_IV {
@@ -9392,6 +9424,7 @@ gak_cli_utf8_done:
             ("gak_hex_odd", "gak_hex_odd_msg"),
             ("gak_hex_limit", "gak_hex_limit_msg"),
             ("gak_bytes_limit", "gak_bytes_limit_msg"),
+            ("gak_base64_invalid", "gak_base64_invalid_msg"),
             ("gak_bytes_index", "gak_bytes_index_msg"),
             ("gak_slice_start", "gak_slice_start_msg"),
             ("gak_slice_end", "gak_slice_end_msg"),

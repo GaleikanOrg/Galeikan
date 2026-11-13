@@ -4973,6 +4973,9 @@ impl Runtime {
     fn bytes(&self, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
             ("from_hex", [text]) => Ok(Value::Bytes(Arc::new(parse_hex(text.as_str()?)?))),
+            ("from_base64", [text]) => Ok(Value::Bytes(Arc::new(bytes::from_base64(
+                text.as_str()?,
+            )?))),
             ("pack", [value @ Value::UInt(_), encoding]) => Ok(Value::Bytes(Arc::new(
                 bytes::pack_unsigned(value.as_uint()?, encoding.as_str()?)?,
             ))),
@@ -8957,7 +8960,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         return Ok(result);
     }
     let (expected, result): (&[Type], Type) = match (module, name) {
-        ("bytes", "from_hex") => (&[Str], Bytes),
+        ("bytes", "from_hex" | "from_base64") => (&[Str], Bytes),
         ("bytes", "pack") => (&[Type::Any, Str], Bytes),
         ("bytes", "to_hex") => (&[Bytes], Str),
         ("bytes", "concat" | "xor" | "bit_and" | "bit_or") => (&[Bytes, Bytes], Bytes),

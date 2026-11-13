@@ -7674,7 +7674,7 @@ fn native_bytes_transforms_match_vm() {
     let s = Sandbox::new();
     let script = s.write(
         "bytes-transforms.gak",
-        "from std.bytes import from_hex, to_hex, concat, repeat, xor, bit_and, bit_or, at\nlet left = from_hex(\"00 ff\")\nlet right = from_hex(\"41 42 43\")\nprint to_hex(concat(left, right))\nprint to_hex(repeat(right, 3))\nprint to_hex(repeat(left, 0))\nprint to_hex(repeat(from_hex(\"\"), 1048576))\nprint to_hex(xor(right, from_hex(\"ff 0f\")))\nprint to_hex(xor(left, from_hex(\"01\")))\nprint to_hex(bit_and(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_or(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_and(from_hex(\"\"), from_hex(\"01\")))\nprint at(repeat(from_hex(\"7f\"), 1048576), 1048575)\n",
+        "from std.bytes import from_hex, from_base64, to_hex, concat, repeat, xor, bit_and, bit_or, at\nlet left = from_hex(\"00 ff\")\nlet right = from_hex(\"41 42 43\")\nprint to_hex(concat(left, right))\nprint to_hex(repeat(right, 3))\nprint to_hex(repeat(left, 0))\nprint to_hex(repeat(from_hex(\"\"), 1048576))\nprint to_hex(xor(right, from_hex(\"ff 0f\")))\nprint to_hex(xor(left, from_hex(\"01\")))\nprint to_hex(bit_and(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_or(right, from_hex(\"ff 0f\")))\nprint to_hex(bit_and(from_hex(\"\"), from_hex(\"01\")))\nprint at(repeat(from_hex(\"7f\"), 1048576), 1048575)\nprint to_hex(from_base64(\"T W\\nFu\"))\nprint to_hex(from_base64(\"Zg==\"))\nprint to_hex(from_base64(\"\"))\n",
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("run")
@@ -7703,8 +7703,33 @@ fn native_bytes_transforms_match_vm() {
     assert_eq!(native.stdout, vm.stdout);
     assert_eq!(
         native.stdout,
-        b"00ff414243\n414243414243414243\n\n\nbe4dbc\n01fe\n410243\nff4fff\n\n127\n"
+        b"00ff414243\n414243414243414243\n\n\nbe4dbc\n01fe\n410243\nff4fff\n\n127\n4d616e\n66\n\n"
     );
+    let ast = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "ast"])
+        .output()
+        .unwrap();
+    assert!(ast.status.success(), "{}", String::from_utf8_lossy(&ast.stderr));
+    assert_eq!(ast.stdout, vm.stdout);
+    let bundled = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        bundled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundled.stderr)
+    );
+    let bundle = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, vm.stdout);
 }
 
 #[test]
@@ -7722,8 +7747,11 @@ fn native_bytes_transform_errors_match_vm() {
         ("or-empty.gak", "bit_or(from_hex(\"00\"), from_hex(\"\"))"),
         ("rotate-negative.gak", "rotate_left(from_hex(\"81\"), -1)"),
         ("rotate-large.gak", "rotate_right(from_hex(\"81\"), 8)"),
+        ("base64-padding.gak", "from_base64(\"Zg=\")"),
+        ("base64-bits.gak", "from_base64(\"Zh==\")"),
+        ("base64-trailing.gak", "from_base64(\"Zg==A\")"),
     ] {
-        let source = format!("from std.bytes import from_hex, repeat, xor, bit_and, bit_or, rotate_left, rotate_right\nprint {expression}\n");
+        let source = format!("from std.bytes import from_hex, from_base64, repeat, xor, bit_and, bit_or, rotate_left, rotate_right\nprint {expression}\n");
         let script = s.write(name, &source);
         let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("run")
@@ -7744,6 +7772,33 @@ fn native_bytes_transform_errors_match_vm() {
         assert_eq!(native.stdout, vm.stdout, "{name}");
         assert_eq!(native.stderr, vm.stderr, "{name}");
     }
+}
+
+#[test]
+fn native_base64_error_can_be_caught_as_result() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "base64-result.gaks",
+        "from std.bytes import from_base64\nfrom std.result import is_error\nfn decode(input: str) -> Result<bytes> = from_base64(input)\nprint is_error(decode(\"Zg=\"))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let vm = Command::new(galeikan)
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    assert_eq!(vm.stdout, b"true\n");
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
 }
 
 #[test]

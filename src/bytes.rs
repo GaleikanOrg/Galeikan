@@ -110,6 +110,54 @@ pub fn bit_or(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
     apply_key(data, key, "bitwise", |byte, mask| byte | mask)
 }
 
+pub fn from_base64(text: &str) -> Result<Vec<u8>, String> {
+    let mut result = Vec::new();
+    let mut quartet = [0_u8; 4];
+    let mut count = 0;
+    let mut padded = false;
+    for byte in text.bytes() {
+        if matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+            continue;
+        }
+        if padded {
+            return Err("invalid base64 data".into());
+        }
+        quartet[count] = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => 64,
+            _ => return Err("invalid base64 data".into()),
+        };
+        count += 1;
+        if count == 4 {
+            let [a, b, c, d] = quartet;
+            if a == 64 || b == 64 || (c == 64 && (d != 64 || b & 15 != 0))
+                || (c != 64 && d == 64 && c & 3 != 0)
+            {
+                return Err("invalid base64 data".into());
+            }
+            let width = if c == 64 { 1 } else if d == 64 { 2 } else { 3 };
+            bounded(result.len() + width)?;
+            result.push((a << 2) | (b >> 4));
+            if width > 1 {
+                result.push((b << 4) | (c >> 2));
+            }
+            if width > 2 {
+                result.push((c << 6) | d);
+            }
+            padded = width < 3;
+            count = 0;
+        }
+    }
+    if count != 0 {
+        return Err("invalid base64 data".into());
+    }
+    Ok(result)
+}
+
 fn apply_key(
     data: &[u8],
     key: &[u8],
@@ -332,6 +380,20 @@ pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_decoding_checks_padding_and_bounds() {
+        assert_eq!(from_base64("").unwrap(), b"");
+        assert_eq!(from_base64("T W\nFu").unwrap(), b"Man");
+        assert_eq!(from_base64("Zg==").unwrap(), b"f");
+        assert_eq!(from_base64("Zm8=").unwrap(), b"fo");
+        assert_eq!(from_base64("Zm9v").unwrap(), b"foo");
+        for invalid in ["Zg=", "Zg===", "Zh==", "Zm9=", "Zg==A", "Zg==\0"] {
+            assert_eq!(from_base64(invalid).unwrap_err(), "invalid base64 data");
+        }
+        let oversized = "AAAA".repeat(MAX_BYTES_VALUE / 3 + 1);
+        assert!(from_base64(&oversized).unwrap_err().starts_with("LimitExceeded:"));
+    }
 
     #[test]
     fn crc32_matches_standard_check_value() {

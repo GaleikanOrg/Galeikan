@@ -9,6 +9,52 @@ static uint64_t gak_text_size(const uint8_t *box) {
     return size;
 }
 
+/* Returns decoded size, -1 for malformed input, or -2 if it exceeds the
+ * bytes value limit. Passing NULL output validates and measures only. */
+int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
+                                 uint64_t capacity) {
+    uint64_t size = gak_text_size(box);
+    const uint8_t *data = box + 8;
+    uint8_t quartet[4];
+    unsigned count = 0;
+    int padded = 0;
+    uint64_t written = 0;
+    for (uint64_t i = 0; i < size; ++i) {
+        uint8_t byte = data[i];
+        uint8_t value;
+        if (byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n')
+            continue;
+        if (padded) return -1;
+        if (byte >= 'A' && byte <= 'Z') value = byte - 'A';
+        else if (byte >= 'a' && byte <= 'z') value = byte - 'a' + 26;
+        else if (byte >= '0' && byte <= '9') value = byte - '0' + 52;
+        else if (byte == '+') value = 62;
+        else if (byte == '/') value = 63;
+        else if (byte == '=') value = 64;
+        else return -1;
+        quartet[count++] = value;
+        if (count == 4) {
+            uint8_t a = quartet[0], b = quartet[1];
+            uint8_t c = quartet[2], d = quartet[3];
+            if (a == 64 || b == 64 ||
+                (c == 64 && (d != 64 || (b & 15) != 0)) ||
+                (c != 64 && d == 64 && (c & 3) != 0)) return -1;
+            uint64_t width = c == 64 ? 1 : d == 64 ? 2 : 3;
+            if (written > 1048576u - width) return -2;
+            if (output) {
+                if (written + width > capacity) return -1;
+                output[written] = (a << 2) | (b >> 4);
+                if (width > 1) output[written + 1] = (b << 4) | (c >> 2);
+                if (width > 2) output[written + 2] = (c << 6) | d;
+            }
+            written += width;
+            padded = width < 3;
+            count = 0;
+        }
+    }
+    return count ? -1 : (int64_t)written;
+}
+
 static int gak_utf8_valid(const uint8_t *data, uint64_t count) {
     for (uint64_t i = 0; i < count;) {
         uint8_t a = data[i];
