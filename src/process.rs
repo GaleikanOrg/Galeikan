@@ -121,6 +121,15 @@ pub fn regions(pid: u32) -> Result<Vec<Region>, String> {
     list_regions(pid)
 }
 
+pub fn mapped_bytes<'a>(regions: impl IntoIterator<Item = &'a Region>) -> Result<u64, String> {
+    regions.into_iter().try_fold(0_u64, |total, region| {
+        let size = u64::try_from(region.size).map_err(|_| "region size outside u64 range")?;
+        total
+            .checked_add(size)
+            .ok_or_else(|| "mapped region sizes overflow u64".into())
+    })
+}
+
 pub fn images(pid: u32) -> Result<Vec<Region>, String> {
     Ok(regions(pid)?
         .into_iter()
@@ -1092,6 +1101,24 @@ mod tests {
         assert!(maps
             .iter()
             .any(|region| { region.contains(address) && region.access.starts_with('r') }));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn mapped_bytes_rejects_overflow() {
+        let region = |size| Region {
+            pid: 1,
+            start: 0,
+            size,
+            access: "rw-".into(),
+            label: String::new(),
+            image_backed: false,
+        };
+        let regions = [region(usize::MAX), region(1)];
+        assert_eq!(
+            super::mapped_bytes(regions.iter()).unwrap_err(),
+            "mapped region sizes overflow u64"
+        );
     }
 
     #[cfg(any(target_os = "linux", windows))]

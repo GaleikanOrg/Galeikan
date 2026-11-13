@@ -1231,6 +1231,24 @@ GakRegions *gak_native_process_regions(uint64_t pid, uint64_t filter) {
     return regions;
 }
 
+uint64_t gak_native_process_mapped_bytes(const GakRegions *regions) {
+    gak_file_error = NULL;
+    if (!regions || regions->count > GAK_MAX_REGIONS) {
+        gak_failf("invalid process regions");
+        return 0;
+    }
+    uint64_t total = 0;
+    for (uint64_t index = 0; index < regions->count; index++) {
+        const GakRegion *region = regions->items[index];
+        if (!region || region->size > UINT64_MAX - total) {
+            gak_failf("mapped region sizes overflow u64");
+            return 0;
+        }
+        total += region->size;
+    }
+    return total;
+}
+
 GakModules *gak_native_process_modules(uint64_t pid) {
     GakRegions *regions = gak_native_process_regions(pid, 1);
     if (!regions) return NULL;

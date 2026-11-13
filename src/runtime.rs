@@ -5934,6 +5934,9 @@ impl Runtime {
             ("count", [Value::Regions(regions)]) => Ok(Value::Int(
                 i64::try_from(regions.len()).map_err(|_| "region count out of range")?,
             )),
+            ("mapped_bytes", [Value::Regions(regions)]) => Ok(Value::UInt(
+                process::mapped_bytes(regions.iter().map(AsRef::as_ref))?,
+            )),
             ("at", [Value::Regions(regions), index]) => {
                 let index =
                     usize::try_from(index.as_int()?).map_err(|_| "region index out of range")?;
@@ -5961,6 +5964,9 @@ impl Runtime {
             )),
             ("size", [Value::Region(region)]) => Ok(Value::Int(
                 i64::try_from(region.size).map_err(|_| "region size outside i64 range")?,
+            )),
+            ("size_u64", [Value::Region(region)]) => Ok(Value::UInt(
+                u64::try_from(region.size).map_err(|_| "region size outside u64 range")?,
             )),
             ("end", [Value::Region(region)]) => Ok(Value::Int(
                 i64::try_from(
@@ -9163,11 +9169,12 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "executable") => (&[Int], Str),
         ("process", "parent_pid") => (&[Int], Int),
         ("process", "count") => (&[Regions], Int),
+        ("process", "mapped_bytes") => (&[Regions], UInt),
         ("process", "at") => (&[Regions, Int], Region),
         ("process", "locate") => (&[Regions, Int], Region),
         ("process", "locate_u64") => (&[Regions, UInt], Region),
         ("process", "pid" | "start" | "size" | "end") => (&[Region], Int),
-        ("process", "start_u64" | "end_u64") => (&[Region], UInt),
+        ("process", "start_u64" | "size_u64" | "end_u64") => (&[Region], UInt),
         ("process", "offset" | "address") => (&[Region, Int], Int),
         ("process", "offset_u64") => (&[Region, UInt], Int),
         ("process", "address_u64") => (&[Region, Int], UInt),

@@ -858,11 +858,11 @@ fn heap_candidates_match_across_execution_modes() {
     fs::create_dir_all(&root).unwrap();
     let script = root.join("heap-candidates.gaks");
     fs::write(&script, format!(
-        "requires {{ process.inspect }}\nimport std.process\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nprint process.count(maps) > 0\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\nprint process.access(region) == \"rw-\"\nprint process.image_backed(region) == false\nprint process.kind(region) == \"private\" or process.kind(region) == \"heap\" or process.kind(region) == \"anonymous\"\n",
+        "requires {{ process.inspect }}\nimport std.process\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {}u64)\nprint process.count(maps) > 0\nprint process.start_u64(region) <= {}u64\nprint process.end_u64(region) > {}u64\nprint process.size_u64(region) == process.end_u64(region) - process.start_u64(region)\nprint process.mapped_bytes(maps) >= process.size_u64(region)\nprint process.access(region) == \"rw-\"\nprint process.image_backed(region) == false\nprint process.kind(region) == \"private\" or process.kind(region) == \"heap\" or process.kind(region) == \"anonymous\"\n",
         helper.address, helper.address, helper.address
     )).unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine, "--allow-process", &pid.to_string()])

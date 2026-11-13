@@ -4034,6 +4034,15 @@ impl Codegen {
                 self.code.push_str("    mov rax, QWORD PTR [rax]\n");
                 Ok(Scalar::Int)
             }
+            ("mapped_bytes", [regions]) => {
+                if self.expr(regions, scope)? != Scalar::Regions {
+                    return Err("process.mapped_bytes expects Regions".into());
+                }
+                self.uses_process = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_process_mapped_bytes\n    mov r10, QWORD PTR [rip+gak_file_error]\n    test r10, r10\n    jz {ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                Ok(Scalar::UInt)
+            }
             ("at" | "locate" | "locate_u64", [regions, index]) => {
                 if self.expr(regions, scope)? != Scalar::Regions {
                     return Err(format!("process.{name} expects Regions"));
@@ -4085,7 +4094,7 @@ impl Codegen {
                 Ok(Scalar::Str)
             }
             (
-                "pid" | "start" | "start_u64" | "size" | "end" | "end_u64" | "access" | "label"
+                "pid" | "start" | "start_u64" | "size" | "size_u64" | "end" | "end_u64" | "access" | "label"
                 | "image_backed",
                 [region],
             ) => {
@@ -4097,6 +4106,7 @@ impl Codegen {
                     "start" => (8, Scalar::Int),
                     "start_u64" => (8, Scalar::UInt),
                     "size" => (16, Scalar::Int),
+                    "size_u64" => (16, Scalar::UInt),
                     "end" => (8, Scalar::Int),
                     "end_u64" => (8, Scalar::UInt),
                     "access" => (24, Scalar::Str),
