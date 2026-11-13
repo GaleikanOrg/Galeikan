@@ -4976,6 +4976,9 @@ impl Runtime {
             ("from_base64", [text]) => Ok(Value::Bytes(Arc::new(bytes::from_base64(
                 text.as_str()?,
             )?))),
+            ("from_base64_url", [text]) => Ok(Value::Bytes(Arc::new(
+                bytes::from_base64_url(text.as_str()?)?,
+            ))),
             ("pack", [value @ Value::UInt(_), encoding]) => Ok(Value::Bytes(Arc::new(
                 bytes::pack_unsigned(value.as_uint()?, encoding.as_str()?)?,
             ))),
@@ -4985,6 +4988,9 @@ impl Runtime {
             )?))),
             ("to_hex", [Value::Bytes(data)]) => Ok(Value::Str(bytes::to_hex(data)?)),
             ("to_base64", [Value::Bytes(data)]) => Ok(Value::Str(bytes::to_base64(data)?)),
+            ("to_base64_url", [Value::Bytes(data)]) => {
+                Ok(Value::Str(bytes::to_base64_url(data)?))
+            }
             ("concat", [Value::Bytes(left), Value::Bytes(right)]) => {
                 Ok(Value::Bytes(Arc::new(bytes::concat(left, right)?)))
             }
@@ -8961,10 +8967,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         return Ok(result);
     }
     let (expected, result): (&[Type], Type) = match (module, name) {
-        ("bytes", "from_hex" | "from_base64") => (&[Str], Bytes),
+        ("bytes", "from_hex" | "from_base64" | "from_base64_url") => (&[Str], Bytes),
         ("bytes", "pack") => (&[Type::Any, Str], Bytes),
         ("bytes", "to_hex") => (&[Bytes], Str),
-        ("bytes", "to_base64") => (&[Bytes], Str),
+        ("bytes", "to_base64" | "to_base64_url") => (&[Bytes], Str),
         ("bytes", "concat" | "xor" | "bit_and" | "bit_or") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
         ("bytes", "rotate_left" | "rotate_right") => (&[Bytes, Int], Bytes),

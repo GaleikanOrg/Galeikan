@@ -7840,6 +7840,79 @@ fn base64_round_trip_matches_all_execution_modes() {
 }
 
 #[test]
+fn base64_url_round_trip_matches_all_execution_modes() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "base64-url-round-trip.gak",
+        "from std.bytes import from_hex, from_base64_url, to_base64_url, to_hex\nprint to_base64_url(from_hex(\"fbefff\"))\nprint to_base64_url(from_hex(\"66\"))\nprint to_base64_url(from_hex(\"666f\"))\nprint to_hex(from_base64_url(\"--__\"))\nprint to_hex(from_base64_url(\"Zg\"))\nprint to_hex(from_base64_url(\"Zm8=\"))\nprint to_base64_url(from_hex(\"\"))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"--__\nZg\nZm8\nfbefff\n66\n666f\n\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    let compiled = s.compile(&script);
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected);
+}
+
+#[test]
+fn base64_url_rejects_noncanonical_input_in_vm_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for (name, value) in [
+        ("one-digit", "Z"),
+        ("bad-bits", "Zh"),
+        ("partial-padding", "Zg="),
+        ("wrong-alphabet", "++//"),
+        ("trailing-data", "Zg==A"),
+    ] {
+        let script = s.write(
+            &format!("base64-url-{name}.gaks"),
+            &format!("from std.bytes import from_base64_url\nprint from_base64_url(\"{value}\")\n"),
+        );
+        let vm = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", "vm"])
+            .output()
+            .unwrap();
+        assert!(!vm.status.success(), "{name}");
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success(), "{name}");
+        assert_eq!(native.stderr, vm.stderr, "{name}");
+    }
+}
+
+#[test]
 fn byte_rotations_match_ast_vm_bundle_and_native() {
     let s = Sandbox::new();
     let script = s.write(

@@ -111,6 +111,14 @@ pub fn bit_or(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 pub fn from_base64(text: &str) -> Result<Vec<u8>, String> {
+    decode_base64(text, false)
+}
+
+pub fn from_base64_url(text: &str) -> Result<Vec<u8>, String> {
+    decode_base64(text, true)
+}
+
+fn decode_base64(text: &str, url_safe: bool) -> Result<Vec<u8>, String> {
     let mut result = Vec::new();
     let mut quartet = [0_u8; 4];
     let mut count = 0;
@@ -126,8 +134,10 @@ pub fn from_base64(text: &str) -> Result<Vec<u8>, String> {
             b'A'..=b'Z' => byte - b'A',
             b'a'..=b'z' => byte - b'a' + 26,
             b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
+            b'+' if !url_safe => 62,
+            b'/' if !url_safe => 63,
+            b'-' if url_safe => 62,
+            b'_' if url_safe => 63,
             b'=' => 64,
             _ => return Err("invalid base64 data".into()),
         };
@@ -153,31 +163,53 @@ pub fn from_base64(text: &str) -> Result<Vec<u8>, String> {
         }
     }
     if count != 0 {
-        return Err("invalid base64 data".into());
+        if !url_safe
+            || count == 1
+            || quartet[1] == 64
+            || (count == 2 && quartet[1] & 15 != 0)
+            || (count == 3 && (quartet[2] == 64 || quartet[2] & 3 != 0))
+        {
+            return Err("invalid base64 data".into());
+        }
+        bounded(result.len() + count - 1)?;
+        result.push((quartet[0] << 2) | (quartet[1] >> 4));
+        if count == 3 {
+            result.push((quartet[1] << 4) | (quartet[2] >> 2));
+        }
     }
     Ok(result)
 }
 
 pub fn to_base64(data: &[u8]) -> Result<String, String> {
-    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    encode_base64(data, false)
+}
+
+pub fn to_base64_url(data: &[u8]) -> Result<String, String> {
+    encode_base64(data, true)
+}
+
+fn encode_base64(data: &[u8], url_safe: bool) -> Result<String, String> {
+    const STANDARD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const URL_SAFE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let digits = if url_safe { URL_SAFE } else { STANDARD };
     bounded(data.len())?;
     let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let a = chunk[0];
         let b = *chunk.get(1).unwrap_or(&0);
         let c = *chunk.get(2).unwrap_or(&0);
-        result.push(char::from(DIGITS[usize::from(a >> 2)]));
-        result.push(char::from(DIGITS[usize::from(((a & 3) << 4) | (b >> 4))]));
-        result.push(if chunk.len() > 1 {
-            char::from(DIGITS[usize::from(((b & 15) << 2) | (c >> 6))])
-        } else {
-            '='
-        });
-        result.push(if chunk.len() > 2 {
-            char::from(DIGITS[usize::from(c & 63)])
-        } else {
-            '='
-        });
+        result.push(char::from(digits[usize::from(a >> 2)]));
+        result.push(char::from(digits[usize::from(((a & 3) << 4) | (b >> 4))]));
+        if chunk.len() > 1 {
+            result.push(char::from(digits[usize::from(((b & 15) << 2) | (c >> 6))]));
+        } else if !url_safe {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(char::from(digits[usize::from(c & 63)]));
+        } else if !url_safe {
+            result.push('=');
+        }
     }
     Ok(result)
 }
@@ -435,6 +467,25 @@ mod tests {
         assert!(to_base64(&vec![0; MAX_BYTES_VALUE + 1])
             .unwrap_err()
             .starts_with("LimitExceeded:"));
+    }
+
+    #[test]
+    fn base64_url_accepts_unpadded_canonical_input() {
+        assert_eq!(to_base64_url(b"f").unwrap(), "Zg");
+        assert_eq!(to_base64_url(b"fo").unwrap(), "Zm8");
+        assert_eq!(to_base64_url(b"foo").unwrap(), "Zm9v");
+        assert_eq!(to_base64_url(&[0xfb, 0xef, 0xff]).unwrap(), "--__");
+        assert_eq!(from_base64_url("--__").unwrap(), [0xfb, 0xef, 0xff]);
+        assert_eq!(from_base64_url("Zg").unwrap(), b"f");
+        assert_eq!(from_base64_url("Zm8=").unwrap(), b"fo");
+        assert_eq!(from_base64_url("").unwrap(), b"");
+        for invalid in ["Z", "Zh", "Zm9", "A=", "AA=", "Zg=", "++//", "Zg==A"] {
+            assert_eq!(from_base64_url(invalid).unwrap_err(), "invalid base64 data");
+        }
+        assert_eq!(
+            from_base64_url(&to_base64_url(&[0, 0xff, 0x80, 1]).unwrap()).unwrap(),
+            [0, 0xff, 0x80, 1]
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ static uint64_t gak_text_size(const uint8_t *box) {
 /* Returns decoded size, -1 for malformed input, or -2 if it exceeds the
  * bytes value limit. Passing NULL output validates and measures only. */
 int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
-                                 uint64_t capacity) {
+                                 uint64_t capacity, uint64_t url_safe) {
     uint64_t size = gak_text_size(box);
     const uint8_t *data = box + 8;
     uint8_t quartet[4];
@@ -28,8 +28,10 @@ int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
         if (byte >= 'A' && byte <= 'Z') value = byte - 'A';
         else if (byte >= 'a' && byte <= 'z') value = byte - 'a' + 26;
         else if (byte >= '0' && byte <= '9') value = byte - '0' + 52;
-        else if (byte == '+') value = 62;
-        else if (byte == '/') value = 63;
+        else if (!url_safe && byte == '+') value = 62;
+        else if (!url_safe && byte == '/') value = 63;
+        else if (url_safe && byte == '-') value = 62;
+        else if (url_safe && byte == '_') value = 63;
         else if (byte == '=') value = 64;
         else return -1;
         quartet[count++] = value;
@@ -52,13 +54,33 @@ int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
             count = 0;
         }
     }
-    return count ? -1 : (int64_t)written;
+    if (count) {
+        if (!url_safe || count == 1 || quartet[1] == 64 ||
+            (count == 2 && (quartet[1] & 15) != 0) ||
+            (count == 3 && (quartet[2] == 64 || (quartet[2] & 3) != 0)))
+            return -1;
+        uint64_t width = count - 1;
+        if (written > 1048576u - width) return -2;
+        if (output) {
+            if (written + width > capacity) return -1;
+            output[written] = (quartet[0] << 2) | (quartet[1] >> 4);
+            if (width > 1)
+                output[written + 1] = (quartet[1] << 4) | (quartet[2] >> 2);
+        }
+        written += width;
+    }
+    return (int64_t)written;
 }
 
-/* The caller allocates 4 * ceil(input length / 3) output bytes. */
-void gak_native_base64_encode(const uint8_t *box, uint8_t *output) {
-    static const uint8_t digits[] =
+/* The caller allocates 4 * ceil(input length / 3) output bytes for the
+ * standard alphabet, or floor((4 * input length + 2) / 3) for URL-safe. */
+void gak_native_base64_encode(const uint8_t *box, uint8_t *output,
+                              uint64_t url_safe) {
+    static const uint8_t standard[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const uint8_t url[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const uint8_t *digits = url_safe ? url : standard;
     uint64_t size = gak_text_size(box);
     const uint8_t *data = box + 8;
     uint64_t written = 0;
@@ -68,8 +90,10 @@ void gak_native_base64_encode(const uint8_t *box, uint8_t *output) {
         uint8_t c = i + 2 < size ? data[i + 2] : 0;
         output[written++] = digits[a >> 2];
         output[written++] = digits[((a & 3) << 4) | (b >> 4)];
-        output[written++] = i + 1 < size ? digits[((b & 15) << 2) | (c >> 6)] : '=';
-        output[written++] = i + 2 < size ? digits[c & 63] : '=';
+        if (i + 1 < size) output[written++] = digits[((b & 15) << 2) | (c >> 6)];
+        else if (!url_safe) output[written++] = '=';
+        if (i + 2 < size) output[written++] = digits[c & 63];
+        else if (!url_safe) output[written++] = '=';
     }
 }
 
