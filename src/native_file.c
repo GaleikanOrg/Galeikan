@@ -142,6 +142,10 @@ uint8_t *gak_native_metadata_box(const char *text, size_t length) {
     return gak_box(text, length);
 }
 
+void gak_native_metadata_release(uint8_t *box) {
+    gak_release_box(box);
+}
+
 static int gak_failf(const char *format, ...) {
     char message[8192];
     va_list arguments;
@@ -695,8 +699,8 @@ GakFileResult *gak_native_read_file(const uint8_t *path_box, int64_t max, const 
     result->origin = gak_escaped_box(origin);
     free(origin);
     if (!result->label || !result->origin) {
-        free(result->label);
-        free(result->origin);
+        gak_release_box(result->label);
+        gak_release_box(result->origin);
         free(result);
         gak_failf("native allocation failed");
         goto close_file;
@@ -1026,8 +1030,8 @@ GakFileResult *gak_native_process_snapshot(uint64_t pid, uint64_t address, uint6
     result->label = gak_escaped_box(label);
     result->origin = gak_escaped_box(origin);
     if (!result->label || !result->origin) {
-        free(result->label);
-        free(result->origin);
+        gak_release_box(result->label);
+        gak_release_box(result->origin);
         free(result);
         free(backing);
         gak_failf("native allocation failed");
@@ -1771,13 +1775,13 @@ GakFileResult *gak_native_process_snapshot_region(GakRegion *region,
     uint64_t escaped_length;
     memcpy(&escaped_length, escaped_label, 8);
     if (escaped_length > SIZE_MAX - 256) {
-        free(escaped_label);
+        gak_release_box(escaped_label);
         goto metadata_failed;
     }
     size_t capacity = (size_t)escaped_length + 256;
     char *origin = malloc(capacity);
     if (!origin) {
-        free(escaped_label);
+        gak_release_box(escaped_label);
         goto metadata_failed;
     }
     int written = snprintf(origin, capacity,
@@ -1785,7 +1789,7 @@ GakFileResult *gak_native_process_snapshot_region(GakRegion *region,
                            (unsigned long long)region->pid, (unsigned long long)address,
                            (const char *)(escaped_label + 8),
                            (const char *)(region->access + 8), (unsigned long long)length);
-    free(escaped_label);
+    gak_release_box(escaped_label);
     if (written < 0 || (size_t)written >= capacity) {
         free(origin);
         goto metadata_failed;
@@ -1793,14 +1797,14 @@ GakFileResult *gak_native_process_snapshot_region(GakRegion *region,
     uint8_t *boxed_origin = gak_escaped_box(origin);
     free(origin);
     if (!boxed_origin) goto metadata_failed;
-    free(result->origin);
+    gak_release_box(result->origin);
     result->origin = boxed_origin;
     return result;
 
 metadata_failed:
     free(result->backing);
-    free(result->label);
-    free(result->origin);
+    gak_release_box(result->label);
+    gak_release_box(result->origin);
     free(result);
     gak_failf("native allocation failed");
     return NULL;
@@ -2024,8 +2028,8 @@ uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) 
     for (unsigned index = 0; index < 8; index++)
         value |= (uint64_t)source->backing[8 + index] << (index * 8);
     free(source->backing);
-    free(source->label);
-    free(source->origin);
+    gak_release_box(source->label);
+    gak_release_box(source->origin);
     free(source);
     return value;
 }
@@ -2037,8 +2041,8 @@ uint64_t gak_native_process_read_pointer_u32(GakRegion *region, int64_t offset) 
     for (unsigned index = 0; index < 4; index++)
         value |= (uint64_t)source->backing[8 + index] << (index * 8);
     free(source->backing);
-    free(source->label);
-    free(source->origin);
+    gak_release_box(source->label);
+    gak_release_box(source->origin);
     free(source);
     return value;
 }

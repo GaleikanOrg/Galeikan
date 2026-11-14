@@ -220,6 +220,39 @@ fn native_process_metadata_is_reclaimed_after_temporary_maps_and_failed_paths() 
 }
 
 #[test]
+fn native_pointer_reads_reclaim_temporary_metadata() {
+    if Command::new("gcc").arg("--version").output().is_err() {
+        return;
+    }
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "galeikan-pointer-metadata-{}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pointer-metadata.gak");
+    fs::write(
+        &script,
+        "requires { process.inspect }\nimport std.process\nlet region = process.at(process.heap_candidates(process.self_pid()), 0)\nvar count = 0\nwhile count < 400000 {\n    count = count + 1 + i64(process.read_pointer_u64(region, 0) % 1u64)\n}\nprint count\n",
+    )
+    .unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let output = Command::new(executable)
+        .args(["--allow-process", "self"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, b"400000\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pointer_refs_u32_read_cross_chunk_memory_in_all_execution_modes() {
     let Some(helper) = MemoryChild::spawn_scan() else {
         return;

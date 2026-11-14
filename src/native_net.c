@@ -82,6 +82,7 @@ static _Atomic unsigned gak_pending_dns;
 extern uint8_t *gak_file_error;
 extern int gak_native_net_allowed(const char *authority);
 extern uint8_t *gak_native_metadata_box(const char *text, size_t length);
+extern void gak_native_metadata_release(uint8_t *box);
 
 static void gak_net_fail(const char *format, ...) {
     char message[4096];
@@ -462,8 +463,8 @@ static GakNetSource *gak_net_source(uint8_t *backing, size_t received,
     result->label = gak_native_metadata_box(label, strlen(label));
     result->origin = gak_native_metadata_box(origin, strlen(origin));
     if (!result->label || !result->origin) {
-        free(result->label);
-        free(result->origin);
+        gak_native_metadata_release(result->label);
+        gak_native_metadata_release(result->origin);
         free(result);
         free(backing);
         gak_net_fail("native allocation failed");
