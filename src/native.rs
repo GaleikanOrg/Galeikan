@@ -312,7 +312,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_shift_range", "shift count must be in 0..63"),
     ("gak_range_start", "range start must not be negative"),
     ("gak_range_end", "range end must not be negative"),
-    ("gak_range_step", "range step must be positive"),
+    ("gak_range_step", "range step must not be zero"),
     ("gak_range_limit", "range exceeds 100000 items"),
     ("gak_loop_limit", "loop exceeds 100000 items"),
     ("gak_list_index", "list index out of range"),
@@ -7348,7 +7348,12 @@ impl Codegen {
         let count_ready = self.label();
         let copy = self.label();
         let done = self.label();
-        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_range_start\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_range_end\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    jle gak_range_step\n    cmp rax, QWORD PTR [rbp-{}]\n    jge {empty}\n    mov rax, QWORD PTR [rbp-{}]\n    sub rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    div QWORD PTR [rbp-{}]\n    test rdx, rdx\n    jz {count_ready}\n    inc rax\n{count_ready}:\n    cmp rax, {MAX_RANGE_ITEMS}\n    ja gak_range_limit\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n    mov rcx, QWORD PTR [rax]\n{copy}:\n    cmp r11, rcx\n    jae {done}\n    mov QWORD PTR [rax+r11*8+8], r10\n    add r10, QWORD PTR [rbp-{}]\n    inc r11\n    jmp {copy}\n{done}:", start_slot * 8, end_slot * 8, step_slot * 8, end_slot * 8, end_slot * 8, start_slot * 8, step_slot * 8, start_slot * 8, step_slot * 8).unwrap();
+        let forward = self.label();
+        let span_ready = self.label();
+        let start_offset = start_slot * 8;
+        let end_offset = end_slot * 8;
+        let step_offset = step_slot * 8;
+        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{start_offset}]\n    test rax, rax\n    js gak_range_start\n    mov r10, QWORD PTR [rbp-{end_offset}]\n    test r10, r10\n    js gak_range_end\n    mov r11, QWORD PTR [rbp-{step_offset}]\n    test r11, r11\n    jz gak_range_step\n    jns {forward}\n    cmp rax, r10\n    jle {empty}\n    sub rax, r10\n    neg r11\n    jmp {span_ready}\n{forward}:\n    cmp rax, r10\n    jge {empty}\n    sub r10, rax\n    mov rax, r10\n{span_ready}:\n    xor edx, edx\n    div r11\n    test rdx, rdx\n    jz {count_ready}\n    inc rax\n{count_ready}:\n    cmp rax, {MAX_RANGE_ITEMS}\n    ja gak_range_limit\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list\n    mov r10, QWORD PTR [rbp-{start_offset}]\n    xor r11d, r11d\n    mov rcx, QWORD PTR [rax]\n{copy}:\n    cmp r11, rcx\n    jae {done}\n    mov QWORD PTR [rax+r11*8+8], r10\n    add r10, QWORD PTR [rbp-{step_offset}]\n    inc r11\n    jmp {copy}\n{done}:").unwrap();
         Ok(Scalar::Offsets)
     }
 
@@ -8304,7 +8309,7 @@ impl Codegen {
         let mut out = String::new();
         writeln!(out, ".equ gak_frame_reserve, {reserve}").unwrap();
         out.push_str(".intel_syntax noprefix\n.section .rodata\ngak_int_fmt: .asciz \"%lld\\n\"\ngak_true: .asciz \"true\"\ngak_false: .asciz \"false\"\ngak_overflow_msg: .ascii \"integer overflow\\n\"\ngak_overflow_msg_end:\ngak_divzero_msg: .ascii \"division by zero\\n\"\ngak_divzero_msg_end:\ngak_shift_range_msg: .ascii \"shift count must be in 0..63\\n\"\ngak_shift_range_msg_end:\ngak_limit_msg: .ascii \"execution exceeds 1000000 action steps\\n\"\ngak_limit_msg_end:\ngak_range_start_msg: .ascii \"range start must not be negative\\n\"\ngak_range_start_msg_end:\ngak_range_end_msg: .ascii \"range end must not be negative\\n\"\ngak_range_end_msg_end:\ngak_range_limit_msg: .ascii \"range exceeds 100000 items\\n\"\ngak_range_limit_msg_end:\ngak_record_limit_msg: .ascii \"native struct memory exceeds 64 MiB\\n\"\ngak_record_limit_msg_end:\ngak_alloc_failure_msg: .ascii \"native allocation failed\\n\"\ngak_alloc_failure_msg_end:\ngak_list_limit_msg: .ascii \"list exceeds 100000 items or 64 MiB of native allocations\\n\"\ngak_list_limit_msg_end:\ngak_list_index_msg: .ascii \"list index out of range\\n\"\ngak_list_index_msg_end:\n");
-        out.push_str("gak_range_step_msg: .ascii \"range step must be positive\\n\"\ngak_range_step_msg_end:\n");
+        out.push_str("gak_range_step_msg: .ascii \"range step must not be zero\\n\"\ngak_range_step_msg_end:\n");
         out.push_str("gak_loop_limit_msg: .ascii \"loop exceeds 100000 items\\n\"\ngak_loop_limit_msg_end:\n");
         out.push_str(
             "gak_assert_failed_msg: .ascii \"assertion failed\\n\"\ngak_assert_failed_msg_end:\n",

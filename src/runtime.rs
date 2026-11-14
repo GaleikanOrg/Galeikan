@@ -7838,16 +7838,28 @@ impl Runtime {
                 let start =
                     usize::try_from(start).map_err(|_| "range start must not be negative")?;
                 let end = usize::try_from(end).map_err(|_| "range end must not be negative")?;
-                let step = usize::try_from(step)
-                    .ok()
-                    .filter(|step| *step > 0)
-                    .ok_or("range step must be positive")?;
-                let span = end.saturating_sub(start);
-                let count = span / step + usize::from(span % step != 0);
-                if count > MAX_LOOP_ITEMS {
+                if step == 0 {
+                    return Err("range step must not be zero".into());
+                }
+                let span = if step > 0 {
+                    end.saturating_sub(start)
+                } else {
+                    start.saturating_sub(end)
+                } as u64;
+                let stride = step.unsigned_abs();
+                let count = span / stride + u64::from(span % stride != 0);
+                if count > MAX_LOOP_ITEMS as u64 {
                     return Err(format!("range exceeds {MAX_LOOP_ITEMS} items"));
                 }
-                Ok(Value::Offsets((start..end).step_by(step).collect()))
+                let mut values = Vec::with_capacity(count as usize);
+                let mut value = start as i64;
+                for index in 0..count {
+                    values.push(value as usize);
+                    if index + 1 < count {
+                        value = value.checked_add(step).ok_or("range value overflow")?;
+                    }
+                }
+                Ok(Value::Offsets(values))
             }
             _ => Err(format!(
                 "unknown iter function or wrong argument count: {name}"

@@ -11607,10 +11607,12 @@ fn stride() -> i64 {
     return 3
 }
 fn zero() -> Result<Offsets> = range(0, 10, 0)
-fn negative() -> Result<Offsets> = range(0, 10, -1)
 fn too_many() -> Result<Offsets> = range(0, 200001, 2)
+fn too_many_reverse() -> Result<Offsets> = range(200001, 0, -2)
 let values: Offsets = range(1, 11, stride())
+let reverse: Offsets = range(10, 1, -3)
 var total = 0
+var reverse_total = 0
 print len(values)
 print values[0]
 print values[3]
@@ -11621,14 +11623,22 @@ for index in range(0, 10, 3) {
 print total
 print len(range(9, 2, 5))
 print len(range(0, 9223372036854775807, 9223372036854775807))
+for index in reverse {
+    reverse_total = reverse_total + index
+}
+print len(reverse)
+print reverse[2]
+print reverse_total
+print len(range(0, 10, -1))
+print len(range(10, 0, -9223372036854775807 - 1))
 print is_error(zero())
-print is_error(negative())
 print is_error(too_many())
+print is_error(too_many_reverse())
 print message(zero())
-print message(too_many())
+print message(too_many_reverse())
 "#,
     );
-    let expected = b"4\n1\n10\n1\n18\n0\n1\ntrue\ntrue\ntrue\nrange step must be positive\nrange exceeds 100000 items\n";
+    let expected = b"4\n1\n10\n1\n18\n0\n1\n3\n4\n21\n0\n1\ntrue\ntrue\ntrue\nrange step must not be zero\nrange exceeds 100000 items\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
