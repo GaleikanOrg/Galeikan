@@ -4498,9 +4498,8 @@ impl Codegen {
                 }
                 self.code
                     .push_str("    test rax, rax\n    js gak_process_length_range\n");
-                let ready = self.label();
-                let result_slot = self.reserve_slot()?;
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_process_snapshot\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_file_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov r11, QWORD PTR [r10]\n    mov r8, QWORD PTR [rip+gak_source_backing_bytes]\n    lea r9, [r11+8]\n    add r8, r9\n    jc gak_source_backing_limit\n    cmp r8, 536870920\n    ja gak_source_backing_limit\n    mov QWORD PTR [rip+gak_source_backing_bytes], r8\n    mov rax, r10\n    xor edx, edx\n    xor r10d, r10d\n    xor r8d, r8d\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+8]\n    mov QWORD PTR [rax+80], r10\n    mov r10, QWORD PTR [r11+16]\n    mov QWORD PTR [rax+88], r10", self.arg0(), pid_slot * 8, self.arg1(), address_slot * 8, self.arg2(), result_slot * 8, result_slot * 8).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_process_snapshot", self.arg0(), pid_slot * 8, self.arg1(), address_slot * 8, self.arg2()).unwrap();
+                self.process_source_result()?;
                 self.uses_process = true;
                 Ok(Scalar::Source)
             }
@@ -4518,7 +4517,8 @@ impl Codegen {
     fn process_source_result(&mut self) -> Result<(), String> {
         self.process_checked_result();
         let slot = self.reserve_slot()?;
-        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov r11, QWORD PTR [r10]\n    mov r8, QWORD PTR [rip+gak_source_backing_bytes]\n    lea r9, [r11+8]\n    add r8, r9\n    jc gak_source_backing_limit\n    cmp r8, 536870920\n    ja gak_source_backing_limit\n    mov QWORD PTR [rip+gak_source_backing_bytes], r8\n    mov rax, r10\n    xor edx, edx\n    xor r10d, r10d\n    xor r8d, r8d\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+8]\n    mov QWORD PTR [rax+80], r10\n    mov r10, QWORD PTR [r11+16]\n    mov QWORD PTR [rax+88], r10", slot * 8, slot * 8).unwrap();
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov r11, QWORD PTR [r10]\n    mov r8, QWORD PTR [rip+gak_source_backing_bytes]\n    lea r9, [r11+8]\n    add r8, r9\n    jc gak_source_backing_limit\n    cmp r8, 536870920\n    ja gak_source_backing_limit\n    mov QWORD PTR [rip+gak_source_backing_bytes], r8\n    mov rax, r10\n    xor edx, edx\n    xor r10d, r10d\n    xor r8d, r8d\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+8]\n    mov QWORD PTR [rax+80], r10\n    mov r10, QWORD PTR [r11+16]\n    mov QWORD PTR [rax+88], r10\n    mov QWORD PTR [rbp-{}], rax\n    mov {}, r11\n    call free\n    mov rax, QWORD PTR [rbp-{}]", slot * 8, slot * 8, source_slot * 8, self.arg0(), source_slot * 8).unwrap();
         Ok(())
     }
 
@@ -6191,9 +6191,8 @@ impl Codegen {
                     .ok_or("native module directory is not UTF-8")?
                     .to_owned();
                 let base = self.literal(&module_dir)?;
-                let ready = self.label();
-                let result_slot = self.reserve_slot()?;
-                writeln!(self.code, "    test rax, rax\n    js gak_analyze_max\n    cmp rax, 536870912\n    ja gak_analyze_max\n    mov {}, rax\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{base}]\n    call gak_native_read_file\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_file_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov r11, QWORD PTR [r10]\n    mov r8, QWORD PTR [rip+gak_source_backing_bytes]\n    lea r9, [r11+8]\n    add r8, r9\n    jc gak_source_backing_limit\n    cmp r8, 536870920\n    ja gak_source_backing_limit\n    mov QWORD PTR [rip+gak_source_backing_bytes], r8\n    mov rax, r10\n    xor edx, edx\n    xor r10d, r10d\n    xor r8d, r8d\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+8]\n    mov QWORD PTR [rax+80], r10\n    mov r10, QWORD PTR [r11+16]\n    mov QWORD PTR [rax+88], r10", self.arg1(), self.arg0(), path_slot * 8, self.arg2(), result_slot * 8, result_slot * 8).unwrap();
+                writeln!(self.code, "    test rax, rax\n    js gak_analyze_max\n    cmp rax, 536870912\n    ja gak_analyze_max\n    mov {}, rax\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{base}]\n    call gak_native_read_file", self.arg1(), self.arg0(), path_slot * 8, self.arg2()).unwrap();
+                self.process_source_result()?;
                 self.uses_file_read = true;
                 Ok(Scalar::Source)
             }
