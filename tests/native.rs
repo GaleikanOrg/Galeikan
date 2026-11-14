@@ -4671,6 +4671,34 @@ fn native_recursive_functions_match_vm_and_limit_call_depth() {
 }
 
 #[test]
+fn native_large_frames_probe_stack_pages_in_main_and_recursive_calls() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut program = String::from("fn deep(n: i64) -> i64 {\n");
+    for index in 0..1100 {
+        program.push_str(&format!("    let slot_{index} = {index}\n"));
+    }
+    program.push_str("    if n == 0 {\n        return slot_1099\n    }\n    return deep(n - 1) + 1\n}\nprint deep(3)\n");
+    let script = s.write("large-frame.gak", &program);
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, b"1102\n");
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_mutual_recursion_matches_vm() {
     if !gcc_available() {
         return;

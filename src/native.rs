@@ -1656,6 +1656,12 @@ fn native_type(
     scalar_type(annotation)
 }
 
+fn stack_reserve_code(amount: &str, loop_label: &str, tail_label: &str, done_label: &str) -> String {
+    format!(
+        "    mov r10, {amount}\n    test r10, r10\n    jz {done_label}\n{loop_label}:\n    cmp r10, 4096\n    jb {tail_label}\n    sub rsp, 4096\n    mov BYTE PTR [rsp], 0\n    sub r10, 4096\n    jmp {loop_label}\n{tail_label}:\n    test r10, r10\n    jz {done_label}\n    sub rsp, r10\n    mov BYTE PTR [rsp], 0\n{done_label}:\n"
+    )
+}
+
 impl Codegen {
     fn emit_native_call_dispatch(&mut self, module: &NativeModule) -> Result<(), String> {
         let mut callable = Vec::new();
@@ -1887,6 +1893,18 @@ impl Codegen {
         }
         self.slots += 1;
         Ok(self.slots)
+    }
+
+    fn reserve_stack(&mut self, amount: &str) {
+        let loop_label = self.label();
+        let tail_label = self.label();
+        let done_label = self.label();
+        self.code.push_str(&stack_reserve_code(
+            amount,
+            &loop_label,
+            &tail_label,
+            &done_label,
+        ));
     }
 
     fn tick(&mut self) {
@@ -7815,7 +7833,9 @@ impl Codegen {
         let copy_slots = self.slots;
         let copy = self.label();
         let copied = self.label();
-        writeln!(self.code, "    mov r10, QWORD PTR [rip+gak_call_depth]\n    cmp r10, 64\n    jae gak_call_depth_error\n    mov r10, QWORD PTR [rip+gak_main_rbp]\n    sub r10, rsp\n    add r10, gak_frame_reserve+48\n    cmp r10, 524288\n    jae gak_call_stack_error\n    add QWORD PTR [rip+gak_call_depth], 1\n    push rbp\n    mov rbp, rsp\n    sub rsp, gak_frame_reserve+8\n    mov r10, QWORD PTR [rbp]\n    sub r10, 8\n    lea r11, [rbp-8]\n    mov ecx, {copy_slots}\n{copy}:\n    test ecx, ecx\n    jz {copied}\n    mov rax, QWORD PTR [r10]\n    mov QWORD PTR [r11], rax\n    sub r10, 8\n    sub r11, 8\n    dec ecx\n    jmp {copy}\n{copied}:").unwrap();
+        self.code.push_str("    mov r10, QWORD PTR [rip+gak_call_depth]\n    cmp r10, 64\n    jae gak_call_depth_error\n    mov r10, QWORD PTR [rip+gak_main_rbp]\n    sub r10, rsp\n    add r10, gak_frame_reserve+48\n    cmp r10, 524288\n    jae gak_call_stack_error\n    add QWORD PTR [rip+gak_call_depth], 1\n    push rbp\n    mov rbp, rsp\n");
+        self.reserve_stack("gak_frame_reserve+8");
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp]\n    sub r10, 8\n    lea r11, [rbp-8]\n    mov ecx, {copy_slots}\n{copy}:\n    test ecx, ecx\n    jz {copied}\n    mov rax, QWORD PTR [r10]\n    mov QWORD PTR [r11], rax\n    sub r10, 8\n    sub r11, 8\n    dec ecx\n    jmp {copy}\n{copied}:").unwrap();
         for (target, source) in arguments {
             writeln!(self.code, "    mov r10, QWORD PTR [rbp]\n    mov r11, QWORD PTR [r10-{}]\n    mov QWORD PTR [rbp-{}], r11", source * 8, target * 8).unwrap();
         }
@@ -8520,7 +8540,12 @@ impl Codegen {
         out.push_str(&self.data);
         out.push_str("gak_memory_box: .quad 6\n    .ascii \"memory\"\n.bss\n.align 8\ngak_steps: .quad 0\ngak_call_depth: .quad 0\ngak_main_rbp: .quad 0\ngak_native_call_mode: .byte 0\ngak_native_call_dispatch_active: .byte 0\n.align 8\ngak_record_bytes: .quad 0\n.globl gak_list_bytes\ngak_list_bytes: .quad 0\n.globl gak_bytes_allocated\ngak_bytes_allocated: .quad 0\ngak_source_bytes: .quad 0\n.globl gak_source_backing_bytes\ngak_source_backing_bytes: .quad 0\ngak_observation_bytes: .quad 0\ngak_finding_bytes: .quad 0\ngak_diff_bytes: .quad 0\n.globl gak_str_bytes\ngak_str_bytes: .quad 0\ngak_result_bytes: .quad 0\n.globl gak_argc\n.globl gak_argv\ngak_argc: .quad 0\ngak_argv: .quad 0\ngak_cli_cache: .quad 0\n");
         out.push_str(".text\n.globl main\nmain:\n    push rbp\n    mov rbp, rsp\n    mov QWORD PTR [rip+gak_main_rbp], rbp\n");
-        writeln!(out, "    sub rsp, {reserve}").unwrap();
+        out.push_str(&stack_reserve_code(
+            &reserve.to_string(),
+            "gak_main_stack_probe_loop",
+            "gak_main_stack_probe_tail",
+            "gak_main_stack_probe_done",
+        ));
         if self.windows {
             out.push_str("    call GetCommandLineW\n    mov rcx, rax\n    lea rdx, [rip+gak_argc]\n    call CommandLineToArgvW\n    test rax, rax\n    jz gak_alloc_failure\n    mov QWORD PTR [rip+gak_argv], rax\n");
             if self.uses_file_read || self.uses_python || self.uses_process || self.uses_net {
