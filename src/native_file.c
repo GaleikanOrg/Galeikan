@@ -130,6 +130,14 @@ static uint8_t *gak_box(const char *text, size_t length) {
     return box;
 }
 
+static void gak_release_box(uint8_t *box) {
+    if (!box) return;
+    uint64_t length;
+    memcpy(&length, box, sizeof(length));
+    gak_file_metadata_bytes -= (size_t)length + 9;
+    free(box);
+}
+
 uint8_t *gak_native_metadata_box(const char *text, size_t length) {
     return gak_box(text, length);
 }
@@ -1032,11 +1040,13 @@ static void gak_regions_free(GakRegions *regions) {
     if (!regions) return;
     for (uint64_t index = 0; index < regions->count; index++) {
         GakRegion *region = regions->items[index];
-        free(region->access);
-        free(region->label);
+        gak_release_box(region->access);
+        gak_release_box(region->label);
         free(region);
+        gak_file_metadata_bytes -= sizeof(GakRegion);
     }
     free(regions);
+    gak_file_metadata_bytes -= sizeof(GakRegions);
 }
 
 static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
@@ -1047,7 +1057,10 @@ static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
     if (!gak_account_metadata(sizeof(GakRegion)))
         return gak_failf("native metadata memory exceeds 64 MiB");
     GakRegion *region = calloc(1, sizeof(*region));
-    if (!region) return gak_failf("native allocation failed");
+    if (!region) {
+        gak_file_metadata_bytes -= sizeof(GakRegion);
+        return gak_failf("native allocation failed");
+    }
     region->pid = pid;
     region->start = start;
     region->size = size;
@@ -1055,9 +1068,10 @@ static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
     region->access = gak_box(access, strlen(access));
     region->label = gak_box(label, strlen(label));
     if (!region->access || !region->label) {
-        free(region->access);
-        free(region->label);
+        gak_release_box(region->access);
+        gak_release_box(region->label);
         free(region);
+        gak_file_metadata_bytes -= sizeof(GakRegion);
         return gak_failf("native allocation failed");
     }
     regions->items[regions->count++] = region;
@@ -1221,6 +1235,7 @@ GakRegions *gak_native_process_regions(uint64_t pid, uint64_t filter) {
     }
     GakRegions *regions = calloc(1, sizeof(*regions));
     if (!regions) {
+        gak_file_metadata_bytes -= sizeof(GakRegions);
         gak_failf("native allocation failed");
         return NULL;
     }
@@ -1260,6 +1275,7 @@ GakModules *gak_native_process_modules(uint64_t pid) {
     }
     GakModules *modules = calloc(1, capacity);
     if (!modules) {
+        gak_file_metadata_bytes -= capacity;
         gak_regions_free(regions);
         gak_failf("native allocation failed");
         return NULL;
@@ -1283,8 +1299,9 @@ GakModules *gak_native_process_modules(uint64_t pid) {
         uint8_t *boxed = gak_box(label, strlen(label));
         if (!boxed) {
             for (uint64_t previous = 0; previous < modules->count; previous++)
-                free(modules->items[previous]);
+                gak_release_box(modules->items[previous]);
             free(modules);
+            gak_file_metadata_bytes -= capacity;
             gak_regions_free(regions);
             gak_failf("native allocation failed");
             return NULL;
@@ -2045,6 +2062,7 @@ static uint64_t *gak_process_pointer_path(GakRegions *regions,
     }
     uint64_t *chain = malloc(bytes);
     if (!chain) {
+        gak_file_metadata_bytes -= bytes;
         gak_failf("native allocation failed");
         return NULL;
     }
@@ -2100,6 +2118,7 @@ static uint64_t *gak_process_pointer_path(GakRegions *regions,
     return chain;
 failed:
     free(chain);
+    gak_file_metadata_bytes -= bytes;
     return NULL;
 }
 

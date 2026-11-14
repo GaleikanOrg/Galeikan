@@ -195,6 +195,31 @@ impl Drop for MemoryChild {
 }
 
 #[test]
+fn native_process_metadata_is_reclaimed_after_temporary_maps_and_failed_paths() {
+    if Command::new("gcc").arg("--version").output().is_err() {
+        return;
+    }
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-process-metadata-{}-{id}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let offsets = format!("[{}]", std::iter::once("-9223372036854775808")
+        .chain(std::iter::repeat("0").take(31)).collect::<Vec<_>>().join(", "));
+    let script = root.join("metadata.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn invalid(maps: Regions, address: u64, offsets: List<i64>) -> Result<List<u64>> = process.pointer_path_u32(maps, address, offsets)\nlet maps = process.regions(process.self_pid())\nlet address = process.start_u64(process.at(maps, 0))\nlet offsets: List<i64> = {offsets}\nvar count = 0\nvar valid = true\nvar sampled = 0\nwhile count < 250000 {{\n    if not is_error(invalid(maps, address, offsets)) {{\n        valid = false\n        break\n    }}\n    count = count + 1\n}}\nprint valid\nprint count\nwhile sampled < 200 {{\n    let paths: List<str> = process.modules(process.self_pid())\n    sampled = sampled + 1\n}}\nprint sampled\n"
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let output = Command::new(executable).args(["--allow-process", "self"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, b"true\n250000\n200\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pointer_refs_u32_read_cross_chunk_memory_in_all_execution_modes() {
     let Some(helper) = MemoryChild::spawn_scan() else {
         return;
