@@ -501,10 +501,17 @@ int gak_native_init(void) {
 
 static char *gak_requested_path(const char *path, const char *base) {
     if (path[0] == '/') return strdup(path);
-    size_t size = strlen(base) + strlen(path) + 2;
-    if (size > GAK_MAX_PATH_BYTES) return NULL;
+    size_t base_len = strlen(base);
+    size_t path_len = strlen(path);
+    if (base_len > GAK_MAX_PATH_BYTES - 2 ||
+        path_len > GAK_MAX_PATH_BYTES - base_len - 2) return NULL;
+    size_t size = base_len + path_len + 2;
     char *joined = malloc(size);
-    if (joined) snprintf(joined, size, "%s/%s", base, path);
+    if (joined) {
+        memcpy(joined, base, base_len);
+        joined[base_len] = '/';
+        memcpy(joined + base_len + 1, path, path_len + 1);
+    }
     return joined;
 }
 #endif

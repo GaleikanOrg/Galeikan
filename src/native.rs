@@ -1391,6 +1391,9 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
         compiler.arg("-Wl,--dynamicbase,--nxcompat,--high-entropy-va");
     } else {
         compiler
+            .arg("-O2")
+            .arg("-D_FORTIFY_SOURCE=2")
+            .arg("-fstack-clash-protection")
             .arg("-pie")
             .arg("-Wl,-z,relro,-z,now,-z,noexecstack");
         if uses_net {
