@@ -4124,9 +4124,23 @@ fn bounded_tcp_response_can_be_analyzed_as_binary_source() {
     assert!(!out.status.success());
     assert!(stderr(&out).contains("network access not allowed"));
 
+    listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
         for _ in 0..2 {
-            let (mut client, _) = listener.accept().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let (mut client, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("TCP test server accept failed: {error}"),
+                }
+            };
+            client.set_nonblocking(false).unwrap();
             let mut request = Vec::new();
             client.read_to_end(&mut request).unwrap();
             assert_eq!(request, b"PING\0");
@@ -4149,8 +4163,9 @@ fn bounded_tcp_response_can_be_analyzed_as_binary_source() {
         .arg(&endpoint)
         .output()
         .unwrap();
-    server.join().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+    assert!(vm.status.success(), "{}", stderr(&vm));
+    server.join().unwrap();
     let output = stdout(&out);
     assert!(output.contains("sha256:"), "{output}");
     assert!(
@@ -4159,7 +4174,6 @@ fn bounded_tcp_response_can_be_analyzed_as_binary_source() {
     );
     assert!(output.contains("decoder: u16le, value: 16711"), "{output}");
     assert!(output.ends_with("[0]\n"), "{output}");
-    assert!(vm.status.success(), "{}", stderr(&vm));
     let vm_output = stdout(&vm);
     assert!(
         vm_output.contains("decoder: u16le, value: 16711"),
