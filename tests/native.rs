@@ -3730,6 +3730,37 @@ fn native_match_expression_matches_vm_and_evaluates_subject_once() {
 }
 
 #[test]
+fn radix_literals_match_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "radix-literals.gaks",
+        "print 0b1111_0000 & 0o77\nprint 0O755\nprint 1_000_000 + 0X10\nprint 0b1000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000u64 >> 63u64\nprint match 0b1010 { 0o12 => 1, _ => 0 }\nprint 0xFFFF_FFFF_FFFF_FFFF\n",
+    );
+    let expected = b"48\n493\n1000016\n1\n1\n-1\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let result = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_bitwise_operations_match_vm_and_reject_invalid_shifts() {
     if !gcc_available() {
         return;

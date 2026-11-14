@@ -358,52 +358,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 TokenKind::String(value)
             }
             c if c.is_ascii_digit() => {
-                let start = lexer.pos;
-                if c == '0' && lexer.input[lexer.pos..].starts_with("0x") {
-                    lexer.bump();
-                    lexer.bump();
-                    let digits = lexer.pos;
-                    while matches!(lexer.peek(), Some(c) if c.is_ascii_hexdigit()) {
-                        lexer.bump();
-                    }
-                    if digits == lexer.pos {
-                        return Err(format!("{line}:{col}: hex literal has no digits"));
-                    }
-                    let n = u64::from_str_radix(&lexer.input[digits..lexer.pos], 16)
-                        .map_err(|_| format!("{line}:{col}: integer overflow"))?;
-                    if lexer.input[lexer.pos..].starts_with("u64") {
-                        for _ in 0..3 {
-                            lexer.bump();
-                        }
-                        TokenKind::Unsigned(n)
-                    } else {
-                        TokenKind::Number(n as i64)
-                    }
-                } else {
-                    while matches!(lexer.peek(), Some(c) if c.is_ascii_digit()) {
-                        lexer.bump();
-                    }
-                    if lexer.input[lexer.pos..].starts_with("u64") {
-                        let n = lexer.input[start..lexer.pos]
-                            .parse::<u64>()
-                            .map_err(|_| format!("{line}:{col}: integer overflow"))?;
-                        for _ in 0..3 {
-                            lexer.bump();
-                        }
-                        TokenKind::Unsigned(n)
-                    } else {
-                        let n = lexer.input[start..lexer.pos]
-                            .parse::<u64>()
-                            .map_err(|_| format!("{line}:{col}: integer overflow"))?;
-                        if n <= i64::MAX as u64 {
-                            TokenKind::Number(n as i64)
-                        } else if n == (i64::MAX as u64) + 1 {
-                            TokenKind::MinMagnitude
-                        } else {
-                            return Err(format!("{line}:{col}: integer overflow"));
-                        }
-                    }
-                }
+                lexer.number(line, col)?
             }
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let start = lexer.pos;
@@ -432,6 +387,61 @@ struct Lexer<'a> {
     col: usize,
 }
 impl Lexer<'_> {
+    fn number(&mut self, line: usize, col: usize) -> Result<TokenKind, String> {
+        let prefix = self.input[self.pos..].get(..2).unwrap_or("");
+        let radix: u32 = match prefix {
+            "0x" | "0X" => 16,
+            "0b" | "0B" => 2,
+            "0o" | "0O" => 8,
+            _ => 10,
+        };
+        if radix != 10 {
+            self.bump();
+            self.bump();
+        }
+        let mut value = 0_u64;
+        let mut digits = 0;
+        while let Some(ch) = self.peek() {
+            if let Some(digit) = ch.to_digit(radix).filter(|_| ch.is_ascii()) {
+                value = value
+                    .checked_mul(u64::from(radix))
+                    .and_then(|n| n.checked_add(u64::from(digit)))
+                    .ok_or_else(|| format!("{line}:{col}: integer overflow"))?;
+                digits += 1;
+                self.bump();
+            } else if ch == '_' {
+                let next = self.input[self.pos + 1..].chars().next();
+                if digits == 0 || !next.is_some_and(|c| c.is_ascii() && c.to_digit(radix).is_some()) {
+                    return Err(format!("{line}:{col}: invalid digit separator in integer literal"));
+                }
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        if digits == 0 {
+            return Err(format!("{line}:{col}: base {radix} literal has no digits"));
+        }
+        let unsigned = self.input[self.pos..].starts_with("u64");
+        if unsigned {
+            for _ in 0..3 {
+                self.bump();
+            }
+        }
+        if matches!(self.peek(), Some(ch) if ch.is_ascii_alphanumeric() || ch == '_') {
+            return Err(format!("{line}:{col}: invalid digit in base {radix} integer literal"));
+        }
+        if unsigned {
+            Ok(TokenKind::Unsigned(value))
+        } else if radix != 10 || value <= i64::MAX as u64 {
+            Ok(TokenKind::Number(value as i64))
+        } else if value == (i64::MAX as u64) + 1 {
+            Ok(TokenKind::MinMagnitude)
+        } else {
+            Err(format!("{line}:{col}: integer overflow"))
+        }
+    }
+
     fn peek(&self) -> Option<char> {
         self.input[self.pos..].chars().next()
     }
@@ -1927,6 +1937,28 @@ fn valid_binding_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{lex, parse};
+
+    #[test]
+    fn radix_literals_validate_digits_and_separators() {
+        for source in [
+            "print 0b1010_0110\n",
+            "print 0B1111u64\n",
+            "print 0o755\n",
+            "print 0O7_7u64\n",
+            "print 0xFF_A0\n",
+            "print 0X10\n",
+            "print 1_000_000\n",
+        ] {
+            assert!(parse(lex(source).unwrap()).is_ok(), "{source}");
+        }
+        for source in [
+            "print 0b\n", "print 0o\n", "print 0x\n", "print 0b102\n",
+            "print 0o8\n", "print 0xFG\n", "print 0b_1\n", "print 1__0\n",
+            "print 1_\n", "print 0x1_\n", "print 18446744073709551616u64\n",
+        ] {
+            assert!(lex(source).is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn signed_minimum_literal_requires_a_minus() {
