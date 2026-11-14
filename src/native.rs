@@ -2,7 +2,7 @@ use crate::syntax::{
     self, BlockStmt, BlockStmtKind, Expr, ExprKind, FunctionBody, MatchPattern, Op, Param, Stmt,
     StmtKind,
 };
-use crate::{file_access, project, runtime};
+use crate::{file_access, formats, project, runtime};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -1487,6 +1487,15 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
             diagnostic.chars().take(4096).collect::<String>()
         ));
     }
+    if let Err(error) = verify_native_hardening(&output) {
+        if let Err(cleanup) = fs::remove_file(&output) {
+            return Err(format!(
+                "{error}; cannot remove rejected native output {}: {cleanup}",
+                output.display()
+            ));
+        }
+        return Err(error);
+    }
     if cfg!(target_os = "windows") {
         let rendered = output.to_string_lossy();
         Ok(PathBuf::from(
@@ -1495,6 +1504,50 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     } else {
         Ok(output)
     }
+}
+
+fn verify_native_hardening(path: &Path) -> Result<(), String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?;
+    let report = formats::probe(&bytes)
+        .map_err(|error| format!("native output format verification failed: {error}"))?;
+    let (kind, required): (&str, &[(&str, &str)]) = if cfg!(windows) {
+        (
+            "pe",
+            &[
+                ("pe.dynamic_base", "present"),
+                ("pe.high_entropy_va", "present"),
+                ("pe.nx_compat", "present"),
+                ("pe.section_wx", "absent"),
+            ],
+        )
+    } else {
+        (
+            "elf",
+            &[
+                ("elf.et_dyn", "present"),
+                ("elf.gnu_stack_nx", "present"),
+                ("elf.relro_now", "present"),
+                ("elf.load_rwx", "absent"),
+            ],
+        )
+    };
+    if report.kind() != kind || report.bits() != 64 {
+        return Err(format!(
+            "native output format verification failed: expected 64-bit {kind}"
+        ));
+    }
+    for &(signal, expected) in required {
+        let actual = report.signal(signal).map_err(|error| {
+            format!("native output hardening verification failed: {error}")
+        })?;
+        if actual != expected {
+            return Err(format!(
+                "native output hardening verification failed: {signal} is {actual}, expected {expected}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn gcc_path(path: &Path) -> String {
@@ -9643,6 +9696,42 @@ gak_cli_utf8_done:
 #[cfg(test)]
 mod source_validation_tests {
     use super::*;
+
+    #[test]
+    fn native_hardening_rejects_a_modified_output_header() {
+        if Command::new("gcc").arg("--version").output().is_err() {
+            return;
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "galeikan-native-hardening-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("main.gak");
+        fs::write(&source, "print 1\n").unwrap();
+        let output = compile(&source).unwrap();
+        verify_native_hardening(&output).unwrap();
+        let mut bytes = fs::read(&output).unwrap();
+        if cfg!(windows) {
+            let report = formats::probe(&bytes).unwrap();
+            let flags = report.field("dll_characteristics").unwrap();
+            bytes[flags.offset] &= !0x40;
+        } else {
+            bytes[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        }
+        fs::write(&output, &bytes).unwrap();
+        let error = verify_native_hardening(&output).unwrap_err();
+        assert!(error.contains(if cfg!(windows) {
+            "pe.dynamic_base"
+        } else {
+            "elf.et_dyn"
+        }), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn runtime_error_rewriting_only_changes_exact_branch_targets() {
