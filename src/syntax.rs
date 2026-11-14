@@ -6,6 +6,7 @@ const MAX_EXPR_DEPTH: usize = 128;
 pub enum TokenKind {
     Ident(String),
     Number(i64),
+    MinMagnitude,
     Unsigned(u64),
     String(String),
     Plus,
@@ -392,9 +393,15 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                         TokenKind::Unsigned(n)
                     } else {
                         let n = lexer.input[start..lexer.pos]
-                            .parse::<i64>()
+                            .parse::<u64>()
                             .map_err(|_| format!("{line}:{col}: integer overflow"))?;
-                        TokenKind::Number(n)
+                        if n <= i64::MAX as u64 {
+                            TokenKind::Number(n as i64)
+                        } else if n == (i64::MAX as u64) + 1 {
+                            TokenKind::MinMagnitude
+                        } else {
+                            return Err(format!("{line}:{col}: integer overflow"));
+                        }
                     }
                 }
             }
@@ -1304,6 +1311,7 @@ impl Parser {
         let token = self.bump();
         let mut left = match token.kind {
             TokenKind::Number(n) => Expr::new(ExprKind::Int(n), token.line, token.col)?,
+            TokenKind::MinMagnitude => return Err(format!("{}:{}: integer overflow", token.line, token.col)),
             TokenKind::Unsigned(n) => Expr::new(ExprKind::UInt(n), token.line, token.col)?,
             TokenKind::String(s) => Expr::new(ExprKind::Str(s), token.line, token.col)?,
             TokenKind::Ident(name) if name == "true" || name == "false" => {
@@ -1339,8 +1347,13 @@ impl Parser {
                 }
             }
             TokenKind::Minus => {
-                let inner = self.expr(11)?;
-                Expr::new(ExprKind::Neg(Box::new(inner)), token.line, token.col)?
+                if self.current().kind == TokenKind::MinMagnitude {
+                    self.bump();
+                    Expr::new(ExprKind::Int(i64::MIN), token.line, token.col)?
+                } else {
+                    let inner = self.expr(11)?;
+                    Expr::new(ExprKind::Neg(Box::new(inner)), token.line, token.col)?
+                }
             }
             TokenKind::Tilde => {
                 let inner = self.expr(11)?;
@@ -1556,14 +1569,15 @@ impl Parser {
                 TokenKind::Number(value) => MatchPattern::Int(value),
                 TokenKind::Unsigned(value) => MatchPattern::UInt(value),
                 TokenKind::Minus => {
-                    let TokenKind::Number(value) = self.bump().kind else {
-                        return Err(self.error("match pattern must be a literal"));
-                    };
-                    MatchPattern::Int(
-                        value
-                            .checked_neg()
-                            .ok_or_else(|| self.error("integer overflow"))?,
-                    )
+                    match self.bump().kind {
+                        TokenKind::MinMagnitude => MatchPattern::Int(i64::MIN),
+                        TokenKind::Number(value) => MatchPattern::Int(
+                            value
+                                .checked_neg()
+                                .ok_or_else(|| self.error("integer overflow"))?,
+                        ),
+                        _ => return Err(self.error("match pattern must be a literal")),
+                    }
                 }
                 TokenKind::String(value) => MatchPattern::Str(value),
                 TokenKind::Ident(value)
@@ -1913,6 +1927,16 @@ fn valid_binding_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{lex, parse};
+
+    #[test]
+    fn signed_minimum_literal_requires_a_minus() {
+        assert!(parse(lex("print -9223372036854775808\n").unwrap()).is_ok());
+        assert!(parse(lex("print match -9223372036854775808 { -9223372036854775808 => 1, _ => 0 }\n").unwrap()).is_ok());
+        for source in ["print 9223372036854775808\n", "print -9223372036854775809\n"] {
+            let error = lex(source).and_then(parse).unwrap_err();
+            assert!(error.contains("integer overflow"), "{error}");
+        }
+    }
 
     #[test]
     fn binary_expression_depth_is_bounded_without_limiting_width() {

@@ -81,9 +81,9 @@ fn checked_integer_conversions_match_all_engines() {
     let s = Sandbox::new();
     let script = s.write(
         "integer-conversions.gak",
-        "from std.result import is_error\nfn negative() -> Result<u64> = u64(-1)\nfn overflow() -> Result<i64> = i64(9223372036854775808u64)\nprint u64(42)\nprint i64(42u64)\nprint u64(18446744073709551615u64)\nprint i64(-7)\nprint is_error(negative())\nprint is_error(overflow())\n",
+        "from std.result import is_error\nfn negative() -> Result<u64> = u64(-1)\nfn overflow() -> Result<i64> = i64(9223372036854775808u64)\nfn negate_min() -> Result<i64> = -(-9223372036854775808)\nlet minimum: i64 = -9223372036854775808\nprint u64(42)\nprint i64(42u64)\nprint u64(18446744073709551615u64)\nprint i64(-7)\nprint is_error(negative())\nprint is_error(overflow())\nprint minimum\nprint minimum + 1\nprint match minimum { -9223372036854775808 => true, _ => false }\nprint is_error(negate_min())\n",
     );
-    let expected = b"42\n42\n18446744073709551615\n-7\ntrue\ntrue\n";
+    let expected = b"42\n42\n18446744073709551615\n-7\ntrue\ntrue\n-9223372036854775808\n-9223372036854775807\ntrue\ntrue\n";
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
