@@ -7831,21 +7831,23 @@ impl Runtime {
 
     fn iter(&self, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
-            ("range", [end]) | ("range", [_, end]) => {
-                let start = if args.len() == 1 {
-                    0
-                } else {
-                    args[0].as_int()?
-                };
+            ("range", [end]) | ("range", [_, end]) | ("range", [_, end, _]) => {
+                let start = if args.len() == 1 { 0 } else { args[0].as_int()? };
                 let end = end.as_int()?;
+                let step = if args.len() == 3 { args[2].as_int()? } else { 1 };
                 let start =
                     usize::try_from(start).map_err(|_| "range start must not be negative")?;
                 let end = usize::try_from(end).map_err(|_| "range end must not be negative")?;
-                let count = end.saturating_sub(start);
+                let step = usize::try_from(step)
+                    .ok()
+                    .filter(|step| *step > 0)
+                    .ok_or("range step must be positive")?;
+                let span = end.saturating_sub(start);
+                let count = span / step + usize::from(span % step != 0);
                 if count > MAX_LOOP_ITEMS {
                     return Err(format!("range exceeds {MAX_LOOP_ITEMS} items"));
                 }
-                Ok(Value::Offsets((start..end).collect()))
+                Ok(Value::Offsets((start..end).step_by(step).collect()))
             }
             _ => Err(format!(
                 "unknown iter function or wrong argument count: {name}"
@@ -8817,8 +8819,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         };
     }
     if module == "iter" {
-        if name != "range" || !(args.len() == 1 || args.len() == 2) {
-            return Err(format!("{qualified} expects 1 or 2 arguments"));
+        if name != "range" || !(1..=3).contains(&args.len()) {
+            return Err(format!("{qualified} expects 1, 2, or 3 arguments"));
         }
         for actual in args {
             require_type(Int, *actual)?;

@@ -11595,6 +11595,71 @@ print message(too_many())
 }
 
 #[test]
+fn iter_range_step_matches_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "range-step.gaks",
+        r#"from std.iter import range
+from std.result import is_error, message
+var calls = 0
+fn stride() -> i64 {
+    calls = calls + 1
+    return 3
+}
+fn zero() -> Result<Offsets> = range(0, 10, 0)
+fn negative() -> Result<Offsets> = range(0, 10, -1)
+fn too_many() -> Result<Offsets> = range(0, 200001, 2)
+let values: Offsets = range(1, 11, stride())
+var total = 0
+print len(values)
+print values[0]
+print values[3]
+print calls
+for index in range(0, 10, 3) {
+    total = total + index
+}
+print total
+print len(range(9, 2, 5))
+print len(range(0, 9223372036854775807, 9223372036854775807))
+print is_error(zero())
+print is_error(negative())
+print is_error(too_many())
+print message(zero())
+print message(too_many())
+"#,
+    );
+    let expected = b"4\n1\n10\n1\n18\n0\n1\ntrue\ntrue\ntrue\nrange step must be positive\nrange exceeds 100000 items\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn offsets_indexing_matches_all_engines() {
     let s = Sandbox::new();
     let script = s.write(

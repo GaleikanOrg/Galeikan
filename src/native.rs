@@ -312,6 +312,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_shift_range", "shift count must be in 0..63"),
     ("gak_range_start", "range start must not be negative"),
     ("gak_range_end", "range end must not be negative"),
+    ("gak_range_step", "range step must be positive"),
     ("gak_range_limit", "range exceeds 100000 items"),
     ("gak_loop_limit", "loop exceeds 100000 items"),
     ("gak_list_index", "list index out of range"),
@@ -7313,14 +7314,15 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
-        if name != "range" || !(1..=2).contains(&args.len()) {
+        if name != "range" || !(1..=3).contains(&args.len()) {
             return Err(format!(
                 "unknown native iter function or wrong arguments: {name}"
             ));
         }
         let start_slot = self.reserve_slot()?;
         let end_slot = self.reserve_slot()?;
-        if args.len() == 2 {
+        let step_slot = self.reserve_slot()?;
+        if args.len() >= 2 {
             if self.expr(&args[0], scope)? != Scalar::Int {
                 return Err("range start must be i64".into());
             }
@@ -7328,15 +7330,25 @@ impl Codegen {
         } else {
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], 0", start_slot * 8).unwrap();
         }
-        if self.expr(args.last().expect("range has an end"), scope)? != Scalar::Int {
+        let end_arg = if args.len() == 1 { &args[0] } else { &args[1] };
+        if self.expr(end_arg, scope)? != Scalar::Int {
             return Err("range end must be i64".into());
         }
         writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", end_slot * 8).unwrap();
+        if args.len() == 3 {
+            if self.expr(&args[2], scope)? != Scalar::Int {
+                return Err("range step must be i64".into());
+            }
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", step_slot * 8).unwrap();
+        } else {
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], 1", step_slot * 8).unwrap();
+        }
         let empty = self.label();
         let ready = self.label();
+        let count_ready = self.label();
         let copy = self.label();
         let done = self.label();
-        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_range_start\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_range_end\n    cmp r10, rax\n    jle {empty}\n    sub r10, rax\n    cmp r10, {MAX_RANGE_ITEMS}\n    jg gak_range_limit\n    mov rax, r10\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n    mov rcx, QWORD PTR [rax]\n{copy}:\n    cmp r11, rcx\n    jae {done}\n    mov QWORD PTR [rax+r11*8+8], r10\n    inc r10\n    inc r11\n    jmp {copy}\n{done}:", start_slot * 8, end_slot * 8, start_slot * 8).unwrap();
+        writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    test rax, rax\n    js gak_range_start\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_range_end\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    jle gak_range_step\n    cmp rax, QWORD PTR [rbp-{}]\n    jge {empty}\n    mov rax, QWORD PTR [rbp-{}]\n    sub rax, QWORD PTR [rbp-{}]\n    xor edx, edx\n    div QWORD PTR [rbp-{}]\n    test rdx, rdx\n    jz {count_ready}\n    inc rax\n{count_ready}:\n    cmp rax, {MAX_RANGE_ITEMS}\n    ja gak_range_limit\n    jmp {ready}\n{empty}:\n    xor eax, eax\n{ready}:\n    call gak_alloc_list\n    mov r10, QWORD PTR [rbp-{}]\n    xor r11d, r11d\n    mov rcx, QWORD PTR [rax]\n{copy}:\n    cmp r11, rcx\n    jae {done}\n    mov QWORD PTR [rax+r11*8+8], r10\n    add r10, QWORD PTR [rbp-{}]\n    inc r11\n    jmp {copy}\n{done}:", start_slot * 8, end_slot * 8, step_slot * 8, end_slot * 8, end_slot * 8, start_slot * 8, step_slot * 8, start_slot * 8, step_slot * 8).unwrap();
         Ok(Scalar::Offsets)
     }
 
@@ -8292,6 +8304,7 @@ impl Codegen {
         let mut out = String::new();
         writeln!(out, ".equ gak_frame_reserve, {reserve}").unwrap();
         out.push_str(".intel_syntax noprefix\n.section .rodata\ngak_int_fmt: .asciz \"%lld\\n\"\ngak_true: .asciz \"true\"\ngak_false: .asciz \"false\"\ngak_overflow_msg: .ascii \"integer overflow\\n\"\ngak_overflow_msg_end:\ngak_divzero_msg: .ascii \"division by zero\\n\"\ngak_divzero_msg_end:\ngak_shift_range_msg: .ascii \"shift count must be in 0..63\\n\"\ngak_shift_range_msg_end:\ngak_limit_msg: .ascii \"execution exceeds 1000000 action steps\\n\"\ngak_limit_msg_end:\ngak_range_start_msg: .ascii \"range start must not be negative\\n\"\ngak_range_start_msg_end:\ngak_range_end_msg: .ascii \"range end must not be negative\\n\"\ngak_range_end_msg_end:\ngak_range_limit_msg: .ascii \"range exceeds 100000 items\\n\"\ngak_range_limit_msg_end:\ngak_record_limit_msg: .ascii \"native struct memory exceeds 64 MiB\\n\"\ngak_record_limit_msg_end:\ngak_alloc_failure_msg: .ascii \"native allocation failed\\n\"\ngak_alloc_failure_msg_end:\ngak_list_limit_msg: .ascii \"list exceeds 100000 items or 64 MiB of native allocations\\n\"\ngak_list_limit_msg_end:\ngak_list_index_msg: .ascii \"list index out of range\\n\"\ngak_list_index_msg_end:\n");
+        out.push_str("gak_range_step_msg: .ascii \"range step must be positive\\n\"\ngak_range_step_msg_end:\n");
         out.push_str("gak_loop_limit_msg: .ascii \"loop exceeds 100000 items\\n\"\ngak_loop_limit_msg_end:\n");
         out.push_str(
             "gak_assert_failed_msg: .ascii \"assertion failed\\n\"\ngak_assert_failed_msg_end:\n",
@@ -9438,6 +9451,7 @@ gak_cli_utf8_done:
             ("gak_limit", "gak_limit_msg"),
             ("gak_range_start", "gak_range_start_msg"),
             ("gak_range_end", "gak_range_end_msg"),
+            ("gak_range_step", "gak_range_step_msg"),
             ("gak_range_limit", "gak_range_limit_msg"),
             ("gak_loop_limit", "gak_loop_limit_msg"),
             ("gak_record_limit", "gak_record_limit_msg"),
