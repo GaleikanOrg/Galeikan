@@ -4338,8 +4338,8 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::UInt)
             }
-            ("pointer_chain_u64" | "pointer_path_u64", [regions, address, steps]) => {
-                let path = name == "pointer_path_u64";
+            ("pointer_chain_u32" | "pointer_chain_u64" | "pointer_path_u32" | "pointer_path_u64", [regions, address, steps]) => {
+                let path = matches!(name, "pointer_path_u32" | "pointer_path_u64");
                 let arguments = [regions, address, steps];
                 let expected = [Scalar::Regions, Scalar::UInt, if path { Scalar::ListInt } else { Scalar::Int }];
                 let mut slots = Vec::with_capacity(3);
@@ -4347,16 +4347,21 @@ impl Codegen {
                     let actual = self.expr(argument, scope)?;
                     if actual != kind && !(path && index == 2 && actual == Scalar::ListEmpty) {
                         return Err(if path {
-                            "process.pointer_path_u64 expects Regions, u64, List<i64>".into()
+                            format!("process.{name} expects Regions, u64, List<i64>")
                         } else {
-                            "process.pointer_chain_u64 expects Regions, u64, i64".into()
+                            format!("process.{name} expects Regions, u64, i64")
                         });
                     }
                     let slot = self.reserve_slot()?;
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     slots.push(slot);
                 }
-                let target = if path { "gak_native_process_pointer_path_u64" } else { "gak_native_process_pointer_chain_u64" };
+                let target = match name {
+                    "pointer_path_u32" => "gak_native_process_pointer_path_u32",
+                    "pointer_path_u64" => "gak_native_process_pointer_path_u64",
+                    "pointer_chain_u32" => "gak_native_process_pointer_chain_u32",
+                    _ => "gak_native_process_pointer_chain_u64",
+                };
                 writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {target}", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8).unwrap();
                 self.process_checked_result();
                 self.uses_process = true;

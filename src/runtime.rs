@@ -4364,10 +4364,15 @@ impl Runtime {
                             | "snapshot_at_u64"
                             | "hunt_region"
                             | "hunt_regions"
+                            | "pointer_refs_u32"
                             | "pointer_refs_u64"
+                            | "read_pointer_u32"
                             | "read_pointer_u64"
+                            | "pointer_chain_u32"
                             | "pointer_chain_u64"
+                            | "pointer_path_u32"
                             | "pointer_path_u64"
+                            | "pointer_refs_regions_u32"
                             | "pointer_refs_regions_u64"
                     ) {
                         self.check_effect(module, "process.inspect")?;
@@ -5942,22 +5947,22 @@ impl Runtime {
                     process::read_pointer_u64(region, offset)?
                 }))
             }
-            ("pointer_chain_u64", [Value::Regions(regions), address, depth]) => {
+            ("pointer_chain_u32" | "pointer_chain_u64", [Value::Regions(regions), address, depth]) => {
                 self.check_effect(module, "process.inspect")?;
                 let depth = usize::try_from(depth.as_int()?)
                     .map_err(|_| "pointer chain depth must be 0..32")?;
                 if depth > 32 {
                     return Err("pointer chain depth must be 0..32".into());
                 }
-                follow_pointer_path(regions, address.as_uint()?, &[0; 32][..depth], &self.allowed_processes)
+                follow_pointer_path(regions, address.as_uint()?, &[0; 32][..depth], &self.allowed_processes, name == "pointer_chain_u32")
             }
-            ("pointer_path_u64", [Value::Regions(regions), address, Value::List(offsets, _)]) => {
+            ("pointer_path_u32" | "pointer_path_u64", [Value::Regions(regions), address, Value::List(offsets, _)]) => {
                 self.check_effect(module, "process.inspect")?;
                 if offsets.len() > 32 {
                     return Err("pointer path must contain 0..32 offsets".into());
                 }
                 let offsets = offsets.iter().map(Value::as_int).collect::<Result<Vec<_>, _>>()?;
-                follow_pointer_path(regions, address.as_uint()?, &offsets, &self.allowed_processes)
+                follow_pointer_path(regions, address.as_uint()?, &offsets, &self.allowed_processes, name == "pointer_path_u32")
             }
             ("count", [Value::Regions(regions)]) => Ok(Value::Int(
                 i64::try_from(regions.len()).map_err(|_| "region count out of range")?,
@@ -8264,6 +8269,7 @@ fn follow_pointer_path(
     mut current: u64,
     offsets: &[i64],
     allowed_processes: &HashSet<u32>,
+    pointer32: bool,
 ) -> Result<Value, String> {
     let first_address = usize::try_from(current).map_err(|_| "process address out of range")?;
     let first = locate_region(regions, first_address)?;
@@ -8286,7 +8292,11 @@ fn follow_pointer_path(
             return Err("pointer chain crosses process regions".into());
         }
         let offset = region.offset_of(read_address)?;
-        let next = process::read_pointer_u64(&region, offset)?;
+        let next = if pointer32 {
+            process::read_pointer_u32(&region, offset)?
+        } else {
+            process::read_pointer_u64(&region, offset)?
+        };
         if chain.iter().any(|value| matches!(value, Value::UInt(address) if *address == next)) {
             return Err("pointer chain cycle".into());
         }
@@ -9235,8 +9245,8 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("process", "pointer_refs_u32" | "pointer_refs_u64") => (&[Region, UInt, Int, Int], Offsets),
         ("process", "pointer_refs_regions_u32" | "pointer_refs_regions_u64") => (&[Regions, UInt, Int, Int], Type::List(Some(ResultKind::UInt))),
         ("process", "read_pointer_u32" | "read_pointer_u64") => (&[Region, Int], UInt),
-        ("process", "pointer_chain_u64") => (&[Regions, UInt, Int], Type::List(Some(ResultKind::UInt))),
-        ("process", "pointer_path_u64") => (&[Regions, UInt, Type::List(Some(ResultKind::Int))], Type::List(Some(ResultKind::UInt))),
+        ("process", "pointer_chain_u32" | "pointer_chain_u64") => (&[Regions, UInt, Int], Type::List(Some(ResultKind::UInt))),
+        ("process", "pointer_path_u32" | "pointer_path_u64") => (&[Regions, UInt, Type::List(Some(ResultKind::Int))], Type::List(Some(ResultKind::UInt))),
         ("process", "snapshot_ref") => (&[Region, Str, Int], Source),
         ("process", "snapshot_at") => (&[Regions, Int, Int], Source),
         ("process", "snapshot_at_u64") => (&[Regions, UInt, Int], Source),

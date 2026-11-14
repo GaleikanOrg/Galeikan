@@ -2026,9 +2026,10 @@ uint64_t gak_native_process_read_pointer_u32(GakRegion *region, int64_t offset) 
     return value;
 }
 
-static uint64_t *gak_process_pointer_path_u64(GakRegions *regions,
-                                              uint64_t address,
-                                              const int64_t *offsets, size_t count) {
+static uint64_t *gak_process_pointer_path(GakRegions *regions,
+                                          uint64_t address,
+                                          const int64_t *offsets, size_t count,
+                                          unsigned pointer_width) {
     gak_file_error = NULL;
     GakRegion *first = gak_native_process_locate(regions, address);
     if (!first) return NULL;
@@ -2077,7 +2078,9 @@ static uint64_t *gak_process_pointer_path_u64(GakRegions *regions,
             gak_failf("region offset outside i64 range");
             goto failed;
         }
-        uint64_t next = gak_native_process_read_pointer_u64(region, (int64_t)offset);
+        uint64_t next = pointer_width == 4
+            ? gak_native_process_read_pointer_u32(region, (int64_t)offset)
+            : gak_native_process_read_pointer_u64(region, (int64_t)offset);
         if (gak_file_error) goto failed;
         for (size_t prior = 0; prior <= hop; prior++) {
             if (chain[prior + 1] == next) {
@@ -2107,7 +2110,17 @@ uint64_t *gak_native_process_pointer_chain_u64(GakRegions *regions,
         return NULL;
     }
     const int64_t offsets[32] = {0};
-    return gak_process_pointer_path_u64(regions, address, offsets, (size_t)depth);
+    return gak_process_pointer_path(regions, address, offsets, (size_t)depth, 8);
+}
+
+uint64_t *gak_native_process_pointer_chain_u32(GakRegions *regions,
+                                                uint64_t address, int64_t depth) {
+    if (depth < 0 || depth > 32) {
+        gak_failf("pointer chain depth must be 0..32");
+        return NULL;
+    }
+    const int64_t offsets[32] = {0};
+    return gak_process_pointer_path(regions, address, offsets, (size_t)depth, 4);
 }
 
 uint64_t *gak_native_process_pointer_path_u64(GakRegions *regions,
@@ -2116,7 +2129,16 @@ uint64_t *gak_native_process_pointer_path_u64(GakRegions *regions,
         gak_failf("pointer path must contain 0..32 offsets");
         return NULL;
     }
-    return gak_process_pointer_path_u64(regions, address, offsets + 1, (size_t)offsets[0]);
+    return gak_process_pointer_path(regions, address, offsets + 1, (size_t)offsets[0], 8);
+}
+
+uint64_t *gak_native_process_pointer_path_u32(GakRegions *regions,
+                                               uint64_t address, const int64_t *offsets) {
+    if (!offsets || (uint64_t)offsets[0] > 32) {
+        gak_failf("pointer path must contain 0..32 offsets");
+        return NULL;
+    }
+    return gak_process_pointer_path(regions, address, offsets + 1, (size_t)offsets[0], 4);
 }
 
 static int gak_process_decode_hunt_text(const uint8_t *pattern,
