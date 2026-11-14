@@ -169,6 +169,13 @@ pub fn executable_regions(pid: u32) -> Result<Vec<Region>, String> {
         .collect())
 }
 
+pub fn non_image_executable_regions(pid: u32) -> Result<Vec<Region>, String> {
+    Ok(regions(pid)?
+        .into_iter()
+        .filter(|region| !region.image_backed && region.access.as_bytes().get(2) == Some(&b'x'))
+        .collect())
+}
+
 pub fn wx_regions(pid: u32) -> Result<Vec<Region>, String> {
     Ok(regions(pid)?
         .into_iter()
