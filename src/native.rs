@@ -1507,8 +1507,23 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
 }
 
 fn verify_native_hardening(path: &Path) -> Result<(), String> {
-    let bytes = fs::read(path)
+    const MAX_INSPECT_BYTES: u64 = 512 * 1024 * 1024;
+    let file = fs::File::open(path)
         .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?;
+    let length = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?
+        .len();
+    if length > MAX_INSPECT_BYTES {
+        return Err("native output exceeds 512 MiB inspection limit".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_INSPECT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?;
+    if bytes.len() as u64 > MAX_INSPECT_BYTES {
+        return Err("native output exceeds 512 MiB inspection limit".into());
+    }
     let report = formats::probe(&bytes)
         .map_err(|error| format!("native output format verification failed: {error}"))?;
     let (kind, required): (&str, &[(&str, &str)]) = if cfg!(windows) {
