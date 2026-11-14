@@ -5860,7 +5860,7 @@ impl Runtime {
                 }
                 make_list(addresses)
             }
-            ("pointer_refs_u64", [Value::Region(region), target, offset, length]) => {
+            ("pointer_refs_u32" | "pointer_refs_u64", [Value::Region(region), target, offset, length]) => {
                 self.check_effect(module, "process.inspect")?;
                 if !self.allowed_processes.contains(&region.pid) {
                     return Err(format!("process access not allowed: {}", region.pid));
@@ -5870,13 +5870,22 @@ impl Runtime {
                     .map_err(|_| "region offset out of range")?;
                 let length = usize::try_from(length.as_int()?)
                     .map_err(|_| "region length out of range")?;
-                Ok(Value::Offsets(process::pointer_refs_u64(
-                    region, target, offset, length,
-                )?))
+                let hits = if name == "pointer_refs_u32" {
+                    let target = u32::try_from(target).map_err(|_| "32-bit pointer target out of range")?;
+                    process::pointer_refs_u32(region, target, offset, length)?
+                } else {
+                    process::pointer_refs_u64(region, target, offset, length)?
+                };
+                Ok(Value::Offsets(hits))
             }
-            ("pointer_refs_regions_u64", [Value::Regions(regions), target, per_region, total]) => {
+            ("pointer_refs_regions_u32" | "pointer_refs_regions_u64", [Value::Regions(regions), target, per_region, total]) => {
                 self.check_effect(module, "process.inspect")?;
                 let target = target.as_uint()?;
+                let target32 = if name == "pointer_refs_regions_u32" {
+                    Some(u32::try_from(target).map_err(|_| "32-bit pointer target out of range")?)
+                } else {
+                    None
+                };
                 let per_region = usize::try_from(per_region.as_int()?)
                     .map_err(|_| "per-region scan length out of range")?;
                 let total = usize::try_from(total.as_int()?)
@@ -5902,7 +5911,12 @@ impl Runtime {
                         continue;
                     }
                     let length = region.size.min(per_region).min(remaining);
-                    for offset in process::pointer_refs_u64(region, target, 0, length)? {
+                    let hits = if let Some(target32) = target32 {
+                        process::pointer_refs_u32(region, target32, 0, length)?
+                    } else {
+                        process::pointer_refs_u64(region, target, 0, length)?
+                    };
+                    for offset in hits {
                         let address = region.start.checked_add(offset)
                             .ok_or("process region address overflow")?;
                         addresses.push(Value::UInt(u64::try_from(address)
@@ -5915,14 +5929,18 @@ impl Runtime {
                 }
                 make_list(addresses)
             }
-            ("read_pointer_u64", [Value::Region(region), offset]) => {
+            ("read_pointer_u32" | "read_pointer_u64", [Value::Region(region), offset]) => {
                 self.check_effect(module, "process.inspect")?;
                 if !self.allowed_processes.contains(&region.pid) {
                     return Err(format!("process access not allowed: {}", region.pid));
                 }
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "region offset out of range")?;
-                Ok(Value::UInt(process::read_pointer_u64(region, offset)?))
+                Ok(Value::UInt(if name == "read_pointer_u32" {
+                    process::read_pointer_u32(region, offset)?
+                } else {
+                    process::read_pointer_u64(region, offset)?
+                }))
             }
             ("pointer_chain_u64", [Value::Regions(regions), address, depth]) => {
                 self.check_effect(module, "process.inspect")?;
@@ -9214,9 +9232,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             &[Regions, Type::Any, Int, Int],
             Type::List(Some(ResultKind::UInt)),
         ),
-        ("process", "pointer_refs_u64") => (&[Region, UInt, Int, Int], Offsets),
-        ("process", "pointer_refs_regions_u64") => (&[Regions, UInt, Int, Int], Type::List(Some(ResultKind::UInt))),
-        ("process", "read_pointer_u64") => (&[Region, Int], UInt),
+        ("process", "pointer_refs_u32" | "pointer_refs_u64") => (&[Region, UInt, Int, Int], Offsets),
+        ("process", "pointer_refs_regions_u32" | "pointer_refs_regions_u64") => (&[Regions, UInt, Int, Int], Type::List(Some(ResultKind::UInt))),
+        ("process", "read_pointer_u32" | "read_pointer_u64") => (&[Region, Int], UInt),
         ("process", "pointer_chain_u64") => (&[Regions, UInt, Int], Type::List(Some(ResultKind::UInt))),
         ("process", "pointer_path_u64") => (&[Regions, UInt, Type::List(Some(ResultKind::Int))], Type::List(Some(ResultKind::UInt))),
         ("process", "snapshot_ref") => (&[Region, Str, Int], Source),

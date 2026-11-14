@@ -4319,17 +4319,22 @@ impl Codegen {
                 self.uses_process = true;
                 Ok(Scalar::Str)
             }
-            ("read_pointer_u64", [region, offset]) => {
+            ("read_pointer_u32" | "read_pointer_u64", [region, offset]) => {
                 if self.expr(region, scope)? != Scalar::Region {
-                    return Err("process.read_pointer_u64 expects Region, i64".into());
+                    return Err(format!("process.{name} expects Region, i64"));
                 }
                 let region_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", region_slot * 8).unwrap();
                 if self.expr(offset, scope)? != Scalar::Int {
-                    return Err("process.read_pointer_u64 expects Region, i64".into());
+                    return Err(format!("process.{name} expects Region, i64"));
                 }
                 let ready = self.label();
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_process_read_pointer_u64\n    mov r10, QWORD PTR [rip+gak_file_error]\n    test r10, r10\n    jz {ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), region_slot * 8, self.arg1()).unwrap();
+                let target = if name == "read_pointer_u32" {
+                    "gak_native_process_read_pointer_u32"
+                } else {
+                    "gak_native_process_read_pointer_u64"
+                };
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call {target}\n    mov r10, QWORD PTR [rip+gak_file_error]\n    test r10, r10\n    jz {ready}\n    mov rax, r10\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), region_slot * 8, self.arg1()).unwrap();
                 self.uses_process = true;
                 Ok(Scalar::UInt)
             }
@@ -4358,11 +4363,11 @@ impl Codegen {
                 Ok(Scalar::ListUInt)
             }
             (
-                "hunt_region" | "hunt_regions" | "pointer_refs_u64" | "pointer_refs_regions_u64",
+                "hunt_region" | "hunt_regions" | "pointer_refs_u32" | "pointer_refs_u64" | "pointer_refs_regions_u32" | "pointer_refs_regions_u64",
                 [_, _, _, _],
             ) => {
-                let regions_refs = matches!(name, "hunt_regions" | "pointer_refs_regions_u64");
-                let pointer_refs = matches!(name, "pointer_refs_u64" | "pointer_refs_regions_u64");
+                let regions_refs = matches!(name, "hunt_regions" | "pointer_refs_regions_u32" | "pointer_refs_regions_u64");
+                let pointer_refs = matches!(name, "pointer_refs_u32" | "pointer_refs_u64" | "pointer_refs_regions_u32" | "pointer_refs_regions_u64");
                 let expected = [
                     if regions_refs { Scalar::Regions } else { Scalar::Region },
                     if pointer_refs { Scalar::UInt } else { Scalar::Bytes },
@@ -4379,12 +4384,12 @@ impl Codegen {
                         }
                         text_pattern = actual == Scalar::Str;
                     } else if actual != kind {
-                        return Err(if name == "pointer_refs_regions_u64" {
-                            "process.pointer_refs_regions_u64 expects Regions, u64, i64, i64".into()
+                        return Err(if matches!(name, "pointer_refs_regions_u32" | "pointer_refs_regions_u64") {
+                            format!("process.{name} expects Regions, u64, i64, i64")
                         } else if name == "hunt_regions" {
                             "process.hunt_regions expects Regions, bytes or str, i64, i64".into()
                         } else if pointer_refs {
-                            "process.pointer_refs_u64 expects Region, u64, i64, i64".into()
+                            format!("process.{name} expects Region, u64, i64, i64")
                         } else {
                             "process.hunt_region expects Region, bytes or str, i64, i64".into()
                         });
@@ -4393,12 +4398,16 @@ impl Codegen {
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     slots.push(slot);
                 }
-                let target = if name == "pointer_refs_regions_u64" {
+                let target = if name == "pointer_refs_regions_u32" {
+                    "gak_native_process_pointer_refs_regions_u32"
+                } else if name == "pointer_refs_regions_u64" {
                     "gak_native_process_pointer_refs_regions_u64"
                 } else if name == "hunt_regions" && text_pattern {
                     "gak_native_process_hunt_regions_text"
                 } else if name == "hunt_regions" {
                     "gak_native_process_hunt_regions"
+                } else if name == "pointer_refs_u32" {
+                    "gak_native_process_pointer_refs_u32"
                 } else if pointer_refs {
                     "gak_native_process_pointer_refs_u64"
                 } else if text_pattern {

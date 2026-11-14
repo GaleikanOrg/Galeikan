@@ -163,6 +163,49 @@ impl Drop for MemoryChild {
 }
 
 #[test]
+fn pointer_refs_u32_read_cross_chunk_memory_in_all_execution_modes() {
+    let Some(helper) = MemoryChild::spawn_scan() else {
+        return;
+    };
+    let pid = helper.child.id();
+    let address = helper.address;
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-pointer-u32-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("pointer-u32.gaks");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn too_wide(region: Region) -> Result<Offsets> = process.pointer_refs_u32(region, 4294967296u64, 0, 4)\nfn too_wide_regions(maps: Regions) -> Result<List<u64>> = process.pointer_refs_regions_u32(maps, 4294967296u64, 4, 4)\nfn bad_read(region: Region) -> Result<u64> = process.read_pointer_u32(region, -1)\nlet maps = process.heap_candidates({pid})\nlet region = process.locate_u64(maps, {address}u64)\nlet offset = process.offset_u64(region, {address}u64)\nlet marker = 0x214b4147u64\nlet hits = process.pointer_refs_u32(region, marker, offset, 1048608)\nprint len(hits) == 1\nprint hits[0] - offset == 1048574\nprint process.read_pointer_u32(region, offset + 1048574) == marker\nprint len(process.pointer_refs_u32(region, marker, offset, 0)) == 0\nprint is_error(too_wide(region))\nprint is_error(too_wide_regions(maps))\nprint is_error(bad_read(region))\n"
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan).arg("exec").arg(script.with_extension("gakb"))
+        .args(["--allow-process", &pid.to_string()]).output().unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected);
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let denied = Command::new(&executable).output().unwrap();
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("process access not allowed"));
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pointer_refs_across_regions_match_all_execution_modes() {
     let Some(helper) = MemoryChild::spawn_scattered_pointer_refs() else {
         return;
@@ -175,7 +218,7 @@ fn pointer_refs_across_regions_match_all_execution_modes() {
     fs::create_dir_all(&root).unwrap();
     let script = root.join("pointer-regions.gaks");
     fs::write(&script, format!(
-        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(maps: Regions, target: u64, per_region: i64, total: i64) -> Result<List<u64>> = process.pointer_refs_regions_u64(maps, target, per_region, total)\nlet maps = process.heap_candidates({pid})\nlet hits = process.pointer_refs_regions_u64(maps, {target}u64, 4096, 16777216)\nvar first = false\nvar second = false\nfor hit in hits {{\n    if hit == {address}u64 + 8u64 {{\n        first = true\n    }}\n    if hit == {address}u64 + 8224u64 {{\n        second = true\n    }}\n}}\nprint first\nprint second\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 0, 16777216)) == 0\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 4096, 0)) == 0\nprint is_error(bad(maps, {target}u64, -1, 4096))\nprint is_error(bad(maps, {target}u64, 4096, 16777217))\n"
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn bad(maps: Regions, target: u64, per_region: i64, total: i64) -> Result<List<u64>> = process.pointer_refs_regions_u64(maps, target, per_region, total)\nlet maps = process.heap_candidates({pid})\nlet hits = process.pointer_refs_regions_u64(maps, {target}u64, 4096, 16777216)\nlet hits32 = process.pointer_refs_regions_u32(maps, 0x89abcdefu64, 4096, 16777216)\nvar first = false\nvar second = false\nvar first32 = false\nvar second32 = false\nfor hit in hits {{\n    if hit == {address}u64 + 8u64 {{\n        first = true\n    }}\n    if hit == {address}u64 + 8224u64 {{\n        second = true\n    }}\n}}\nfor hit in hits32 {{\n    if hit == {address}u64 + 8u64 {{\n        first32 = true\n    }}\n    if hit == {address}u64 + 8224u64 {{\n        second32 = true\n    }}\n}}\nprint first\nprint second\nprint first32\nprint second32\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 0, 16777216)) == 0\nprint len(process.pointer_refs_regions_u64(maps, {target}u64, 4096, 0)) == 0\nprint is_error(bad(maps, {target}u64, -1, 4096))\nprint is_error(bad(maps, {target}u64, 4096, 16777217))\n"
     )).unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
     let undeclared = root.join("undeclared.gaks");
@@ -183,7 +226,7 @@ fn pointer_refs_across_regions_match_all_execution_modes() {
     let check = Command::new(galeikan).arg("check").arg(&undeclared).output().unwrap();
     assert!(!check.status.success());
     assert!(String::from_utf8_lossy(&check.stderr).contains("process.inspect was not declared"));
-    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    let expected = b"true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan).arg("run").arg(&script)
             .args(["--engine", engine, "--allow-process", &pid.to_string()]).output().unwrap();

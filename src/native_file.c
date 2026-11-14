@@ -1945,14 +1945,30 @@ uint64_t *gak_native_process_hunt_region(GakRegion *region,
     return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length, NULL);
 }
 
+static void gak_process_pointer_pattern(uint8_t *pattern, uint64_t target, unsigned width) {
+    uint64_t stored_width = width;
+    memcpy(pattern, &stored_width, sizeof(stored_width));
+    for (unsigned index = 0; index < width; index++)
+        pattern[8 + index] = (uint8_t)(target >> (index * 8));
+}
+
+uint64_t *gak_native_process_pointer_refs_u32(GakRegion *region,
+                                              uint64_t target,
+                                              int64_t offset, int64_t length) {
+    if (target > UINT32_MAX) {
+        gak_failf("32-bit pointer target out of range");
+        return NULL;
+    }
+    uint8_t pattern[12];
+    gak_process_pointer_pattern(pattern, target, 4);
+    return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length, NULL);
+}
+
 uint64_t *gak_native_process_pointer_refs_u64(GakRegion *region,
                                               uint64_t target,
                                               int64_t offset, int64_t length) {
     uint8_t pattern[16];
-    const uint64_t width = 8;
-    memcpy(pattern, &width, sizeof(width));
-    for (unsigned index = 0; index < 8; index++)
-        pattern[8 + index] = (uint8_t)(target >> (index * 8));
+    gak_process_pointer_pattern(pattern, target, 8);
     return gak_process_hunt_region_pattern(region, pattern, NULL, offset, length, NULL);
 }
 
@@ -1962,15 +1978,25 @@ static uint64_t *gak_process_hunt_regions_pattern(GakRegions *regions,
                                                    int64_t per_region,
                                                    int64_t total);
 
+uint64_t *gak_native_process_pointer_refs_regions_u32(GakRegions *regions,
+                                                       uint64_t target,
+                                                       int64_t per_region,
+                                                       int64_t total) {
+    if (target > UINT32_MAX) {
+        gak_failf("32-bit pointer target out of range");
+        return NULL;
+    }
+    uint8_t pattern[12];
+    gak_process_pointer_pattern(pattern, target, 4);
+    return gak_process_hunt_regions_pattern(regions, pattern, NULL, per_region, total);
+}
+
 uint64_t *gak_native_process_pointer_refs_regions_u64(GakRegions *regions,
                                                        uint64_t target,
                                                        int64_t per_region,
                                                        int64_t total) {
     uint8_t pattern[16];
-    const uint64_t width = 8;
-    memcpy(pattern, &width, sizeof(width));
-    for (unsigned index = 0; index < 8; index++)
-        pattern[8 + index] = (uint8_t)(target >> (index * 8));
+    gak_process_pointer_pattern(pattern, target, 8);
     return gak_process_hunt_regions_pattern(regions, pattern, NULL, per_region, total);
 }
 
@@ -1979,6 +2005,19 @@ uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) 
     if (!source) return 0;
     uint64_t value = 0;
     for (unsigned index = 0; index < 8; index++)
+        value |= (uint64_t)source->backing[8 + index] << (index * 8);
+    free(source->backing);
+    free(source->label);
+    free(source->origin);
+    free(source);
+    return value;
+}
+
+uint64_t gak_native_process_read_pointer_u32(GakRegion *region, int64_t offset) {
+    GakFileResult *source = gak_native_process_snapshot_region(region, offset, 4);
+    if (!source) return 0;
+    uint64_t value = 0;
+    for (unsigned index = 0; index < 4; index++)
         value |= (uint64_t)source->backing[8 + index] << (index * 8);
     free(source->backing);
     free(source->label);

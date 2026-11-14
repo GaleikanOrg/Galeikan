@@ -281,6 +281,28 @@ pub fn pointer_refs_u64(
     hunt_region(region, &target.to_le_bytes(), None, offset, length)
 }
 
+pub fn pointer_refs_u32(
+    region: &Region,
+    target: u32,
+    offset: usize,
+    length: usize,
+) -> Result<Vec<usize>, String> {
+    hunt_region(region, &target.to_le_bytes(), None, offset, length)
+}
+
+pub fn read_pointer_u32(region: &Region, offset: usize) -> Result<u64, String> {
+    if !region.access.starts_with('r') {
+        return Err("region is not marked readable".into());
+    }
+    if offset > region.size || region.size - offset < 4 {
+        return Err("snapshot exceeds region boundaries".into());
+    }
+    let address = region.address_of(offset)?;
+    let bytes = snapshot(region.pid, address, 4)?;
+    let bytes: [u8; 4] = bytes.try_into().map_err(|_| "short process read")?;
+    Ok(u64::from(u32::from_le_bytes(bytes)))
+}
+
 pub fn read_pointer_u64(region: &Region, offset: usize) -> Result<u64, String> {
     if !region.access.starts_with('r') {
         return Err("region is not marked readable".into());
