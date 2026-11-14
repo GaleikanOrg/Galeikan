@@ -1989,4 +1989,48 @@ mod tests {
         let error = parse(lex(&source).unwrap()).unwrap_err();
         assert!(error.contains("expression nesting too deep"), "{error}");
     }
+
+    #[test]
+    fn malformed_source_never_panics_in_lexer_or_parser() {
+        const ALPHABET: &[u8] = b"abcXYZ0129_ \n\t(){}[]<>+-*/%=!&|^:,;.'\"\\#";
+        const CORPUS: &[&str] = &[
+            "fn sum(a: i64, b: i64) -> i64 = a + b\nprint sum(2, 3)\n",
+            "class Point {\n    x: i64\n    y: i64\n}\nlet p = Point(1, 2)\nprint p.x\n",
+            "from std.iter import range\nfor i in range(0, 5) {\n    print i\n}\n",
+            "let value = match 2 { 1 => 10, 2 => 20, _ => 0 }\nprint value\n",
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..4096 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let length = (state as usize) % 160;
+            let mut source = String::with_capacity(length);
+            for _ in 0..length {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                source.push(ALPHABET[(state as usize) % ALPHABET.len()] as char);
+            }
+            if let Ok(tokens) = lex(&source) {
+                let _ = parse(tokens);
+            }
+        }
+        for _ in 0..4096 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let mut source = CORPUS[(state as usize) % CORPUS.len()].as_bytes().to_vec();
+            for _ in 0..3 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let position = (state as usize) % source.len();
+                source[position] = ALPHABET[((state >> 16) as usize) % ALPHABET.len()];
+            }
+            if let Ok(tokens) = lex(std::str::from_utf8(&source).unwrap()) {
+                let _ = parse(tokens);
+            }
+        }
+    }
 }
