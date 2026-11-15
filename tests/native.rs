@@ -4437,6 +4437,30 @@ fn native_from_import_reads_local_module_values() {
 }
 
 #[test]
+fn native_compiler_imports_package_initializer() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write("toolkit/__init__.gaks", "fn twice(n: i64) -> i64 = n * 2\n");
+    let script = s.write("main.gak", "import toolkit\nprint toolkit.twice(21)\n");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let output = Command::new(executable).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
 fn native_scalar_program_matches_vm_and_runs_without_source() {
     if !gcc_available() {
         return;

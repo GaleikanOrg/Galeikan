@@ -3056,6 +3056,43 @@ fn imports_without_alias_and_script_arguments() {
 }
 
 #[test]
+fn package_initializers_import_in_both_engines_and_bundles() {
+    let s = Sandbox::new();
+    s.write(
+        "toolkit/__init__.gaks",
+        "import util\nfn twice(n: i64) -> i64 = util.double(n)\n",
+    );
+    s.write("toolkit/util.gak", "fn double(n: i64) -> i64 = n * 2\n");
+    let script = s.write("main.gak", "import toolkit\nprint toolkit.twice(21)\n");
+    for engine in ["ast", "vm"] {
+        let out = s.run_engine(&script, engine, false, &[]);
+        assert!(out.status.success(), "{engine}: {}", stderr(&out));
+        assert_eq!(stdout(&out), "42\n");
+    }
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    fs::remove_file(s.dir.join("toolkit/__init__.gaks")).unwrap();
+    fs::remove_file(s.dir.join("toolkit/util.gak")).unwrap();
+    let bundled = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundled.status.success(), "{}", stderr(&bundled));
+    assert_eq!(stdout(&bundled), "42\n");
+
+    s.write("toolkit.gak", "fn twice(n: i64) -> i64 = n * 3\n");
+    s.write("toolkit/__init__.gaks", "fn twice(n: i64) -> i64 = n * 2\n");
+    let ambiguous = s.run(&script, false);
+    assert!(!ambiguous.status.success());
+    assert!(stderr(&ambiguous).contains("ambiguous Galeikan module toolkit"));
+}
+
+#[test]
 fn from_imports_work_in_ast_vm_bundle_and_reject_name_collisions() {
     let s = Sandbox::new();
     s.write("math.gak", "fn twice(n: i64) -> i64 = n * 2\n");

@@ -99,12 +99,19 @@ pub fn source_module_path(base: &Path, target: &str) -> Result<PathBuf, String> 
     };
     let lang = base.join(format!("{stem}.gak"));
     let script = base.join(format!("{stem}.gaks"));
-    match (lang.is_file(), script.is_file()) {
-        (true, true) => Err(format!(
-            "ambiguous Galeikan module {target}: both .gak and .gaks exist"
+    let package = base.join(&stem);
+    let package_lang = package.join("__init__.gak");
+    let package_script = package.join("__init__.gaks");
+    let existing: Vec<_> = [&lang, &script, &package_lang, &package_script]
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    match existing.as_slice() {
+        [] => Ok(lang),
+        [path] => Ok((*path).to_path_buf()),
+        _ => Err(format!(
+            "ambiguous Galeikan module {target}: multiple source files exist"
         )),
-        (false, true) => Ok(script),
-        _ => Ok(lang),
     }
 }
 
