@@ -1199,6 +1199,80 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_region_sharing_distinguishes_private_from_mapped_memory() {
+        use std::ffi::c_void;
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn VirtualAlloc(
+                address: *mut c_void,
+                size: usize,
+                kind: u32,
+                protect: u32,
+            ) -> *mut c_void;
+            fn VirtualFree(address: *mut c_void, size: usize, kind: u32) -> i32;
+            fn CreateFileMappingW(
+                file: *mut c_void,
+                security: *mut c_void,
+                protect: u32,
+                high: u32,
+                low: u32,
+                name: *const u16,
+            ) -> *mut c_void;
+            fn MapViewOfFile(
+                mapping: *mut c_void,
+                access: u32,
+                high: u32,
+                low: u32,
+                size: usize,
+            ) -> *mut c_void;
+            fn UnmapViewOfFile(address: *mut c_void) -> i32;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+
+        // SAFETY: the allocation and mapping handles are checked and released below.
+        let private = unsafe { VirtualAlloc(std::ptr::null_mut(), 4096, 0x3000, 0x04) };
+        assert!(!private.is_null());
+        let mapping = unsafe {
+            CreateFileMappingW(
+                (-1_isize) as *mut c_void,
+                std::ptr::null_mut(),
+                0x04,
+                0,
+                4096,
+                std::ptr::null(),
+            )
+        };
+        assert!(!mapping.is_null());
+        let mapped = unsafe { MapViewOfFile(mapping, 0x000f001f, 0, 0, 4096) };
+        assert!(!mapped.is_null());
+        let pid = std::process::id();
+        let all = regions(pid).unwrap();
+        let heaps = heap_candidates(pid).unwrap();
+        let private_region = all
+            .iter()
+            .find(|region| region.contains(private as usize))
+            .unwrap();
+        let mapped_region = all
+            .iter()
+            .find(|region| region.contains(mapped as usize))
+            .unwrap();
+        let private_is_heap = heaps.iter().any(|region| region.contains(private as usize));
+        let mapped_is_heap = heaps.iter().any(|region| region.contains(mapped as usize));
+        let sharing = (private_region.sharing, mapped_region.sharing);
+        // SAFETY: these values came from successful Win32 allocation and mapping calls above.
+        unsafe {
+            UnmapViewOfFile(mapped);
+            CloseHandle(mapping);
+            VirtualFree(private, 0, 0x8000);
+        }
+        assert_eq!(sharing, ("private", "unknown"));
+        assert!(private_is_heap);
+        assert!(!mapped_is_heap);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_module_paths_preserve_internal_whitespace() {
