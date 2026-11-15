@@ -91,6 +91,8 @@ impl DecodeContext {
         if instruction.is_invalid() || instruction.len() == 0 {
             return Err("invalid or truncated x86 instruction".into());
         }
+        ip.checked_add(instruction.len() as u64)
+            .ok_or("instruction address overflow")?;
         let mut text = String::new();
         self.formatter.format(&instruction, &mut text);
         let flow = match instruction.flow_control() {
@@ -451,6 +453,19 @@ mod tests {
         let found = reachable(b"\xeb\x01\x90\xc3", 0, base, 64, 2).unwrap();
         assert_eq!(found[0].1.target, Some(base + 3));
         assert_eq!(found[1].1.ip, base + 3);
+    }
+
+    #[test]
+    fn decoding_rejects_instruction_spans_that_overflow_u64() {
+        assert_eq!(
+            decode(b"\xc3", 0, u64::MAX, 64).unwrap_err(),
+            "instruction address overflow"
+        );
+        assert_eq!(
+            reachable(b"\xc3", 0, u64::MAX, 64, 1).unwrap_err(),
+            "instruction address overflow"
+        );
+        assert_eq!(decode(b"\xc3", 0, u64::MAX - 1, 64).unwrap().size, 1);
     }
 
     #[test]

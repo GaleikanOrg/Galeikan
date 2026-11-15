@@ -224,6 +224,35 @@ fn reachable_disassembly_and_u64_addresses_match_ast_vm_and_bundle() {
 }
 
 #[test]
+fn disassembly_rejects_overflowing_instruction_addresses_in_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "overflowing-address.gak",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"c3\"))\nprint asm.decode_u64(source, 0, 18446744073709551615u64, 64)\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(!output.status.success());
+        assert!(stderr(&output).contains("instruction address overflow"));
+    }
+}
+
+#[test]
 fn transaction_control_flow_matches_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(
