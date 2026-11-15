@@ -179,6 +179,20 @@ def main(request):
     return encode_result(result)
 
 
+protocol = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
+sys.stdout.flush()
+os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+
+    set_std_handle = ctypes.windll.kernel32.SetStdHandle
+    set_std_handle.argtypes = (ctypes.c_uint32, ctypes.c_void_p)
+    set_std_handle.restype = ctypes.c_int
+    if not set_std_handle(0xFFFFFFF5, msvcrt.get_osfhandle(sys.stderr.fileno())):
+        raise OSError("cannot redirect Python worker stdout")
+
+
 while True:
     line = sys.stdin.buffer.readline(MAX_MESSAGE + 2)
     if not line:
@@ -193,5 +207,4 @@ while True:
     encoded = json.dumps(response, ensure_ascii=False).encode("utf-8")
     if len(encoded) > MAX_MESSAGE:
         encoded = b'{"ok":false,"error":"Python output exceeds 1 MiB"}'
-    sys.stdout.buffer.write(encoded + b"\n")
-    sys.stdout.buffer.flush()
+    protocol.write(encoded + b"\n")

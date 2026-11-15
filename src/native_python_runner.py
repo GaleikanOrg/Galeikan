@@ -213,6 +213,20 @@ def call(parts):
         return encode_result(result, expected)
 
 
+protocol = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
+sys.stdout.flush()
+os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+
+    set_std_handle = ctypes.windll.kernel32.SetStdHandle
+    set_std_handle.argtypes = (ctypes.c_uint32, ctypes.c_void_p)
+    set_std_handle.restype = ctypes.c_int
+    if not set_std_handle(0xFFFFFFF5, msvcrt.get_osfhandle(sys.stderr.fileno())):
+        raise OSError("cannot redirect Python worker stdout")
+
+
 while True:
     line = sys.stdin.buffer.readline(MAX_MESSAGE + 2)
     if not line:
@@ -227,5 +241,4 @@ while True:
         response = b"E\t" + message.hex().encode("ascii") + b"\n"
     if len(response) > MAX_MESSAGE:
         response = b"E\t" + b"Python output exceeds 1 MiB".hex().encode("ascii") + b"\n"
-    sys.stdout.buffer.write(response)
-    sys.stdout.buffer.flush()
+    protocol.write(response)

@@ -1603,6 +1603,80 @@ fn native_python_calls_are_typed_stateful_and_permission_gated() {
 }
 
 #[test]
+fn python_workers_keep_low_level_output_out_of_protocol() {
+    if !python_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    s.write(
+        "helper.py",
+        "import os, subprocess, sys\ndef answer():\n    os.write(1, b'direct-output\\n')\n    subprocess.run([sys.executable, '-c', \"import os; os.write(1, b'child-output\\\\n')\"], check=True)\n    return 42\n",
+    );
+    let script = s.write(
+        "main.gak",
+        "requires { python.exec }\nimport py.helper\nlet value: i64 = helper.answer()\nprint value\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-python", python_command()])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n", "{engine}");
+    }
+    let built = Command::new(galeikan)
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .args(["--allow-python", python_command()])
+        .output()
+        .unwrap();
+    assert!(
+        bundle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bundle.stderr)
+    );
+    assert_eq!(bundle.stdout, b"42\n");
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable)
+            .args(["--allow-python", python_command()])
+            .output()
+            .unwrap();
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+        assert_eq!(native.stdout, b"42\n");
+        assert!(String::from_utf8_lossy(&native.stderr).contains("direct-output"));
+        assert!(String::from_utf8_lossy(&native.stderr).contains("child-output"));
+    }
+}
+
+#[test]
 fn native_python_package_relative_imports_match_vm() {
     if !gcc_available() || !python_available() {
         return;
