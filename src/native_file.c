@@ -514,6 +514,55 @@ static char *gak_requested_path(const char *path, const char *base) {
     }
     return joined;
 }
+
+/* Walk a verified root handle without following components swapped to symlinks. */
+static int gak_open_beneath_root(const char *canonical) {
+    const char *root = NULL;
+    for (size_t index = 0; index < gak_root_count; index++) {
+        size_t length = strlen(gak_roots[index]);
+        if (strncmp(canonical, gak_roots[index], length) == 0 &&
+            ((length == 1 && gak_roots[index][0] == '/') ||
+             canonical[length] == '/' || canonical[length] == 0)) {
+            root = gak_roots[index];
+            break;
+        }
+    }
+    if (!root) { errno = EACCES; return -1; }
+    int directory = open(root, O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directory < 0) return -1;
+    char descriptor[64], opened[GAK_MAX_PATH_BYTES];
+    snprintf(descriptor, sizeof(descriptor), "/proc/self/fd/%d", directory);
+    ssize_t size = readlink(descriptor, opened, sizeof(opened) - 1);
+    if (size < 0 || (size_t)size >= sizeof(opened) - 1) {
+        close(directory);
+        errno = EACCES;
+        return -1;
+    }
+    opened[size] = 0;
+    if (strcmp(opened, root) != 0) {
+        close(directory);
+        errno = EACCES;
+        return -1;
+    }
+    const char *relative = canonical + strlen(root);
+    if (*relative == '/') relative++;
+    char *parts = strdup(relative);
+    if (!parts) { close(directory); errno = ENOMEM; return -1; }
+    char *state = NULL;
+    for (char *part = strtok_r(parts, "/", &state); part;) {
+        char *next = strtok_r(NULL, "/", &state);
+        int flags = next ? O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                         : O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC;
+        int file = openat(directory, part, flags);
+        int saved = errno;
+        close(directory);
+        if (file < 0) { free(parts); errno = saved; return -1; }
+        directory = file;
+        part = next;
+    }
+    free(parts);
+    return directory;
+}
 #endif
 
 GakFileResult *gak_native_read_file(const uint8_t *path_box, int64_t max, const uint8_t *base_box) {
@@ -586,9 +635,12 @@ GakFileResult *gak_native_read_file(const uint8_t *path_box, int64_t max, const 
         free(canonical);
         goto failed;
     }
-    int file = open(canonical, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    int file = gak_open_beneath_root(canonical);
     if (file < 0) {
-        gak_failf("%s: %s", canonical, strerror(errno));
+        if (errno == ELOOP || errno == EACCES)
+            gak_failf("file access not allowed: %s", canonical);
+        else
+            gak_failf("%s: %s", canonical, strerror(errno));
         free(canonical);
         goto failed;
     }

@@ -17,8 +17,16 @@ fn open_authorized_with(
         return Err(format!("file access not allowed: {}", canonical.display()));
     }
     before_open();
-    let file = open_for_inspection(&canonical)
-        .map_err(|error| format!("{}: {error}", canonical.display()))?;
+    let file = open_for_inspection(&canonical, roots).map_err(|error| {
+        #[cfg(target_os = "linux")]
+        if error.raw_os_error() == Some(libc::ELOOP) {
+            format!("file access not allowed: {}", canonical.display())
+        } else {
+            format!("{}: {error}", canonical.display())
+        }
+        #[cfg(not(target_os = "linux"))]
+        format!("{}: {error}", canonical.display())
+    })?;
     let opened = authorize_handle(&file, roots)?;
     if !file
         .metadata()
@@ -31,17 +39,61 @@ fn open_authorized_with(
 }
 
 #[cfg(target_os = "linux")]
-fn open_for_inspection(path: &Path) -> std::io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
+fn open_for_inspection(path: &Path, roots: &[PathBuf]) -> std::io::Result<File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Component;
 
-    std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
+    let root = roots
+        .iter()
+        .find(|root| path.starts_with(root))
+        .ok_or(std::io::ErrorKind::PermissionDenied)?;
+    let root_name =
+        CString::new(root.as_os_str().as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    // SAFETY: root_name is NUL-terminated and open returns an owned descriptor.
+    let root_fd = unsafe {
+        libc::open(
+            root_name.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if root_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: root_fd is a valid descriptor owned by this function.
+    let mut directory = unsafe { File::from_raw_fd(root_fd) };
+    if opened_path(&directory).map_err(std::io::Error::other)? != *root {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| std::io::ErrorKind::PermissionDenied)?;
+    let mut parts = relative.components().peekable();
+    while let Some(part) = parts.next() {
+        let Component::Normal(name) = part else {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        };
+        let name = CString::new(name.as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+        let flags = if parts.peek().is_some() {
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        } else {
+            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        };
+        // SAFETY: directory is live, name is NUL-terminated, and openat returns
+        // an owned descriptor. Each component is resolved beneath its parent.
+        let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fd is a valid descriptor owned by this function.
+        directory = unsafe { File::from_raw_fd(fd) };
+    }
+    Ok(directory)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_for_inspection(path: &Path) -> std::io::Result<File> {
+fn open_for_inspection(path: &Path, _roots: &[PathBuf]) -> std::io::Result<File> {
     File::open(path)
 }
 
@@ -157,6 +209,54 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.contains("file access not allowed"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn swapped_directory_does_not_open_foreign_file() {
+        use super::open_authorized_with;
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("galeikan-dir-race-{}", std::process::id()));
+        let allowed = root.join("allowed");
+        let denied = root.join("denied");
+        fs::create_dir_all(allowed.join("sub")).unwrap();
+        fs::create_dir_all(&denied).unwrap();
+        let victim = allowed.join("sub/victim.bin");
+        let foreign = denied.join("victim.bin");
+        fs::write(&victim, b"allowed").unwrap();
+        fs::write(&foreign, b"foreign").unwrap();
+        let grant = allowed.canonicalize().unwrap();
+        // SAFETY: inotify returns an owned descriptor or -1.
+        let watcher = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        assert!(watcher >= 0, "{}", std::io::Error::last_os_error());
+        let watched = CString::new(foreign.as_os_str().as_bytes()).unwrap();
+        // SAFETY: watcher is live and watched is NUL-terminated.
+        let watch = unsafe { libc::inotify_add_watch(watcher, watched.as_ptr(), libc::IN_OPEN) };
+        assert!(watch >= 0, "{}", std::io::Error::last_os_error());
+
+        let denied_result = open_authorized_with(&victim, &[grant], || {
+            fs::remove_file(&victim).unwrap();
+            fs::remove_dir(allowed.join("sub")).unwrap();
+            symlink(&denied, allowed.join("sub")).unwrap();
+        });
+        assert!(denied_result.is_err());
+        let mut events = [0_u8; 64];
+        // SAFETY: watcher is live and events is a writable buffer.
+        let count = unsafe { libc::read(watcher, events.as_mut_ptr().cast(), events.len()) };
+        assert_eq!(
+            count, -1,
+            "foreign file was opened before access was denied"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EAGAIN)
+        );
+        // SAFETY: watcher is owned by this test and no longer used.
+        unsafe { libc::close(watcher) };
         fs::remove_dir_all(root).unwrap();
     }
 }
