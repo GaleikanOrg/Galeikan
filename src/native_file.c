@@ -2226,30 +2226,50 @@ uint64_t *gak_native_process_pointer_refs_regions_u64(GakRegions *regions,
     return gak_process_hunt_regions_pattern(regions, pattern, NULL, per_region, total);
 }
 
-uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) {
-    GakFileResult *source = gak_native_process_snapshot_region(region, offset, 8);
-    if (!source) return 0;
+static uint64_t gak_process_read_pointer(GakRegion *region, int64_t offset,
+                                         size_t width) {
+    gak_file_error = NULL;
+    if (!region) {
+        gak_failf("snapshot exceeds region boundaries");
+        return 0;
+    }
+    if (!gak_process_allowed((uint32_t)region->pid)) {
+        gak_failf("process access not allowed: %llu", (unsigned long long)region->pid);
+        return 0;
+    }
+    if (region->access[8] != 'r') {
+        gak_failf("region is not marked readable");
+        return 0;
+    }
+    if (offset < 0) {
+        gak_failf("region offset out of range");
+        return 0;
+    }
+    if ((uint64_t)offset > region->size ||
+        width > region->size - (uint64_t)offset) {
+        gak_failf("snapshot exceeds region boundaries");
+        return 0;
+    }
+    uint64_t address = gak_native_region_address(region, (uint64_t)offset);
+    if (gak_file_error) return 0;
+    if (!address || address > UINTPTR_MAX - width) {
+        gak_failf("process address must be positive and length must be between 1 and 1048576");
+        return 0;
+    }
+    uint8_t bytes[8];
+    if (!gak_process_read_raw(region->pid, address, bytes, width)) return 0;
     uint64_t value = 0;
-    for (unsigned index = 0; index < 8; index++)
-        value |= (uint64_t)source->backing[8 + index] << (index * 8);
-    free(source->backing);
-    gak_release_box(source->label);
-    gak_release_box(source->origin);
-    free(source);
+    for (size_t index = 0; index < width; index++)
+        value |= (uint64_t)bytes[index] << (index * 8);
     return value;
 }
 
+uint64_t gak_native_process_read_pointer_u64(GakRegion *region, int64_t offset) {
+    return gak_process_read_pointer(region, offset, 8);
+}
+
 uint64_t gak_native_process_read_pointer_u32(GakRegion *region, int64_t offset) {
-    GakFileResult *source = gak_native_process_snapshot_region(region, offset, 4);
-    if (!source) return 0;
-    uint64_t value = 0;
-    for (unsigned index = 0; index < 4; index++)
-        value |= (uint64_t)source->backing[8 + index] << (index * 8);
-    free(source->backing);
-    gak_release_box(source->label);
-    gak_release_box(source->origin);
-    free(source);
-    return value;
+    return gak_process_read_pointer(region, offset, 4);
 }
 
 static uint64_t *gak_process_pointer_path(GakRegions *regions,
