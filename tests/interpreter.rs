@@ -40,6 +40,44 @@ fn inspect_bundle_verifies_checksum_without_running_code() {
     assert!(stderr(&corrupted).contains("checksum mismatch"));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn bundle_commands_reject_fifo_without_waiting_for_a_writer() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::{Duration, Instant};
+
+    let s = Sandbox::new();
+    let fifo = s.dir.join("bundle.gakb");
+    let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: name is NUL-terminated and refers to a path in the test sandbox.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    for command in ["inspect", "exec"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg(command)
+            .arg(&fifo)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(!output.status.success());
+                assert!(stderr(&output).contains("not a regular file"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{command} blocked while opening a FIFO bundle");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 #[test]
 fn register_and_flag_access_match_ast_vm_and_bundle() {
     let s = Sandbox::new();

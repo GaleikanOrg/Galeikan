@@ -2047,19 +2047,22 @@ fn read_bundle(artifact: &Path) -> Result<(PathBuf, PathBuf, Bundle, Vec<u8>), S
     let path = artifact
         .canonicalize()
         .map_err(|e| format!("cannot read bundle: {}: {e}", artifact.display()))?;
+    let parent = path
+        .parent()
+        .ok_or("bundle project directory is unavailable")?
+        .to_path_buf();
+    let (file, opened) = file_access::open_authorized(&path, std::slice::from_ref(&parent))?;
     let mut bytes = Vec::new();
-    fs::File::open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .take((MAX_BUNDLE + 49) as u64)
+    file.take((MAX_BUNDLE + 49) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .map_err(|e| format!("{}: {e}", opened.display()))?;
     let bundle = decode_bundle(&bytes)?;
-    let project_root = path
+    let project_root = opened
         .parent()
         .and_then(|parent| parent.ancestors().nth(bundle.root_depth as usize))
         .ok_or("bundle project directory is unavailable")?
         .to_path_buf();
-    Ok((project_root, path, bundle, bytes))
+    Ok((project_root, opened, bundle, bytes))
 }
 
 fn decode_bundle(bytes: &[u8]) -> Result<Bundle, String> {
