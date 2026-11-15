@@ -737,6 +737,7 @@ fn parse_linux_map_line(pid: u32, line: &str) -> Result<Region, String> {
     if !matches!(bytes[0], b'r' | b'-')
         || !matches!(bytes[1], b'w' | b'-')
         || !matches!(bytes[2], b'x' | b'-')
+        || !matches!(bytes[3], b'p' | b's')
     {
         return Err("invalid process memory access flags".into());
     }
@@ -1198,6 +1199,13 @@ mod tests {
         assert!(region.image_backed);
         assert_eq!(module_paths(&[region]), ["/tmp/a  b\tc (deleted)"]);
         assert!(super::parse_linux_map_line(7, "00400000-00401000 r-xp").is_err());
+        assert!(
+            super::parse_linux_map_line(7, "00400000-00401000 r-xz 00000000 00:01 42")
+                .is_err()
+        );
+        assert!(
+            super::parse_linux_map_line(7, "00400000-00401000 r--s 00000000 00:00 0").is_ok()
+        );
     }
 
     #[test]

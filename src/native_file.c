@@ -1373,7 +1373,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
             start >= end || end > UINTPTR_MAX ||
             (rights[0] != 'r' && rights[0] != '-') ||
             (rights[1] != 'w' && rights[1] != '-') ||
-            (rights[2] != 'x' && rights[2] != '-')) {
+            (rights[2] != 'x' && rights[2] != '-') ||
+            (rights[3] != 'p' && rights[3] != 's')) {
             status = gak_failf("malformed process memory map");
             break;
         }
