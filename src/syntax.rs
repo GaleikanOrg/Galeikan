@@ -779,13 +779,28 @@ impl Parser {
                 self.bump();
                 Ok(())
             }
+            TokenKind::GreaterEqual => {
+                self.tokens[self.pos].kind = TokenKind::Equal;
+                self.tokens[self.pos].col += 1;
+                Ok(())
+            }
             TokenKind::ShiftRight => {
                 self.tokens[self.pos].kind = TokenKind::Greater;
                 self.tokens[self.pos].col += 1;
                 Ok(())
             }
+            TokenKind::ShiftRightEqual => {
+                self.tokens[self.pos].kind = TokenKind::GreaterEqual;
+                self.tokens[self.pos].col += 1;
+                Ok(())
+            }
             TokenKind::UnsignedShiftRight => {
                 self.tokens[self.pos].kind = TokenKind::ShiftRight;
+                self.tokens[self.pos].col += 1;
+                Ok(())
+            }
+            TokenKind::UnsignedShiftRightEqual => {
+                self.tokens[self.pos].kind = TokenKind::ShiftRightEqual;
                 self.tokens[self.pos].col += 1;
                 Ok(())
             }
@@ -1937,6 +1952,19 @@ fn valid_binding_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{lex, parse};
+
+    #[test]
+    fn generic_closers_before_assignment_do_not_require_spaces() {
+        for source in [
+            "let one: List<i64>=[]\n",
+            "let two: Result<List<i64>>=[]\n",
+            "let three: Result<Result<List<i64>>>=[]\n",
+            "fn make() -> List<i64>=[]\n",
+            "print 3>=2\n",
+        ] {
+            assert!(parse(lex(source).unwrap()).is_ok(), "{source}");
+        }
+    }
 
     #[test]
     fn radix_literals_validate_digits_and_separators() {
