@@ -5070,6 +5070,41 @@ fn native_range_loops_match_vm_across_local_module_and_nested_calls() {
 }
 
 #[test]
+fn native_list_operations_match_vm_for_empty_text_bytes_and_u64() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "list-operations.gak",
+        "from std.list import append, concat, contains, count, index_of\nlet empty: List<str> = []\nlet labels = append(empty, \"blue\")\nlet combined = concat(labels, [\"white\", \"blue\"])\nlet bytes = [hex\"00ff\", hex\"00fe\"]\nlet addresses = [0x8000000000000000u64, 0xffffffffffffffffu64]\nprint count(empty)\nprint count(combined)\nprint contains(combined, \"white\")\nprint index_of(combined, \"blue\")\nprint contains(bytes, hex\"00fe\")\nprint index_of(bytes, hex\"00ff\")\nprint index_of(addresses, 0xffffffffffffffffu64)\nprint contains(addresses, 0u64)\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .arg("--engine")
+        .arg("vm")
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    assert_eq!(vm.stdout, b"0\n3\ntrue\n0\ntrue\n0\n1\nfalse\n");
+    let built = s.compile(&script);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_range_rejects_invalid_bounds_and_oversized_sequences_at_runtime() {
     if !gcc_available() {
         return;
