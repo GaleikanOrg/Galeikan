@@ -54,10 +54,12 @@ install -Dm644 packaging/debian/galeikan.xml "$staging/usr/share/mime/packages/g
 install -Dm644 logo_GaleikanEcosystem.jpg "$staging/usr/share/galeikan/brand/logo_GaleikanEcosystem.jpg"
 install -Dm644 packaging/debian/text-x-galeikan.png "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan.png"
 install -Dm644 packaging/debian/text-x-galeikan-script.png "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"
-while IFS= read -r -d '' editor_file; do
-  target="$staging/usr/share/galeikan/editor/vscode/${editor_file#editors/vscode/galeikan/}"
-  install -Dm644 "$editor_file" "$target"
-done < <(find editors/vscode/galeikan -type f -print0)
+for editor_asset in \
+  package.json README.md icon.png language-configuration.json \
+  syntaxes/galeikan.tmLanguage.json themes/galeikan-noir-color-theme.json; do
+  install -Dm644 "editors/vscode/galeikan/$editor_asset" \
+    "$staging/usr/share/galeikan/editor/vscode/$editor_asset"
+done
 
 mkdir -p "$staging/DEBIAN"
 cat > "$staging/DEBIAN/postinst" <<'EOF'
