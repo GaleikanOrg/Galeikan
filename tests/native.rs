@@ -4442,7 +4442,11 @@ fn native_compiler_imports_package_initializer() {
         return;
     }
     let s = Sandbox::new();
-    s.write("toolkit/__init__.gaks", "fn twice(n: i64) -> i64 = n * 2\n");
+    s.write(
+        "toolkit/__init__.gaks",
+        "import util\nfn twice(n: i64) -> i64 = util.double(n)\n",
+    );
+    s.write("toolkit/util.gak", "fn double(n: i64) -> i64 = n * 2\n");
     let script = s.write("main.gak", "import toolkit\nprint toolkit.twice(21)\n");
     let built = s.compile(&script);
     assert!(
