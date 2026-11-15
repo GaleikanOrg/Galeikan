@@ -86,7 +86,8 @@ if dpkg --compare-versions "$glibc_version" gt 2.41; then
   exit 1
 fi
 
-mkdir -p "$staging/DEBIAN" "$project_root/dist"
+output_dir="${GALEIKAN_DEB_OUTPUT_DIR:-$project_root/dist}"
+mkdir -p "$staging/DEBIAN" "$output_dir"
 cat > "$staging/DEBIAN/control" <<EOF
 Package: galeikan
 Version: ${debian_version}
@@ -94,13 +95,13 @@ Section: devel
 Priority: optional
 Architecture: amd64
 Maintainer: Galeikan Project
-Depends: libc6 (>= ${glibc_version}), libgcc-s1
+Depends: libc6 (>= ${glibc_version}), libgcc-s1, gcc, libc6-dev
 Description: ${description}
  Galeikan provides a research-oriented scripting language with explicit
  effects, bounded binary inspection, local modules and optional Python interop.
  The native compiler supports a limited x86-64 subset of the language.
 EOF
 
-package="$project_root/dist/galeikan_${artifact_version}_${architecture}.deb"
+package="$output_dir/galeikan_${artifact_version}_${architecture}.deb"
 dpkg-deb --root-owner-group --build "$staging" "$package"
 printf '%s\n' "$package"

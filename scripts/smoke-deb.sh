@@ -15,7 +15,7 @@ if [[ "$release_channel" != stable ]]; then
   debian_version+="~$release_channel"
   artifact_version+=".$release_channel"
 fi
-package="$project_root/dist/galeikan_${artifact_version}_amd64.deb"
+package="${GALEIKAN_DEB_OUTPUT_DIR:-$project_root/dist}/galeikan_${artifact_version}_amd64.deb"
 if [[ ! -f "$package" ]]; then
   printf 'Missing package: %s\n' "$package" >&2
   exit 1
@@ -28,6 +28,13 @@ fi
   printf 'Debian package version does not match the configured release.\n' >&2
   exit 1
 }
+dependencies="$(dpkg-deb --field "$package" Depends)"
+for required in gcc libc6-dev; do
+  if [[ ", $dependencies," != *", $required,"* ]]; then
+    printf 'Debian package does not depend on %s for native compilation.\n' "$required" >&2
+    exit 1
+  fi
+done
 staging="$(mktemp -d)"
 trap 'rm -rf -- "$staging"' EXIT
 dpkg-deb --extract "$package" "$staging"
