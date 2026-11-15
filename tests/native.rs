@@ -5556,6 +5556,82 @@ fn native_elf_relocations_match_vm_from_sections_and_dynamic_tables() {
     }
 }
 
+#[test]
+fn mutated_elf_and_pe_metadata_match_vm_without_crashing_native() {
+    if !gcc_available() {
+        return;
+    }
+    let mut pe = vec![0_u8; 0x400];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x84..0x86].copy_from_slice(&0x014c_u16.to_le_bytes());
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xe0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x10b_u16.to_le_bytes());
+    pe[0x98 + 60..0x98 + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x98 + 92..0x98 + 96].copy_from_slice(&2_u32.to_le_bytes());
+    pe[0x98 + 104..0x98 + 108].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[0x98 + 108..0x98 + 112].copy_from_slice(&40_u32.to_le_bytes());
+    let section = 0x98 + 0xe0;
+    pe[section..section + 6].copy_from_slice(b".idata");
+    pe[section + 8..section + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 12..section + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section + 16..section + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    pe[0x200..0x204].copy_from_slice(&0x1040_u32.to_le_bytes());
+    pe[0x20c..0x210].copy_from_slice(&0x1080_u32.to_le_bytes());
+    pe[0x210..0x214].copy_from_slice(&0x1060_u32.to_le_bytes());
+    pe[0x240..0x244].copy_from_slice(&0x10a0_u32.to_le_bytes());
+    pe[0x244..0x248].copy_from_slice(&(1_u32 << 31 | 7).to_le_bytes());
+    pe[0x280..0x28d].copy_from_slice(b"KERNEL32.dll\0");
+    pe[0x2a2..0x2ae].copy_from_slice(b"CreateFileW\0");
+
+    let mut source = String::from("from std.binary import from_hex, snapshot\nfrom std.formats import probe, symbol_count, import_count\nfrom std.result import is_error, recover\nfn elf_status(data: bytes) -> Result<i64> = symbol_count(probe(snapshot(data)))\nfn pe_status(data: bytes) -> Result<i64> = import_count(probe(snapshot(data)))\n");
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    for (function, seed) in [("elf_status", elf_dynamic_symbol_fixture(true, true)), ("pe_status", pe)] {
+        source.push_str("for sample in [");
+        for case in 0..=32 {
+            let mut bytes = seed.clone();
+            if case != 0 {
+                for _ in 0..1 + case % 3 {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    let span = if case % 2 == 0 { 256 } else { bytes.len() };
+                    let offset = (state as usize) % span;
+                    bytes[offset] = (state >> 24) as u8;
+                }
+            }
+            if case != 0 { source.push(','); }
+            source.push_str("from_hex(\"");
+            for byte in bytes {
+                source.push_str(&format!("{byte:02x}"));
+            }
+            source.push_str("\")");
+        }
+        source.push_str(&format!("] {{\n    let result = {function}(sample)\n    print is_error(result)\n    print recover(result, -1)\n}}\n"));
+    }
+    let s = Sandbox::new();
+    let script = s.write("mutated-formats.gak", &source);
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .args(["run", script.to_str().unwrap(), "--engine", "vm"])
+        .output().unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let lines = vm.stdout.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    assert_eq!(lines.len(), 133);
+    assert_eq!(lines[0], b"false");
+    assert_ne!(lines[1], b"-1");
+    assert_eq!(lines[66], b"false");
+    assert_ne!(lines[67], b"-1");
+    let compiled = s.compile(&script);
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+}
+
 fn elf_dynamic_symbol_fixture(sections: bool, gnu_hash: bool) -> Vec<u8> {
     let mut bytes = vec![0u8; 0x500];
     bytes[..4].copy_from_slice(b"\x7fELF");
