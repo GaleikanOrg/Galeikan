@@ -9822,7 +9822,7 @@ mod source_validation_tests {
         fs::create_dir_all(&directory).unwrap();
         let source = directory.join("main.gak");
         fs::write(&source, "print 1\n").unwrap();
-        let output = compile(&source).unwrap();
+        let output = compile(&source, false).unwrap();
         verify_native_hardening(&output).unwrap();
         let mut bytes = fs::read(&output).unwrap();
         if cfg!(windows) {
