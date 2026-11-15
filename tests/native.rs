@@ -5003,12 +5003,10 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
         "scratch.gak",
         "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, kind\nfrom std.text import length\nprint length(kind(probe(analyze(\"unused.bin\", 64))))\n",
     );
-    let temp_key = if cfg!(windows) { "TMP" } else { "TMPDIR" };
     let compile = |path: &str| {
         Command::new(env!("CARGO_BIN_EXE_galeikan"))
             .arg("compile")
             .arg(&script)
-            .env(temp_key, &s.0)
             .env("PATH", path)
             .output()
             .unwrap()
@@ -5047,6 +5045,68 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
         stale()
     );
     assert!(executable.is_file());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn native_compiler_preserves_previous_output_after_failed_link() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write("main.gak", "print 42\n");
+    let first = s.compile(&script);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let executable = PathBuf::from(String::from_utf8(first.stdout).unwrap().trim());
+    let original = fs::read(&executable).unwrap();
+
+    let shim_dir = s.0.join("shim");
+    fs::create_dir(&shim_dir).unwrap();
+    let fake_gcc = shim_dir.join("gcc");
+    let fake_source = "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '-o' ]; then\n    shift\n    printf 'rejected output' > \"$1\"\n    exit 1\n  fi\n  shift\ndone\nexit 1\n";
+    fs::write(
+        &fake_gcc,
+        fake_source,
+    )
+    .unwrap();
+    fs::set_permissions(&fake_gcc, fs::Permissions::from_mode(0o755)).unwrap();
+    let failed = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .env("PATH", &shim_dir)
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("native link failed"));
+    assert_eq!(fs::read(&executable).unwrap(), original);
+    fs::write(&fake_gcc, fake_source.replace("exit 1", "exit 0")).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .env("PATH", &shim_dir)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("native output format verification failed"));
+    assert_eq!(fs::read(&executable).unwrap(), original);
+    let run = Command::new(&executable).output().unwrap();
+    assert!(run.status.success());
+    assert_eq!(run.stdout, b"42\n");
+    fs::write(&script, "print 43\n").unwrap();
+    let updated = s.compile(&script);
+    assert!(
+        updated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    let run = Command::new(&executable).output().unwrap();
+    assert!(run.status.success());
+    assert_eq!(run.stdout, b"43\n");
+    assert!(!fs::read_dir(&s.0)
+        .unwrap()
+        .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("galeikan-native-")));
 }
 
 #[test]

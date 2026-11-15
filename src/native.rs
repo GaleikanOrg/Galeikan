@@ -21,8 +21,8 @@ struct NativeScratch {
 }
 
 impl NativeScratch {
-    fn new() -> Result<Self, String> {
-        let root = fs::canonicalize(std::env::temp_dir())
+    fn new_in(directory: &Path) -> Result<Self, String> {
+        let root = fs::canonicalize(directory)
             .map_err(|e| format!("cannot locate native build temporary directory: {e}"))?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1344,7 +1344,8 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
     };
     fs::write(&assembly_path, assembly)
         .map_err(|e| format!("cannot write {}: {e}", assembly_path.display()))?;
-    let scratch = NativeScratch::new()?;
+    let scratch = NativeScratch::new_in(output.parent().ok_or("native output has no parent")?)?;
+    let candidate = scratch.path.join(output.file_name().ok_or("native output has no name")?);
     let file_runtime_path = if uses_file_read || uses_python || uses_process || uses_net {
         Some(scratch.write("native_file.c", include_str!("native_file.c"))?)
     } else {
@@ -1404,7 +1405,7 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
         .arg("-x")
         .arg("assembler")
         .arg("-o")
-        .arg(gcc_path(&output))
+        .arg(gcc_path(&candidate))
         .arg(gcc_path(&assembly_path));
     if let Some(helper_path) = &file_runtime_path {
         compiler
@@ -1490,15 +1491,9 @@ pub fn compile(script: &Path) -> Result<PathBuf, String> {
             diagnostic.chars().take(4096).collect::<String>()
         ));
     }
-    if let Err(error) = verify_native_hardening(&output) {
-        if let Err(cleanup) = fs::remove_file(&output) {
-            return Err(format!(
-                "{error}; cannot remove rejected native output {}: {cleanup}",
-                output.display()
-            ));
-        }
-        return Err(error);
-    }
+    verify_native_hardening(&candidate)?;
+    fs::rename(&candidate, &output)
+        .map_err(|error| format!("cannot install native output {}: {error}", output.display()))?;
     if cfg!(target_os = "windows") {
         let rendered = output.to_string_lossy();
         Ok(PathBuf::from(
