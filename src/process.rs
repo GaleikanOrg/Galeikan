@@ -782,6 +782,51 @@ fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
 }
 
 #[cfg(windows)]
+fn windows_dos_mappings() -> Vec<(String, String)> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn QueryDosDeviceW(name: *const u16, target: *mut u16, capacity: u32) -> u32;
+    }
+
+    let mut target = vec![0_u16; 32768];
+    let mut mappings = Vec::new();
+    for letter in b'A'..=b'Z' {
+        let name = [u16::from(letter), u16::from(b':'), 0];
+        // SAFETY: name is NUL-terminated and target is a writable UTF-16 buffer.
+        let count =
+            unsafe { QueryDosDeviceW(name.as_ptr(), target.as_mut_ptr(), target.len() as u32) };
+        if count == 0 || count as usize > target.len() {
+            continue;
+        }
+        let Some(end) = target[..count as usize].iter().position(|unit| *unit == 0) else {
+            continue;
+        };
+        let device = String::from_utf16_lossy(&target[..end]);
+        if device.starts_with(r"\Device\") {
+            mappings.push((device, format!("{}:", char::from(letter))));
+        }
+    }
+    mappings.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
+    mappings
+}
+
+#[cfg(windows)]
+fn windows_dos_path(path: &str, mappings: &[(String, String)]) -> String {
+    for (device, drive) in mappings {
+        if path
+            .get(..device.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(device))
+        {
+            let suffix = &path[device.len()..];
+            if suffix.is_empty() || suffix.starts_with('\\') {
+                return format!("{drive}{suffix}");
+            }
+        }
+    }
+    path.to_owned()
+}
+
+#[cfg(windows)]
 fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
     use std::collections::HashMap;
     use std::ffi::c_void;
@@ -831,6 +876,7 @@ fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
     let result = (|| {
         let mut regions = Vec::new();
         let mut image_paths = HashMap::<usize, String>::new();
+        let dos_mappings = windows_dos_mappings();
         let mut address = 0_usize;
         loop {
             // SAFETY: information is initialized by VirtualQueryEx when it returns the full size.
@@ -881,7 +927,10 @@ fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
                             if length == 0 || length >= buffer.len() {
                                 "image".to_owned()
                             } else {
-                                String::from_utf16_lossy(&buffer[..length])
+                                windows_dos_path(
+                                    &String::from_utf16_lossy(&buffer[..length]),
+                                    &dos_mappings,
+                                )
                             }
                         })
                         .clone()
@@ -1098,6 +1147,28 @@ mod tests {
             image(""),
         ]);
         assert_eq!(paths, ["/bin/main", "/lib/one.so"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_modules_use_drive_paths_for_the_current_process() {
+        let pid = std::process::id();
+        let executable = executable(pid).unwrap();
+        let modules = super::modules(pid).unwrap();
+        assert!(
+            modules.iter().any(|path| path.eq_ignore_ascii_case(&executable)),
+            "executable {executable} missing from modules: {modules:?}"
+        );
+
+        let mappings = [(r"\Device\HarddiskVolume3".into(), "C:".into())];
+        assert_eq!(
+            super::windows_dos_path(r"\Device\HarddiskVolume3\Windows\x.dll", &mappings),
+            r"C:\Windows\x.dll"
+        );
+        assert_eq!(
+            super::windows_dos_path(r"\Device\HarddiskVolume30\Windows\x.dll", &mappings),
+            r"\Device\HarddiskVolume30\Windows\x.dll"
+        );
     }
 
     #[cfg(target_os = "linux")]
