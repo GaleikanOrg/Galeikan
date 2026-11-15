@@ -201,7 +201,7 @@ if ($LASTEXITCODE -ne 0 -or ($bundleInfo -join "`n") -notmatch 'Checksum: valid'
 }
 $gaksOutput = & $binary exec $gaksBundle
 if ($LASTEXITCODE -ne 0 -or ($gaksOutput -join "`n") -ne '42') { throw 'Installed .gaks bundle failed' }
-& $binary compile $gaks
+& $binary compile $gaks --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed .gaks native compile failed' }
 $gaksOutput = & "$gaks.exe"
 if ($LASTEXITCODE -ne 0 -or ($gaksOutput -join "`n") -ne '42') { throw 'Installed .gaks native execution failed' }
@@ -210,7 +210,7 @@ $nativeReadSource = Join-Path $smokeRoot 'native-read-smoke.gak'
 $nativeReadSample = Join-Path $smokeRoot 'native-read.bin'
 [System.IO.File]::WriteAllBytes($nativeReadSample, [byte[]](0x47, 0x41, 0x4b))
 [System.IO.File]::WriteAllText($nativeReadSource, "requires { file.read }`nfrom std.binary import analyze, size`nprint size(analyze(`"native-read.bin`", 16))`n")
-& $binary compile $nativeReadSource
+& $binary compile $nativeReadSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed native file-read compile failed' }
 $nativeReadExecutable = "$nativeReadSource.exe"
 $nativeReadOutput = & $nativeReadExecutable --allow-read $smokeRoot
@@ -228,7 +228,7 @@ $recordSource = Join-Path $smokeRoot 'struct-smoke.gak'
 [System.IO.File]::WriteAllText($recordSource, "struct Header { marker: str, offset: i64 }`nlet header = Header(`"MZ`", 4)`nprint header.marker`nprint header.offset`n")
 $recordVm = & $binary run $recordSource --engine vm
 if ($LASTEXITCODE -ne 0 -or ($recordVm -join "`n") -ne "MZ`n4") { throw 'Installed struct VM failed' }
-& $binary compile $recordSource
+& $binary compile $recordSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed struct native compile failed' }
 $recordNative = & "$recordSource.exe"
 if ($LASTEXITCODE -ne 0 -or ($recordNative -join "`n") -ne "MZ`n4") { throw 'Installed struct native execution failed' }
@@ -249,7 +249,7 @@ while count < 5 {
 '@)
 $loopVm = & $binary run $loopSource --engine vm
 if ($LASTEXITCODE -ne 0 -or ($loopVm -join "`n") -ne "1`n3") { throw 'Installed loop control VM failed' }
-& $binary compile $loopSource
+& $binary compile $loopSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed loop control native compile failed' }
 $loopNative = & "$loopSource.exe"
 if ($LASTEXITCODE -ne 0 -or ($loopNative -join "`n") -ne "1`n3") { throw 'Installed loop control native execution failed' }
@@ -265,7 +265,7 @@ print Pair(2, 3).total()
 '@)
 $classVm = & $binary run $classSource --engine vm
 if ($LASTEXITCODE -ne 0 -or ($classVm -join "`n") -ne '5') { throw 'Installed class method VM failed' }
-& $binary compile $classSource
+& $binary compile $classSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed class method native compile failed' }
 $classNative = & "$classSource.exe"
 if ($LASTEXITCODE -ne 0 -or ($classNative -join "`n") -ne '5') { throw 'Installed class method native execution failed' }
@@ -274,7 +274,7 @@ $bitsSource = Join-Path $smokeRoot 'bits-smoke.gak'
 [System.IO.File]::WriteAllText($bitsSource, "print 0xffffffffffffffff >>> 63`nprint (0xf0 & 0x3c) | 0x80`n")
 $bitsVm = & $binary run $bitsSource --engine vm
 if ($LASTEXITCODE -ne 0 -or ($bitsVm -join "`n") -ne "1`n176") { throw 'Installed bitwise VM failed' }
-& $binary compile $bitsSource
+& $binary compile $bitsSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed bitwise native compile failed' }
 $bitsNative = & "$bitsSource.exe"
 if ($LASTEXITCODE -ne 0 -or ($bitsNative -join "`n") -ne "1`n176") { throw 'Installed bitwise native execution failed' }
@@ -283,7 +283,7 @@ $matchSource = Join-Path $smokeRoot 'match-smoke.gak'
 [System.IO.File]::WriteAllText($matchSource, "print match 0x5a { 0x4d => 0, 0x5a => 1, _ => 2 }`n")
 $matchVm = & $binary run $matchSource --engine vm
 if ($LASTEXITCODE -ne 0 -or ($matchVm -join "`n") -ne '1') { throw 'Installed match VM failed' }
-& $binary compile $matchSource
+& $binary compile $matchSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed match native compile failed' }
 $matchNative = & "$matchSource.exe"
 if ($LASTEXITCODE -ne 0 -or ($matchNative -join "`n") -ne '1') { throw 'Installed match native execution failed' }
@@ -314,7 +314,7 @@ if ($LASTEXITCODE -ne 0 -or ($conditionalOutput -join "`n") -ne "high`n1`n1`n0")
 }
 $conditionalCopy = Join-Path $smokeRoot 'conditional-actions.gak'
 Copy-Item -LiteralPath $conditionalExample -Destination $conditionalCopy
-& $binary compile $conditionalCopy
+& $binary compile $conditionalCopy --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed conditional action native compilation failed' }
 $conditionalNative = "$conditionalCopy.exe"
 $conditionalNativeOutput = & $conditionalNative
@@ -329,7 +329,7 @@ if ($LASTEXITCODE -ne 0 -or ($earlyOutput -join "`n") -ne "critical`nreview`nlow
 }
 $earlyCopy = Join-Path $smokeRoot 'early-return.gak'
 Copy-Item -LiteralPath $earlyExample -Destination $earlyCopy
-& $binary compile $earlyCopy
+& $binary compile $earlyCopy --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed early-return native compilation failed' }
 $earlyNative = "$earlyCopy.exe"
 $earlyNativeOutput = & $earlyNative
@@ -356,7 +356,7 @@ if ($LASTEXITCODE -ne 0 -or ($exhaustiveOutput -join "`n") -ne "critical`nreview
 }
 $exhaustiveCopy = Join-Path $smokeRoot 'exhaustive-return.gak'
 Copy-Item -LiteralPath $exhaustiveExample -Destination $exhaustiveCopy
-& $binary compile $exhaustiveCopy
+& $binary compile $exhaustiveCopy --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed exhaustive-return native compilation failed' }
 $exhaustiveNative = "$exhaustiveCopy.exe"
 $exhaustiveNativeOutput = & $exhaustiveNative
@@ -440,7 +440,7 @@ $udpNativeSource = Join-Path $smokeRoot 'native-udp-smoke.gak'
     'from std.bytes import from_hex, repeat',
     'print datagram("127.0.0.1", 9, repeat(from_hex("01"), 65508), 1, 100)'
 ), $utf8NoBom)
-& $binary compile $udpNativeSource
+& $binary compile $udpNativeSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed native UDP compilation failed' }
 $udpStdout = Join-Path $smokeRoot 'native-udp-stdout.txt'
 $udpStderr = Join-Path $smokeRoot 'native-udp-stderr.txt'
@@ -501,7 +501,7 @@ $nativeFormatSource = Join-Path $smokeRoot 'native-format-smoke.gak'
     'print bits(report)',
     'print signal(report, "pe.nx_compat")'
 ), $utf8NoBom)
-& $binary compile $nativeFormatSource
+& $binary compile $nativeFormatSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI native format compilation failed' }
 $nativeFormatOutput = & "$nativeFormatSource.exe" --allow-read 'C:\Windows\System32' -- 'C:\Windows\System32\notepad.exe'
 if ($LASTEXITCODE -ne 0 -or ($nativeFormatOutput -join "`n") -ne "pe`n64`npresent") {
@@ -561,7 +561,7 @@ $rangeExample = Join-Path $smokeRoot 'examples\native_range.gak'
 if ($LASTEXITCODE -ne 0) { throw 'Installed CLI does not recognize range loops' }
 $rangeCopy = Join-Path $smokeRoot 'native-range.gak'
 Copy-Item -LiteralPath $rangeExample -Destination $rangeCopy
-& $binary compile $rangeCopy
+& $binary compile $rangeCopy --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed native range compilation failed' }
 $rangeExecutable = "$rangeCopy.exe"
 $rangeOutput = & $rangeExecutable
@@ -586,7 +586,7 @@ if ($python) {
         'print length("Galeikan")',
         'print slice("Galeikan", 1, 2) == "al"'
     ), $utf8NoBom)
-    & $binary compile $pythonSource
+    & $binary compile $pythonSource --emit-asm
     if ($LASTEXITCODE -ne 0) { throw 'Installed native Python compilation failed' }
     $pythonOutput = & "$pythonSource.exe" --allow-python $python.Source
     if ($LASTEXITCODE -ne 0 -or ($pythonOutput -join "`n") -ne "40`n42`nGaleikanScript`n8`ntrue") {
@@ -620,7 +620,7 @@ $processSource = Join-Path $smokeRoot 'native-process-smoke.gak'
     'print process.parent_pid(process.self_pid()) > 0',
     'print count(process.children(process.self_pid())) == 0'
 ), $utf8NoBom)
-& $binary compile $processSource
+& $binary compile $processSource --emit-asm
 if ($LASTEXITCODE -ne 0) { throw 'Installed native process compilation failed' }
 $processOutput = & "$processSource.exe" --allow-process self
 if ($LASTEXITCODE -ne 0 -or $processOutput.Count -ne 5 -or $processOutput[0] -notmatch '^[1-9][0-9]*$' -or $processOutput[1] -ne 'true' -or $processOutput[2] -ne 'true' -or $processOutput[3] -ne 'true' -or $processOutput[4] -ne 'true') {

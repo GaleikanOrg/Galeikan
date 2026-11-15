@@ -464,14 +464,20 @@ class Galeikan:
     def build(self, script: str | PathLike[str], *, timeout: float = 30.0) -> Path:
         return self._path_command("build", script, timeout)
 
-    def compile(self, script: str | PathLike[str], *, timeout: float = 30.0) -> Path:
-        return self._path_command("compile", script, timeout)
+    def compile(self, script: str | PathLike[str], *, emit_asm: bool = False,
+                timeout: float = 30.0) -> Path:
+        return self._path_command(
+            "compile", script, timeout, ("--emit-asm",) if emit_asm else (),
+        )
 
     def lock(self, project_dir: str | PathLike[str], *, timeout: float = 30.0) -> Path:
         return self._path_command("lock", project_dir, timeout)
 
-    def _path_command(self, mode: str, target: str | PathLike[str], timeout: float) -> Path:
-        result = _run_bounded([self.binary, mode, str(target)], text=True, timeout=timeout)
+    def _path_command(self, mode: str, target: str | PathLike[str], timeout: float,
+                      extra_args: Sequence[str] = ()) -> Path:
+        result = _run_bounded(
+            [self.binary, mode, str(target), *extra_args], text=True, timeout=timeout,
+        )
         path = result.stdout.strip()
         if not path:
             raise RuntimeError(f"Galeikan {mode} returned no path")

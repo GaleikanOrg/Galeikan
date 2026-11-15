@@ -1284,6 +1284,11 @@ sys.stdin.read(1)
             result = Galeikan("galeikan-bin").compile("project/main.gak")
             self.assertEqual(result, Path("project/main.gak.native"))
             self.assertEqual(run.call_args.args[0], ["galeikan-bin", "compile", "project/main.gak"])
+            Galeikan("galeikan-bin").compile("project/main.gak", emit_asm=True)
+            self.assertEqual(
+                run.call_args.args[0],
+                ["galeikan-bin", "compile", "project/main.gak", "--emit-asm"],
+            )
 
 
 if __name__ == "__main__":

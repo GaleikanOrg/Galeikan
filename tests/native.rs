@@ -5020,6 +5020,12 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
     );
     let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
     assert!(executable.is_file());
+    let assembly = script.with_extension(if cfg!(windows) {
+        "gak.win64.S"
+    } else {
+        "gak.linux64.S"
+    });
+    assert!(!assembly.exists(), "default compilation left an assembly sidecar");
     let stale = || {
         fs::read_dir(&s.0)
             .unwrap()
@@ -5045,6 +5051,16 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
         stale()
     );
     assert!(executable.is_file());
+    assert!(!assembly.exists(), "failed compilation left an assembly sidecar");
+    let emitted = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .arg("--emit-asm")
+        .output()
+        .unwrap();
+    assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
+    assert!(fs::metadata(&assembly).unwrap().len() > 0);
+    assert!(stale().is_empty());
 }
 
 #[test]

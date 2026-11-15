@@ -25,7 +25,7 @@ fn usage() -> &'static str {
         "  galeikan build <source.gak|source.gaks>\n",
         "  galeikan inspect <file.gakb>\n",
         "  galeikan exec <file.gakb> [--case <output.json>] [permissions] [-- <script-args>...]\n",
-        "  galeikan compile <source.gak|source.gaks>\n",
+        "  galeikan compile <source.gak|source.gaks> [--emit-asm]\n",
         "  galeikan call <source.gak|source.gaks|file.gakb> <function> [--engine ast|vm] [permissions] [-- <script-args>...]\n",
         "  galeikan serve <source.gak|source.gaks|file.gakb> [--engine ast|vm] [permissions] [-- <script-args>...]\n",
         "  galeikan lock <project-dir>\n",
@@ -141,8 +141,10 @@ fn main() {
         }
         return;
     }
-    if args.len() == 2 && args[0] == "compile" {
-        match native::compile(&PathBuf::from(&args[1])) {
+    if args.first().is_some_and(|arg| arg == "compile")
+        && (args.len() == 2 || (args.len() == 3 && args[2] == "--emit-asm"))
+    {
+        match native::compile(&PathBuf::from(&args[1]), args.len() == 3) {
             Ok(path) => println!("{}", path.display()),
             Err(error) => {
                 eprintln!("{error}");
