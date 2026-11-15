@@ -2067,7 +2067,8 @@ static uint64_t *gak_process_hunt_region_pattern(GakRegion *region,
         for (uint64_t position = 0; position < pattern_length; position++) {
             uint64_t bit = UINT64_C(1) << position;
             for (unsigned byte = 0; byte < 256; byte++)
-                if (((uint8_t)byte & masks[position]) == needle[position])
+                if (((uint8_t)byte & masks[position]) ==
+                    (needle[position] & masks[position]))
                     accept[byte] |= bit;
         }
     } else {
