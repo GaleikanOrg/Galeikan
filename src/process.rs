@@ -35,7 +35,7 @@ pub fn kind(region: &Region) -> &'static str {
         "mapped"
     } else if label == "private" {
         "private"
-    } else if label.is_empty() {
+    } else if label.is_empty() || (label.starts_with("[anon:") && label.ends_with(']')) {
         "anonymous"
     } else if label.starts_with('/') {
         "file"
@@ -1333,6 +1333,10 @@ mod tests {
         assert_eq!(kind(&region), "private");
         region.label.clear();
         assert_eq!(kind(&region), "anonymous");
+        region.label = "[anon:galeikan-heap]".into();
+        assert_eq!(kind(&region), "anonymous");
+        region.label = "[anon_shmem:galeikan-shared]".into();
+        assert_eq!(kind(&region), "special");
         region.label = "/tmp/mapped.bin".into();
         region.image_backed = true;
         assert_eq!(kind(&region), if cfg!(windows) { "image" } else { "file" });

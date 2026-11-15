@@ -1386,6 +1386,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
             (filter == 5 && rights[0] == 'r') ||
             (filter == 6 && rights[0] == 'r' && rights[1] == 'w' &&
              !image_backed && (!label[0] || strcmp(label, "[heap]") == 0 ||
+                               (strncmp(label, "[anon:", 6) == 0 &&
+                                strlen(label) >= 7 && label[strlen(label) - 1] == ']') ||
                                strcmp(label, "private") == 0)) ||
             (filter == 7 && !image_backed && rights[2] == 'x')) {
             char access[4] = {rights[0], rights[1], rights[2], 0};
@@ -1801,7 +1803,8 @@ uint8_t *gak_native_process_kind(GakRegion *region) {
     }
     else if (strcmp(label, "mapped") == 0) kind = "mapped";
     else if (strcmp(label, "private") == 0) kind = "private";
-    else if (length == 0) kind = "anonymous";
+    else if (length == 0 || (length >= 7 && strncmp(label, "[anon:", 6) == 0 &&
+                             label[length - 1] == ']')) kind = "anonymous";
     else if (label[0] == '/') kind = "file";
     else if (label[0] == '[') kind = "special";
     else kind = "other";
