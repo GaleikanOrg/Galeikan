@@ -108,7 +108,7 @@ Section "Galeikan CLI" SEC_CLI
   WriteRegStr HKCU "Software\Classes\Galeikan.Bundle" "" "Galeikan bytecode bundle (.gakb)"
   WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\DefaultIcon" "" "$INSTDIR\icons\galeikan.ico"
   WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\open" "" "Inspect with Galeikan"
-  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\open\command" "" '"$SYSDIR\cmd.exe" /k ""$INSTDIR\galeikan.exe" inspect "%1""'
+  WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\open\command" "" '"$INSTDIR\galeikan.exe" inspect "%1"'
   WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\run" "" "Run with Galeikan"
   WriteRegStr HKCU "Software\Classes\Galeikan.Bundle\shell\run\command" "" '"$INSTDIR\galeikan.exe" exec "%1"'
   WriteRegStr HKCU "Software\Classes\.gakb\OpenWithProgids" "Galeikan.Bundle" ""

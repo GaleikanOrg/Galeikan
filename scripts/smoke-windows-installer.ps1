@@ -163,7 +163,7 @@ $bundleAssociation = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Softwar
 $bundleCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\open\command').GetValue('')
 $bundleRunCommand = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\Galeikan.Bundle\shell\run\command').GetValue('')
 if ($bundleAssociation -ne 'Galeikan.Bundle' -or
-    -not $bundleCommand.Contains('"' + $binary + '" inspect "%1"') -or
+    $bundleCommand -ne ('"' + $binary + '" inspect "%1"') -or
     $bundleRunCommand -ne ('"' + $binary + '" exec "%1"')) {
     throw 'Installed Galeikan bytecode bundle association is invalid'
 }
