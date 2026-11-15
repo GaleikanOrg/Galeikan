@@ -891,6 +891,49 @@ static int gak_process_path_utf8(const unsigned char *bytes, size_t length) {
     }
     return 1;
 }
+
+static uint8_t *gak_utf8_lossy_box(const char *text) {
+    size_t length = strlen(text);
+    const unsigned char *bytes = (const unsigned char *)text;
+    if (gak_process_path_utf8(bytes, length)) return gak_box(text, length);
+    if (length > 1024u * 1024u || length > (SIZE_MAX - 1) / 3) return NULL;
+    char *converted = malloc(length * 3 + 1);
+    if (!converted) return NULL;
+    size_t used = 0;
+    for (size_t index = 0; index < length;) {
+        unsigned char first = bytes[index];
+        if (first < 0x80u) {
+            converted[used++] = (char)first;
+            index++;
+            continue;
+        }
+        size_t width = first >= 0xc2u && first <= 0xdfu ? 2 :
+                       first >= 0xe0u && first <= 0xefu ? 3 :
+                       first >= 0xf0u && first <= 0xf4u ? 4 : 0;
+        size_t valid = 1;
+        while (valid < width && index + valid < length) {
+            unsigned char next = bytes[index + valid];
+            if ((next & 0xc0u) != 0x80u) break;
+            if (valid == 1 && ((first == 0xe0u && next < 0xa0u) ||
+                               (first == 0xedu && next >= 0xa0u) ||
+                               (first == 0xf0u && next < 0x90u) ||
+                               (first == 0xf4u && next >= 0x90u))) break;
+            valid++;
+        }
+        if (width && valid == width) {
+            memcpy(converted + used, bytes + index, width);
+            used += width;
+            index += width;
+        } else {
+            memcpy(converted + used, "\xef\xbf\xbd", 3);
+            used += 3;
+            index += valid;
+        }
+    }
+    uint8_t *result = gak_box(converted, used);
+    free(converted);
+    return result;
+}
 #endif
 
 uint8_t *gak_native_process_executable(uint64_t pid) {
@@ -1077,7 +1120,11 @@ static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
     region->size = size;
     region->image_backed = image_backed ? 1 : 0;
     region->access = gak_box(access, strlen(access));
+#ifdef _WIN32
     region->label = gak_box(label, strlen(label));
+#else
+    region->label = gak_utf8_lossy_box(label);
+#endif
     if (!region->access || !region->label) {
         gak_release_box(region->access);
         gak_release_box(region->label);

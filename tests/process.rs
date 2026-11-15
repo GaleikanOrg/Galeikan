@@ -1137,6 +1137,55 @@ fn readable_executable_and_wx_regions_match_across_execution_modes() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn process_region_labels_replace_invalid_utf8_in_all_engines() {
+    let source = r#"import mmap, os, sys
+fd = os.memfd_create(b'gak-\xff-\xe2\x82-\xed\xa0\x80-\xc0\x80-\xc3\xa9')
+os.ftruncate(fd, 4096)
+mapped = mmap.mmap(fd, 4096, flags=mmap.MAP_PRIVATE, prot=mmap.PROT_READ)
+print(1, flush=True)
+sys.stdin.read(1)
+"#;
+    let Some(helper) = MemoryChild::spawn_source(source) else {
+        return;
+    };
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-region-utf8-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("region-utf8.gak");
+    fs::write(&script, format!(
+        "requires {{ process.inspect }}\nimport std.process\nfrom std.text import contains\nvar found = false\nfor region in process.regions({pid}) {{\n    if contains(process.label(region), \"gak-�\") {{\n        print process.label(region)\n        found = true\n    }}\n}}\nprint found\n"
+    )).unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let mut outputs = Vec::new();
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        outputs.push(output.stdout);
+    }
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).args(["--allow-process", &pid.to_string()])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        outputs.push(native.stdout);
+    }
+    let expected = std::str::from_utf8(&outputs[0]).unwrap();
+    assert!(expected.contains("gak-�"), "{expected}");
+    assert!(expected.contains("é"), "{expected}");
+    assert!(expected.ends_with("true\n"), "{expected}");
+    for output in &outputs[1..] {
+        assert_eq!(output, &outputs[0]);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn native_process_regions_locate_live_memory_and_match_vm() {
     if Command::new("gcc").arg("--version").output().is_err() {
