@@ -1,7 +1,7 @@
 use sha2::Digest;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1776,6 +1776,28 @@ fn call_json(script: &Path, function: &str, engine: &str, request: &str) -> Outp
         .write_all(request.as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+fn accept_with_timeout(listener: &TcpListener) -> (TcpStream, SocketAddr) {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let (client, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("TCP test server accept failed: {error}"),
+        }
+    };
+    client.set_nonblocking(false).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .unwrap();
+    (client, peer)
 }
 
 fn local_http_server(responses: Vec<&'static [u8]>) -> (u16, std::thread::JoinHandle<()>) {
@@ -4459,7 +4481,7 @@ fn http_head_ignores_advertised_entity_length() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = listener.local_addr().unwrap().to_string();
     let server = std::thread::spawn(move || {
-        let (mut client, _) = listener.accept().unwrap();
+        let (mut client, _) = accept_with_timeout(&listener);
         client
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
@@ -4718,7 +4740,7 @@ fn http_fetch_keeps_error_status_body_and_times_out_on_slow_body() {
     let port = listener.local_addr().unwrap().port();
     let endpoint = format!("127.0.0.1:{port}");
     let server = std::thread::spawn(move || {
-        let (mut client, _) = listener.accept().unwrap();
+        let (mut client, _) = accept_with_timeout(&listener);
         client
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
@@ -4762,7 +4784,7 @@ fn tcp_exchange_enforces_response_limit_and_timeout() {
         ),
     );
     let server = std::thread::spawn(move || {
-        let (mut client, _) = listener.accept().unwrap();
+        let (mut client, _) = accept_with_timeout(&listener);
         let mut request = Vec::new();
         client.read_to_end(&mut request).unwrap();
         client.write_all(b"ABCDE").unwrap();
@@ -4788,7 +4810,7 @@ fn tcp_exchange_enforces_response_limit_and_timeout() {
         ),
     );
     let server = std::thread::spawn(move || {
-        let (mut client, _) = listener.accept().unwrap();
+        let (mut client, _) = accept_with_timeout(&listener);
         let mut request = Vec::new();
         client.read_to_end(&mut request).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
