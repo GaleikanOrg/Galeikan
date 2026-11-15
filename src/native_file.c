@@ -1203,10 +1203,80 @@ static const char *gak_windows_access(DWORD protection) {
     }
 }
 
+typedef struct {
+    wchar_t *device;
+    size_t length;
+    wchar_t drive;
+} GakWindowsDrive;
+
+typedef struct {
+    GakWindowsDrive items[26];
+    size_t count;
+} GakWindowsDrives;
+
+static void gak_windows_drives_init(GakWindowsDrives *drives) {
+    wchar_t target[GAK_MAX_PATH_BYTES];
+    for (wchar_t letter = L'A'; letter <= L'Z'; letter++) {
+        wchar_t name[] = {letter, L':', 0};
+        DWORD count = QueryDosDeviceW(name, target, GAK_MAX_PATH_BYTES);
+        if (!count || count > GAK_MAX_PATH_BYTES || wcsncmp(target, L"\\Device\\", 8) != 0)
+            continue;
+        size_t length = wcslen(target);
+        wchar_t *copy = malloc((length + 1) * sizeof(wchar_t));
+        if (!copy) continue;
+        wmemcpy(copy, target, length + 1);
+        drives->items[drives->count++] = (GakWindowsDrive){copy, length, letter};
+    }
+}
+
+static void gak_windows_drives_free(GakWindowsDrives *drives) {
+    for (size_t index = 0; index < drives->count; index++)
+        free(drives->items[index].device);
+}
+
+static char *gak_windows_module_label(const wchar_t *path, const GakWindowsDrives *drives) {
+    const GakWindowsDrive *best = NULL;
+    for (size_t index = 0; index < drives->count; index++) {
+        const GakWindowsDrive *drive = &drives->items[index];
+        if (_wcsnicmp(path, drive->device, drive->length) == 0 &&
+            (path[drive->length] == L'\\' || path[drive->length] == 0) &&
+            (!best || drive->length > best->length))
+            best = drive;
+    }
+    if (best) {
+        size_t suffix = wcslen(path + best->length);
+        wchar_t *dos = malloc((suffix + 3) * sizeof(wchar_t));
+        if (dos) {
+            dos[0] = best->drive;
+            dos[1] = L':';
+            wmemcpy(dos + 2, path + best->length, suffix + 1);
+            char *label = gak_utf8(dos);
+            free(dos);
+            return label;
+        }
+    }
+    static const wchar_t mup[] = L"\\Device\\Mup";
+    const size_t mup_length = sizeof(mup) / sizeof(mup[0]) - 1;
+    if (_wcsnicmp(path, mup, mup_length) == 0 && path[mup_length] == L'\\') {
+        size_t suffix = wcslen(path + mup_length);
+        wchar_t *unc = malloc((suffix + 2) * sizeof(wchar_t));
+        if (unc) {
+            unc[0] = L'\\';
+            wmemcpy(unc + 1, path + mup_length, suffix + 1);
+            char *label = gak_utf8(unc);
+            free(unc);
+            return label;
+        }
+    }
+    return gak_utf8(path);
+}
+
 static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
     HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (!process)
         return gak_failf("cannot open process %u for memory-map query: %lu", pid, GetLastError());
+    GakWindowsDrives drives = {0};
+    gak_windows_drives_init(&drives);
     uintptr_t address = 0;
     for (;;) {
         MEMORY_BASIC_INFORMATION information;
@@ -1215,12 +1285,14 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
         if (!returned) {
             DWORD error = GetLastError();
             if (error == ERROR_INVALID_PARAMETER) break;
+            gak_windows_drives_free(&drives);
             CloseHandle(process);
             return gak_failf("cannot query process %u memory map: %lu", pid, error);
         }
         if (returned != sizeof(information) || !information.RegionSize ||
             (uintptr_t)information.BaseAddress > UINTPTR_MAX - information.RegionSize ||
             (uintptr_t)information.BaseAddress + information.RegionSize <= address) {
+            gak_windows_drives_free(&drives);
             CloseHandle(process);
             return gak_failf("invalid process memory-map entry");
         }
@@ -1243,7 +1315,7 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
                                                            wide, GAK_MAX_PATH_BYTES);
                     if (length && length < GAK_MAX_PATH_BYTES) {
                         wide[length] = 0;
-                        label_owned = gak_utf8(wide);
+                        label_owned = gak_windows_module_label(wide, &drives);
                     }
                     label = label_owned ? label_owned : "image";
                 } else if (information.Type == MEM_MAPPED) {
@@ -1255,6 +1327,7 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
                                                 information.RegionSize, access, label, image_backed);
                 free(label_owned);
                 if (status != 0) {
+                    gak_windows_drives_free(&drives);
                     CloseHandle(process);
                     return -1;
                 }
@@ -1262,6 +1335,7 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
         }
         address = start + information.RegionSize;
     }
+    gak_windows_drives_free(&drives);
     CloseHandle(process);
     return 0;
 }
