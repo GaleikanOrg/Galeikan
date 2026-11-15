@@ -5052,6 +5052,15 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
     );
     assert!(executable.is_file());
     assert!(!assembly.exists(), "failed compilation left an assembly sidecar");
+    let failed_emit = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .arg("--emit-asm")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!failed_emit.status.success());
+    assert!(!assembly.exists(), "failed assembly build left a sidecar");
     let emitted = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("compile")
         .arg(&script)
@@ -5060,6 +5069,28 @@ fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
         .unwrap();
     assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
     assert!(fs::metadata(&assembly).unwrap().len() > 0);
+    assert!(stale().is_empty());
+    let original_assembly = fs::read(&assembly).unwrap();
+    fs::write(&script, "print 7\n").unwrap();
+    let failed_emit = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .arg("--emit-asm")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!failed_emit.status.success());
+    assert_eq!(fs::read(&assembly).unwrap(), original_assembly);
+    assert!(stale().is_empty());
+    let updated = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .arg("--emit-asm")
+        .output()
+        .unwrap();
+    assert!(updated.status.success(), "{}", String::from_utf8_lossy(&updated.stderr));
+    assert_ne!(fs::read(&assembly).unwrap(), original_assembly);
+    assert_eq!(Command::new(&executable).output().unwrap().stdout, b"7\n");
     assert!(stale().is_empty());
 }
 

@@ -1339,15 +1339,16 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     };
     let scratch = NativeScratch::new_in(output.parent().ok_or("native output has no parent")?)?;
     let candidate = scratch.path.join(output.file_name().ok_or("native output has no name")?);
-    let assembly_path = if emit_asm {
+    let assembly_sidecar = if emit_asm {
         if cfg!(target_os = "windows") {
-            path.with_extension(format!("{source_extension}.win64.S"))
+            Some(path.with_extension(format!("{source_extension}.win64.S")))
         } else {
-            path.with_extension(format!("{source_extension}.linux64.S"))
+            Some(path.with_extension(format!("{source_extension}.linux64.S")))
         }
     } else {
-        scratch.path.join("program.S")
+        None
     };
+    let assembly_path = scratch.path.join("program.S");
     fs::write(&assembly_path, assembly)
         .map_err(|e| format!("cannot write {}: {e}", assembly_path.display()))?;
     let file_runtime_path = if uses_file_read || uses_python || uses_process || uses_net {
@@ -1489,6 +1490,14 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     verify_native_hardening(&candidate)?;
     fs::rename(&candidate, &output)
         .map_err(|error| format!("cannot install native output {}: {error}", output.display()))?;
+    if let Some(sidecar) = assembly_sidecar {
+        fs::rename(&assembly_path, &sidecar).map_err(|error| {
+            format!(
+                "native output was installed, but cannot install assembly sidecar {}: {error}",
+                sidecar.display()
+            )
+        })?;
+    }
     if cfg!(target_os = "windows") {
         let rendered = output.to_string_lossy();
         Ok(PathBuf::from(
