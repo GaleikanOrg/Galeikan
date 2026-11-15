@@ -8097,6 +8097,8 @@ fn base64_url_rejects_noncanonical_input_in_vm_and_native() {
     for (name, value) in [
         ("one-digit", "Z"),
         ("bad-bits", "Zh"),
+        ("leading-padding-short", "=A"),
+        ("leading-padding-long", "=AA"),
         ("partial-padding", "Zg="),
         ("wrong-alphabet", "++//"),
         ("trailing-data", "Zg==A"),

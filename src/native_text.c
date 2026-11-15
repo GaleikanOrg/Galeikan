@@ -55,7 +55,7 @@ int64_t gak_native_base64_decode(const uint8_t *box, uint8_t *output,
         }
     }
     if (count) {
-        if (!url_safe || count == 1 || quartet[1] == 64 ||
+        if (!url_safe || count == 1 || quartet[0] == 64 || quartet[1] == 64 ||
             (count == 2 && (quartet[1] & 15) != 0) ||
             (count == 3 && (quartet[2] == 64 || (quartet[2] & 3) != 0)))
             return -1;

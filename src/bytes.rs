@@ -165,6 +165,7 @@ fn decode_base64(text: &str, url_safe: bool) -> Result<Vec<u8>, String> {
     if count != 0 {
         if !url_safe
             || count == 1
+            || quartet[0] == 64
             || quartet[1] == 64
             || (count == 2 && quartet[1] & 15 != 0)
             || (count == 3 && (quartet[2] == 64 || quartet[2] & 3 != 0))
@@ -479,7 +480,9 @@ mod tests {
         assert_eq!(from_base64_url("Zg").unwrap(), b"f");
         assert_eq!(from_base64_url("Zm8=").unwrap(), b"fo");
         assert_eq!(from_base64_url("").unwrap(), b"");
-        for invalid in ["Z", "Zh", "Zm9", "A=", "AA=", "Zg=", "++//", "Zg==A"] {
+        for invalid in [
+            "Z", "Zh", "Zm9", "=A", "=AA", "A=", "AA=", "Zg=", "++//", "Zg==A",
+        ] {
             assert_eq!(from_base64_url(invalid).unwrap_err(), "invalid base64 data");
         }
         assert_eq!(
