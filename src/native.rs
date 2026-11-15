@@ -4239,7 +4239,7 @@ impl Codegen {
             }
             (
                 "pid" | "start" | "start_u64" | "size" | "size_u64" | "end" | "end_u64" | "access" | "label"
-                | "image_backed",
+                | "image_backed" | "sharing",
                 [region],
             ) => {
                 if self.expr(region, scope)? != Scalar::Region {
@@ -4255,6 +4255,7 @@ impl Codegen {
                     "end_u64" => (8, Scalar::UInt),
                     "access" => (24, Scalar::Str),
                     "label" => (32, Scalar::Str),
+                    "sharing" => (48, Scalar::Str),
                     _ => (40, Scalar::Bool),
                 };
                 if name == "end" || name == "end_u64" {

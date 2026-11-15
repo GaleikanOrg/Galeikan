@@ -17,6 +17,7 @@ pub struct Region {
     pub access: String,
     pub label: String,
     pub image_backed: bool,
+    pub sharing: &'static str,
 }
 
 pub fn kind(region: &Region) -> &'static str {
@@ -150,6 +151,7 @@ pub fn heap_candidates(pid: u32) -> Result<Vec<Region>, String> {
         .filter(|region| {
             region.access.starts_with("rw")
                 && !region.image_backed
+                && region.sharing == "private"
                 && matches!(kind(region), "heap" | "anonymous" | "private")
         })
         .collect())
@@ -752,6 +754,7 @@ fn parse_linux_map_line(pid: u32, line: &str) -> Result<Region, String> {
         access: rights[..3].to_string(),
         label,
         image_backed,
+        sharing: if bytes[3] == b's' { "shared" } else { "private" },
     })
 }
 
@@ -960,6 +963,11 @@ fn list_regions(pid: u32) -> Result<Vec<Region>, String> {
                     access,
                     label,
                     image_backed,
+                    sharing: if information.kind == 0x20000 {
+                        "private"
+                    } else {
+                        "unknown"
+                    },
                 });
                 if regions.len() > MAX_REGIONS {
                     return Err(format!("process memory map exceeds {MAX_REGIONS} regions"));
@@ -1149,6 +1157,7 @@ mod tests {
             access: "r-x".into(),
             label: label.into(),
             image_backed: true,
+            sharing: "unknown",
         };
         let paths = module_paths(&[
             image("/bin/main"),
@@ -1197,15 +1206,16 @@ mod tests {
         let region = super::parse_linux_map_line(7, line).unwrap();
         assert_eq!(region.label, "/tmp/a  b\tc (deleted)");
         assert!(region.image_backed);
+        assert_eq!(region.sharing, "private");
         assert_eq!(module_paths(&[region]), ["/tmp/a  b\tc (deleted)"]);
         assert!(super::parse_linux_map_line(7, "00400000-00401000 r-xp").is_err());
         assert!(
             super::parse_linux_map_line(7, "00400000-00401000 r-xz 00000000 00:01 42")
                 .is_err()
         );
-        assert!(
-            super::parse_linux_map_line(7, "00400000-00401000 r--s 00000000 00:00 0").is_ok()
-        );
+        let shared = super::parse_linux_map_line(7, "00400000-00401000 r--s 00000000 00:00 0")
+            .unwrap();
+        assert_eq!(shared.sharing, "shared");
     }
 
     #[test]
@@ -1239,6 +1249,7 @@ mod tests {
             access: "rw-".into(),
             label: String::new(),
             image_backed: false,
+            sharing: "private",
         };
         let regions = [region(usize::MAX), region(1)];
         assert_eq!(
@@ -1261,6 +1272,7 @@ mod tests {
             access: "rw-".into(),
             label: "test allocation".into(),
             image_backed: false,
+            sharing: "private",
         };
         assert_eq!(
             hunt_region(&region, needle, None, 0, data.len()).unwrap(),
@@ -1312,6 +1324,7 @@ mod tests {
             access: "rw-".into(),
             label: String::new(),
             image_backed: false,
+            sharing: "private",
         };
         assert_eq!(
             pointer_refs_u64(&region, target, 0, data.len()).unwrap(),
@@ -1333,6 +1346,7 @@ mod tests {
             access: "rw-".into(),
             label: "[heap]".into(),
             image_backed: false,
+            sharing: "private",
         };
         assert_eq!(kind(&region), "heap");
         region.label = "[stack]".into();
@@ -1374,6 +1388,7 @@ mod tests {
         assert!(maps.iter().all(|region| {
             region.access.starts_with("rw")
                 && !region.image_backed
+                && region.sharing == "private"
                 && matches!(kind(region), "heap" | "anonymous" | "private")
         }));
     }
@@ -1387,6 +1402,7 @@ mod tests {
             access: "rw-".into(),
             label: String::new(),
             image_backed: false,
+            sharing: "private",
         };
         assert!(!region.contains(0xfff));
         assert!(region.contains(0x1000));
@@ -1407,6 +1423,7 @@ mod tests {
             access: "r--".into(),
             label: "/tmp/sample.bin".into(),
             image_backed: true,
+            sharing: "unknown",
         };
         let reference = region.reference(0x1042).unwrap();
         assert_eq!(reference, "sample.bin@7:0x1000+0x42");
@@ -1447,6 +1464,7 @@ mod tests {
             access: "r--".into(),
             label: "[heap]".into(),
             image_backed: false,
+            sharing: "private",
         };
         let reference = region.reference(0x8000_0000_0000_0042).unwrap();
         assert_eq!(reference, "[heap]@9:0x8000000000000000+0x42");

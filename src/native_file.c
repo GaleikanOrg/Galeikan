@@ -58,6 +58,7 @@ typedef struct {
     uint8_t *access;
     uint8_t *label;
     uint64_t image_backed;
+    uint8_t *sharing;
 } GakRegion;
 
 typedef struct {
@@ -1148,6 +1149,7 @@ static void gak_regions_free(GakRegions *regions) {
         GakRegion *region = regions->items[index];
         gak_release_box(region->access);
         gak_release_box(region->label);
+        gak_release_box(region->sharing);
         free(region);
         gak_file_metadata_bytes -= sizeof(GakRegion);
     }
@@ -1157,7 +1159,7 @@ static void gak_regions_free(GakRegions *regions) {
 
 static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
                               uint64_t size, const char *access, const char *label,
-                              int image_backed) {
+                              int image_backed, const char *sharing) {
     if (regions->count >= GAK_MAX_REGIONS)
         return gak_failf("process memory map exceeds %d regions", GAK_MAX_REGIONS);
     if (!gak_account_metadata(sizeof(GakRegion)))
@@ -1172,14 +1174,16 @@ static int gak_regions_append(GakRegions *regions, uint32_t pid, uint64_t start,
     region->size = size;
     region->image_backed = image_backed ? 1 : 0;
     region->access = gak_box(access, strlen(access));
+    region->sharing = gak_box(sharing, strlen(sharing));
 #ifdef _WIN32
     region->label = gak_box(label, strlen(label));
 #else
     region->label = gak_utf8_lossy_box(label);
 #endif
-    if (!region->access || !region->label) {
+    if (!region->access || !region->label || !region->sharing) {
         gak_release_box(region->access);
         gak_release_box(region->label);
+        gak_release_box(region->sharing);
         free(region);
         gak_file_metadata_bytes -= sizeof(GakRegion);
         return gak_failf("native allocation failed");
@@ -1324,7 +1328,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
                     label = "private";
                 }
                 int status = gak_regions_append(regions, pid, start,
-                                                information.RegionSize, access, label, image_backed);
+                                                information.RegionSize, access, label, image_backed,
+                                                information.Type == MEM_PRIVATE ? "private" : "unknown");
                 free(label_owned);
                 if (status != 0) {
                     gak_windows_drives_free(&drives);
@@ -1385,7 +1390,7 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
             (filter == 2 && rights[1] == 'w') || (filter == 3 && rights[2] == 'x') ||
             (filter == 4 && rights[1] == 'w' && rights[2] == 'x') ||
             (filter == 5 && rights[0] == 'r') ||
-            (filter == 6 && rights[0] == 'r' && rights[1] == 'w' &&
+            (filter == 6 && rights[0] == 'r' && rights[1] == 'w' && rights[3] == 'p' &&
              !image_backed && (!label[0] || strcmp(label, "[heap]") == 0 ||
                                (strncmp(label, "[anon:", 6) == 0 &&
                                 strlen(label) >= 7 && label[strlen(label) - 1] == ']') ||
@@ -1393,7 +1398,8 @@ static int gak_collect_regions(uint32_t pid, int filter, GakRegions *regions) {
             (filter == 7 && !image_backed && rights[2] == 'x')) {
             char access[4] = {rights[0], rights[1], rights[2], 0};
             status = gak_regions_append(regions, pid, start, end - start,
-                                        access, label, image_backed);
+                                        access, label, image_backed,
+                                        rights[3] == 's' ? "shared" : "private");
             if (status != 0) break;
         }
         if (!newline) break;

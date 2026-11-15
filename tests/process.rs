@@ -1124,13 +1124,71 @@ fn named_private_anonymous_mapping_is_a_heap_candidate_in_all_engines() {
     fs::write(
         &script,
         format!(
-            "requires {{ process.inspect }}\nimport std.process\nlet all = process.regions({pid})\nlet region = process.locate_u64(all, {}u64)\nlet heaps = process.heap_candidates({pid})\nlet candidate = process.locate_u64(heaps, {}u64)\nprint process.kind(region)\nprint process.kind(candidate)\nprint process.label(candidate)\n",
+            "requires {{ process.inspect }}\nimport std.process\nlet all = process.regions({pid})\nlet region = process.locate_u64(all, {}u64)\nlet heaps = process.heap_candidates({pid})\nlet candidate = process.locate_u64(heaps, {}u64)\nprint process.kind(region)\nprint process.kind(candidate)\nprint process.sharing(candidate)\nprint process.label(candidate)\n",
             helper.address, helper.address
         ),
     )
     .unwrap();
     let galeikan = env!("CARGO_BIN_EXE_galeikan");
-    let expected = b"anonymous\nanonymous\n[anon:galeikan-test]\n";
+    let expected = b"anonymous\nanonymous\nprivate\n[anon:galeikan-test]\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-process", &pid.to_string()])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    if Command::new("gcc").arg("--version").output().is_ok() {
+        let built = Command::new(galeikan).arg("compile").arg(&script).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let output = Command::new(executable)
+            .args(["--allow-process", &pid.to_string()])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn shared_anonymous_mapping_is_not_a_heap_candidate_in_all_engines() {
+    let source = r#"import ctypes, sys
+libc = ctypes.CDLL(None)
+libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_size_t]
+libc.mmap.restype = ctypes.c_void_p
+libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+assert libc.prctl(0x59616d61, ctypes.c_ulong(-1).value, 0, 0, 0) == 0
+address = libc.mmap(None, 4096, 3, 0x21, -1, 0)
+print(address if address != ctypes.c_void_p(-1).value else 0, flush=True)
+sys.stdin.read(1)
+"#;
+    let Some(helper) = MemoryChild::spawn_source(source) else {
+        return;
+    };
+    if helper.address == 0 {
+        return;
+    }
+    let pid = helper.child.id();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("galeikan-shared-anon-{pid}-{id}"));
+    fs::create_dir_all(&root).unwrap();
+    let script = root.join("shared-anon.gaks");
+    fs::write(
+        &script,
+        format!(
+            "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn heap_lookup(maps: Regions) -> Result<Region> = process.locate_u64(maps, {}u64)\nlet region = process.locate_u64(process.regions({pid}), {}u64)\nprint process.sharing(region)\nprint is_error(heap_lookup(process.heap_candidates({pid})))\n",
+            helper.address, helper.address
+        ),
+    )
+    .unwrap();
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"shared\ntrue\n";
     for engine in ["ast", "vm"] {
         let output = Command::new(galeikan)
             .arg("run")
