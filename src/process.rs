@@ -242,7 +242,7 @@ pub fn hunt_region(
         for (position, (&value, &mask)) in pattern.iter().zip(masks).enumerate() {
             let bit = 1_u64 << position;
             for (byte, entry) in accept.iter_mut().enumerate() {
-                if (byte as u8 & mask) == value {
+                if (byte as u8 & mask) == (value & mask) {
                     *entry |= bit;
                 }
             }
@@ -1388,6 +1388,17 @@ mod tests {
             hunt_region(
                 &region,
                 b"GA\0!",
+                Some(&[0xff, 0xff, 0, 0xff]),
+                0,
+                data.len()
+            )
+            .unwrap(),
+            [MAX_READ - 2, MAX_READ + 10]
+        );
+        assert_eq!(
+            hunt_region(
+                &region,
+                b"GA\xff!",
                 Some(&[0xff, 0xff, 0, 0xff]),
                 0,
                 data.len()

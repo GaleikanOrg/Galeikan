@@ -9579,7 +9579,7 @@ fn find_masked(haystack: &[u8], needle: &[u8], masks: &[u8]) -> Result<Vec<usize
     for (position, (&value, &mask)) in needle.iter().zip(masks).enumerate() {
         let bit = 1_u64 << position;
         for (byte, entry) in accept.iter_mut().enumerate() {
-            if (byte as u8 & mask) == value {
+            if (byte as u8 & mask) == (value & mask) {
                 *entry |= bit;
             }
         }
@@ -9667,6 +9667,7 @@ mod binary_tests {
         data[63] = 0xa7;
         data[64] = 0xa8;
         assert_eq!(find_masked(&data, &needle, &masks).unwrap(), vec![0, 1]);
+        assert_eq!(find_masked(&[0xf0, 0xfa], &[0xf7], &[0xf0]).unwrap(), vec![0, 1]);
 
         let (needle, masks) = parse_hunt_hex("??").unwrap();
         assert_eq!(
