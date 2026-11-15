@@ -9,6 +9,23 @@ pub const MAX_SCAN: usize = 16 * 1024 * 1024;
 pub const MAX_SCAN_PATTERN: usize = 4096;
 pub const MAX_SCAN_HITS: usize = 10_000;
 
+#[cfg(windows)]
+const MAX_PID: u32 = u32::MAX;
+#[cfg(not(windows))]
+const MAX_PID: u32 = i32::MAX as u32;
+
+pub fn valid_pid(pid: u32) -> bool {
+    pid != 0 && pid <= MAX_PID
+}
+
+fn check_pid(pid: u32) -> Result<(), String> {
+    if valid_pid(pid) {
+        Ok(())
+    } else {
+        Err(format!("pid must be between 1 and {MAX_PID}"))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Region {
     pub pid: u32,
@@ -116,9 +133,7 @@ impl Region {
 }
 
 pub fn regions(pid: u32) -> Result<Vec<Region>, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     list_regions(pid)
 }
 
@@ -331,30 +346,22 @@ pub fn modules(pid: u32) -> Result<Vec<String>, String> {
 }
 
 pub fn thread_ids(pid: u32) -> Result<Vec<u32>, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     list_thread_ids(pid)
 }
 
 pub fn executable(pid: u32) -> Result<String, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     executable_path(pid)
 }
 
 pub fn parent_pid(pid: u32) -> Result<u32, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     read_parent_pid(pid)
 }
 
 pub fn children(pid: u32) -> Result<Vec<u32>, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     list_child_pids(pid)
 }
 
@@ -1004,9 +1011,7 @@ fn list_regions(_pid: u32) -> Result<Vec<Region>, String> {
 }
 
 pub fn snapshot(pid: u32, address: usize, length: usize) -> Result<Vec<u8>, String> {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return Err("pid must be between 1 and 2147483647".into());
-    }
+    check_pid(pid)?;
     if address == 0 || length == 0 || length > MAX_READ || address.checked_add(length).is_none() {
         return Err(format!(
             "process address must be positive and length must be between 1 and {MAX_READ}"
@@ -1128,6 +1133,29 @@ mod tests {
         executable, heap_candidates, hunt_region, kind, module_paths, pointer_refs_u64,
         read_pointer_u64, regions, snapshot, thread_ids, writable_regions, Region, MAX_READ, MAX_SCAN,
     };
+
+    #[test]
+    fn pid_validation_matches_platform_identifier_width() {
+        assert!(!super::valid_pid(0));
+        assert!(super::valid_pid(1));
+        #[cfg(windows)]
+        {
+            assert!(super::valid_pid(u32::MAX));
+            assert_eq!(
+                super::check_pid(0).unwrap_err(),
+                "pid must be between 1 and 4294967295"
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(super::valid_pid(i32::MAX as u32));
+            assert!(!super::valid_pid(i32::MAX as u32 + 1));
+            assert_eq!(
+                super::check_pid(u32::MAX).unwrap_err(),
+                "pid must be between 1 and 2147483647"
+            );
+        }
+    }
 
     #[test]
     fn executable_identifies_the_current_process() {

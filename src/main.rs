@@ -230,7 +230,7 @@ fn main() {
                 continue;
             }
             match args[i + 1].parse::<u32>() {
-                Ok(pid) if pid > 0 && pid <= i32::MAX as u32 => {
+                Ok(pid) if process::valid_pid(pid) => {
                     allowed_processes.push(pid);
                     i += 2;
                     continue;

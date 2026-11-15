@@ -9,6 +9,50 @@ use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(windows)]
+#[test]
+fn windows_accepts_full_dword_process_grants_in_all_engines() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "process-grant.gak",
+        "import std.process\nprint process.self_pid() > 0\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine, "--allow-process", "4294967295"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"true\n");
+    }
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let output = Command::new(executable)
+            .args(["--allow-process", "4294967295"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"true\n");
+    }
+}
+
 #[test]
 fn process_references_advance_within_region_across_engines() {
     let s = Sandbox::new();

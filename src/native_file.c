@@ -35,6 +35,11 @@
 #define GAK_MAX_SCAN (16u * 1024u * 1024u)
 #define GAK_MAX_SCAN_PATTERN 4096u
 #define GAK_MAX_SCAN_HITS 10000u
+#ifdef _WIN32
+#define GAK_MAX_PID UINT32_MAX
+#else
+#define GAK_MAX_PID 2147483647u
+#endif
 
 extern uint64_t gak_argc;
 extern void *gak_argv;
@@ -88,6 +93,14 @@ static int gak_syscall_granted;
 static int gak_failf(const char *format, ...);
 static char *gak_connections[GAK_MAX_CONNECTION_GRANTS];
 static size_t gak_connection_count;
+
+static int gak_valid_pid(uint64_t pid) {
+    return pid != 0 && pid <= GAK_MAX_PID;
+}
+
+static void gak_pid_error(void) {
+    gak_failf("pid must be between 1 and %u", GAK_MAX_PID);
+}
 
 int gak_native_net_allowed(const char *authority) {
     for (size_t index = 0; index < gak_connection_count; index++)
@@ -285,7 +298,7 @@ static int gak_grant_process(const wchar_t *requested) {
     if (!requested[0]) return gak_failf("invalid process grant");
     uint32_t pid = 0;
     for (const wchar_t *digit = requested; *digit; digit++) {
-        if (*digit < L'0' || *digit > L'9' || pid > (2147483647u - (uint32_t)(*digit - L'0')) / 10)
+        if (*digit < L'0' || *digit > L'9' || pid > (GAK_MAX_PID - (uint32_t)(*digit - L'0')) / 10)
             return gak_failf("invalid process grant");
         pid = pid * 10 + (uint32_t)(*digit - L'0');
     }
@@ -858,8 +871,8 @@ static int gak_linux_parent_pid(uint32_t pid, uint32_t *parent, int *error_code)
 /* Return parent PID + 1 so zero remains an unambiguous error sentinel. */
 uint64_t gak_native_process_parent_pid(uint64_t pid) {
     gak_file_error = NULL;
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return 0;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
@@ -991,8 +1004,8 @@ static uint8_t *gak_utf8_lossy_box(const char *text) {
 
 uint8_t *gak_native_process_executable(uint64_t pid) {
     gak_file_error = NULL;
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return NULL;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
@@ -1091,8 +1104,8 @@ static int gak_process_read_raw(uint64_t pid, uint64_t address,
 
 GakFileResult *gak_native_process_snapshot(uint64_t pid, uint64_t address, uint64_t length) {
     gak_file_error = NULL;
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return NULL;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
@@ -1416,8 +1429,8 @@ GakRegions *gak_native_process_regions(uint64_t pid, uint64_t filter) {
         gak_failf("invalid process region filter");
         return NULL;
     }
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return NULL;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
@@ -1515,8 +1528,8 @@ static int gak_thread_id_compare(const void *left, const void *right) {
 
 uint64_t *gak_native_process_children(uint64_t pid) {
     gak_file_error = NULL;
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return NULL;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
@@ -1642,8 +1655,8 @@ uint64_t *gak_native_process_children(uint64_t pid) {
 
 uint64_t *gak_native_process_thread_ids(uint64_t pid) {
     gak_file_error = NULL;
-    if (!pid || pid > 2147483647u) {
-        gak_failf("pid must be between 1 and 2147483647");
+    if (!gak_valid_pid(pid)) {
+        gak_pid_error();
         return NULL;
     }
     if (!gak_process_allowed((uint32_t)pid)) {
