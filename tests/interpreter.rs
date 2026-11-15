@@ -3046,6 +3046,16 @@ fn imports_without_alias_and_script_arguments() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "42\n");
 
+    let portable = s.write(
+        "portable.gak",
+        "import \"tools\\\\math.gak\" as math\nprint math.twice(21)\n",
+    );
+    for engine in ["ast", "vm"] {
+        let out = s.run_engine(&portable, engine, false, &[]);
+        assert!(out.status.success(), "{engine}: {}", stderr(&out));
+        assert_eq!(stdout(&out), "42\n");
+    }
+
     let numeric = s.write("numeric.gak", "import std.cli\nprint cli.int(0) + 2\n");
     let out = s.run_args(&numeric, false, &["40"]);
     assert!(out.status.success(), "{}", stderr(&out));

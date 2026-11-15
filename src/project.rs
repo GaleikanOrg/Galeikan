@@ -89,13 +89,14 @@ pub fn is_source_path(path: &Path) -> bool {
 }
 
 pub fn source_module_path(base: &Path, target: &str) -> Result<PathBuf, String> {
-    if target.ends_with(".gak") || target.ends_with(".gaks") {
-        return Ok(base.join(target));
+    let normalized = target.replace('\\', "/");
+    if normalized.ends_with(".gak") || normalized.ends_with(".gaks") {
+        return Ok(base.join(normalized));
     }
-    let stem = if target.contains('/') || target.contains('\\') {
-        target.to_owned()
+    let stem = if normalized.contains('/') {
+        normalized
     } else {
-        target.replace('.', "/")
+        normalized.replace('.', "/")
     };
     let lang = base.join(format!("{stem}.gak"));
     let script = base.join(format!("{stem}.gaks"));
@@ -129,7 +130,7 @@ pub fn python_module_path(base: &Path, target: &str) -> Result<PathBuf, String> 
             format!("{module}.py")
         }
     };
-    let file = base.join(filename);
+    let file = base.join(filename.replace('\\', "/"));
     if explicit_file || file.is_file() {
         return Ok(file);
     }
@@ -569,7 +570,25 @@ fn collect_files(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_version;
+    use super::{python_module_path, source_module_path, validate_version};
+    use std::path::Path;
+
+    #[test]
+    fn explicit_module_paths_accept_either_directory_separator() {
+        let base = Path::new("project");
+        assert_eq!(
+            source_module_path(base, "tools\\helper.gak").unwrap(),
+            base.join("tools/helper.gak")
+        );
+        assert_eq!(
+            source_module_path(base, "tools\\helper.gaks").unwrap(),
+            base.join("tools/helper.gaks")
+        );
+        assert_eq!(
+            python_module_path(base, "py:tools\\helper.py").unwrap(),
+            base.join("tools/helper.py")
+        );
+    }
 
     #[test]
     fn exact_package_versions_follow_semver_shape() {
