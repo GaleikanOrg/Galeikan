@@ -823,6 +823,16 @@ fn windows_dos_path(path: &str, mappings: &[(String, String)]) -> String {
             }
         }
     }
+    const MUP: &str = r"\Device\Mup";
+    if path
+        .get(..MUP.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(MUP))
+    {
+        let suffix = &path[MUP.len()..];
+        if suffix.starts_with('\\') {
+            return format!("\\{suffix}");
+        }
+    }
     path.to_owned()
 }
 
@@ -1168,6 +1178,14 @@ mod tests {
         assert_eq!(
             super::windows_dos_path(r"\Device\HarddiskVolume30\Windows\x.dll", &mappings),
             r"\Device\HarddiskVolume30\Windows\x.dll"
+        );
+        assert_eq!(
+            super::windows_dos_path(r"\Device\Mup\server\share\x.dll", &mappings),
+            r"\\server\share\x.dll"
+        );
+        assert_eq!(
+            super::windows_dos_path(r"\Device\MupOther\server\share\x.dll", &mappings),
+            r"\Device\MupOther\server\share\x.dll"
         );
     }
 
