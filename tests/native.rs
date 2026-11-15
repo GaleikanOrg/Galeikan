@@ -5141,6 +5141,47 @@ fn native_compiler_preserves_previous_output_after_failed_link() {
 }
 
 #[test]
+#[cfg(target_os = "windows")]
+fn native_compiler_replaces_previous_windows_output_and_preserves_it_on_failure() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write("main.gak", "print 42\n");
+    let first = s.compile(&script);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(first.stdout).unwrap().trim());
+    assert_eq!(Command::new(&executable).output().unwrap().stdout, b"42\n");
+    let original = fs::read(&executable).unwrap();
+
+    fs::write(&script, "print 43\n").unwrap();
+    let failed = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("cannot start gcc"));
+    assert_eq!(fs::read(&executable).unwrap(), original);
+
+    let updated = s.compile(&script);
+    assert!(
+        updated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    assert_eq!(Command::new(&executable).output().unwrap().stdout, b"43\n");
+    assert!(!fs::read_dir(&s.0)
+        .unwrap()
+        .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("galeikan-native-")));
+}
+
+#[test]
 fn native_elf32_rel_and_rela_match_vm_in_both_byte_orders() {
     if !gcc_available() {
         return;
