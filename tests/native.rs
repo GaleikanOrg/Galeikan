@@ -2392,6 +2392,65 @@ fn native_executables_have_platform_hardening_signals() {
     assert_eq!(output.stdout, b"present\npresent\npresent\nabsent\n");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn native_stack_guard_rejects_corrupted_generated_frame() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write("guarded.gak", "print 42\n");
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .arg("--emit-asm")
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let normal = Command::new(&executable).output().unwrap();
+    assert!(normal.status.success());
+    assert_eq!(normal.stdout, b"42\n");
+
+    let assembly = fs::read_to_string(script.with_extension("gak.linux64.S")).unwrap();
+    let check = "    call gak_native_stack_guard\n    cmp QWORD PTR [rbp-8], rax\n    jne gak_native_stack_fail\n    xor eax, eax";
+    assert_eq!(assembly.matches(check).count(), 1);
+    let tampered = assembly.replacen(
+        check,
+        &format!("    xor QWORD PTR [rbp-8], 1\n{check}"),
+        1,
+    );
+    let tampered_assembly = s.write("tampered.S", &tampered);
+    let tampered_executable = s.0.join("tampered.native");
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/native_call.c");
+    let linked = Command::new("gcc")
+        .args(["-fstack-protector-strong", "-pie", "-Wl,-z,noexecstack"])
+        .arg("-x")
+        .arg("assembler")
+        .arg(&tampered_assembly)
+        .arg("-x")
+        .arg("c")
+        .arg("-std=c11")
+        .arg(runtime)
+        .arg("-o")
+        .arg(&tampered_executable)
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let failed = Command::new(tampered_executable).output().unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr)
+        .contains("native stack integrity check failed"));
+}
+
 #[test]
 fn scalar_list_membership_matches_all_engines() {
     let s = Sandbox::new();

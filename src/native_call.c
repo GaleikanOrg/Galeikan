@@ -37,6 +37,23 @@ extern uint64_t gak_list_bytes;
 extern uint64_t gak_str_bytes;
 extern uint64_t gak_bytes_allocated;
 
+/* GCC protects C frames automatically; generated assembly needs the same guard. */
+uint64_t gak_native_stack_guard(void) {
+#ifdef _WIN32
+    extern uintptr_t __stack_chk_guard;
+    return (uint64_t)__stack_chk_guard;
+#else
+    uintptr_t guard;
+    __asm__ volatile("movq %%fs:0x28, %0" : "=r"(guard));
+    return (uint64_t)guard;
+#endif
+}
+
+_Noreturn void gak_native_stack_fail(void) {
+    fputs("native stack integrity check failed\n", stderr);
+    abort();
+}
+
 /* The generated entry point sets this after gak_native_init processes grants. */
 int gak_native_call_grants_processed = 0;
 

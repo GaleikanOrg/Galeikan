@@ -1181,7 +1181,8 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
         code: String::new(),
         data: String::new(),
         labels: 0,
-        slots: 0,
+        // Slots 1 and 2 are reserved for the stack guard and function return value.
+        slots: 2,
         windows: cfg!(target_os = "windows"),
         functions,
         records,
@@ -7854,7 +7855,7 @@ impl Codegen {
         self.active_module = caller_module;
         writeln!(
             self.code,
-            "    add rsp, {call_reserve}\n    ret\n{after_label}:"
+            "    mov QWORD PTR [rbp-16], rax\n    call gak_native_stack_guard\n    cmp QWORD PTR [rbp-8], rax\n    jne gak_native_stack_fail\n    mov rax, QWORD PTR [rbp-16]\n    add rsp, {call_reserve}\n    ret\n{after_label}:"
         )
         .unwrap();
         self.ensure_size()?;
@@ -7898,7 +7899,7 @@ impl Codegen {
         }
         writeln!(
             self.code,
-            "    call {}\n    mov rsp, rbp\n    pop rbp\n    sub QWORD PTR [rip+gak_call_depth], 1",
+            "    call {}\n    mov QWORD PTR [rbp-16], rax\n    call gak_native_stack_guard\n    cmp QWORD PTR [rbp-8], rax\n    jne gak_native_stack_fail\n    mov rax, QWORD PTR [rbp-16]\n    mov rsp, rbp\n    pop rbp\n    sub QWORD PTR [rip+gak_call_depth], 1",
             frame.body_label
         )
         .unwrap();
@@ -8603,6 +8604,7 @@ impl Codegen {
             "gak_main_stack_probe_tail",
             "gak_main_stack_probe_done",
         ));
+        out.push_str("    call gak_native_stack_guard\n    mov QWORD PTR [rbp-8], rax\n");
         if self.windows {
             out.push_str("    call GetCommandLineW\n    mov rcx, rax\n    lea rdx, [rip+gak_argc]\n    call CommandLineToArgvW\n    test rax, rax\n    jz gak_alloc_failure\n    mov QWORD PTR [rip+gak_argv], rax\n");
             if self.uses_file_read || self.uses_python || self.uses_process || self.uses_net {
@@ -8629,7 +8631,7 @@ impl Codegen {
             );
         }
         out.push_str(&self.code);
-        out.push_str("    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+        out.push_str("    call gak_native_stack_guard\n    cmp QWORD PTR [rbp-8], rax\n    jne gak_native_stack_fail\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
         out.push_str("gak_alloc_list:\n    push rbx\n");
         if self.windows {
             out.push_str("    sub rsp, 32\n");
