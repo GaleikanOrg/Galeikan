@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1485,16 +1485,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             compiler.arg("-lws2_32");
         }
     }
-    let result = compiler
-        .output()
-        .map_err(|e| format!("cannot start gcc: {e}"))?;
-    if !result.status.success() {
-        let diagnostic = String::from_utf8_lossy(&result.stderr);
-        return Err(format!(
-            "native link failed: {}",
-            diagnostic.chars().take(4096).collect::<String>()
-        ));
-    }
+    run_gcc(&mut compiler)?;
     verify_native_hardening(&candidate)?;
     fs::rename(&candidate, &output)
         .map_err(|error| format!("cannot install native output {}: {error}", output.display()))?;
@@ -1506,6 +1497,59 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     } else {
         Ok(output)
     }
+}
+
+fn run_gcc(compiler: &mut Command) -> Result<(), String> {
+    const MAX_DIAGNOSTIC_BYTES: usize = 16 * 1024;
+    let mut child = compiler
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot start gcc: {e}"))?;
+    let mut stderr = child.stderr.take().expect("gcc stderr was piped");
+    let diagnostics = std::thread::Builder::new().spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut captured = Vec::with_capacity(4096);
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let count = match stderr.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            let room = MAX_DIAGNOSTIC_BYTES - captured.len();
+            captured.extend_from_slice(&chunk[..count.min(room)]);
+        }
+        Ok(captured)
+    });
+    let diagnostics = match diagnostics {
+        Ok(diagnostics) => diagnostics,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("cannot collect gcc diagnostics: {error}"));
+        }
+    };
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("cannot wait for gcc: {error}"));
+        }
+    };
+    let captured = diagnostics
+        .join()
+        .map_err(|_| "cannot collect gcc diagnostics".to_owned())?
+        .map_err(|error| format!("cannot read gcc diagnostics: {error}"))?;
+    if !status.success() {
+        let diagnostic = String::from_utf8_lossy(&captured);
+        return Err(format!(
+            "native link failed: {}",
+            diagnostic.chars().take(4096).collect::<String>()
+        ));
+    }
+    Ok(())
 }
 
 fn verify_native_hardening(path: &Path) -> Result<(), String> {

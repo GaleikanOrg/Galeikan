@@ -5107,6 +5107,21 @@ fn native_compiler_preserves_previous_output_after_failed_link() {
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("native output format verification failed"));
     assert_eq!(fs::read(&executable).unwrap(), original);
+    fs::write(
+        &fake_gcc,
+        "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 4000 ]; do\n  printf '0123456789abcdef0123456789abcdef\\n' >&2\n  i=$((i+1))\ndone\nexit 1\n",
+    )
+    .unwrap();
+    let noisy = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("compile")
+        .arg(&script)
+        .env("PATH", &shim_dir)
+        .output()
+        .unwrap();
+    assert!(!noisy.status.success());
+    assert!(noisy.stderr.starts_with(b"native link failed:"));
+    assert!(noisy.stderr.len() <= 4200);
+    assert_eq!(fs::read(&executable).unwrap(), original);
     let run = Command::new(&executable).output().unwrap();
     assert!(run.status.success());
     assert_eq!(run.stdout, b"42\n");
