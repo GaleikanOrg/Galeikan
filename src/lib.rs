@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod asm;
 
+use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
@@ -312,6 +313,28 @@ pub unsafe extern "C" fn galeikan_asm_instruction_size(handle: *const c_void) ->
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_ip(handle: *const c_void) -> u64 {
     unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.ip)
+}
+
+/// Hash a readable source span. `output` must point to 32 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_sha256(
+    bytes: *const u8,
+    length: usize,
+    output: *mut u8,
+) -> i32 {
+    if output.is_null() || (bytes.is_null() && length != 0) || length > 512 * 1024 * 1024 {
+        return -1;
+    }
+    let input = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: The caller keeps `length` readable bytes alive for this call.
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    let digest = Sha256::digest(input);
+    // SAFETY: The caller provides at least 32 writable output bytes.
+    unsafe { ptr::copy_nonoverlapping(digest.as_ptr(), output, digest.len()) };
+    0
 }
 
 fn optional_address(value: Option<u64>, output: *mut u64) -> i32 {

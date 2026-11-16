@@ -31,14 +31,20 @@ if [[ "${1:-}" != --skip-cargo-build ]]; then
   CARGO_TARGET_DIR="$linux_target_dir" cargo build --release
 fi
 binary="$linux_target_dir/release/galeikan"
+decoder="$linux_target_dir/release/libgaleikan_asm.so"
 if [[ ! -x "$binary" ]]; then
   printf 'Missing Linux release binary: %s\n' "$binary" >&2
+  exit 1
+fi
+if [[ ! -f "$decoder" ]]; then
+  printf 'Missing Linux decoder library: %s\n' "$decoder" >&2
   exit 1
 fi
 
 staging="$(mktemp -d)"
 trap 'rm -rf -- "$staging"' EXIT
 install -Dm755 "$binary" "$staging/usr/bin/galeikan"
+install -Dm755 "$decoder" "$staging/usr/lib/galeikan/libgaleikan_asm.so"
 install -Dm644 packaging/README.md "$staging/usr/share/doc/galeikan/README.md"
 install -Dm644 python/pyproject.toml "$staging/usr/share/galeikan/python/pyproject.toml"
 install -Dm644 python/galeikan_bridge/__init__.py "$staging/usr/share/galeikan/python/galeikan_bridge/__init__.py"
@@ -78,7 +84,7 @@ fi
 EOF
 chmod 755 "$staging/DEBIAN/postinst" "$staging/DEBIAN/postrm"
 
-glibc_version="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/^GLIBC_//' | sort -Vu | tail -n 1)"
+glibc_version="$(objdump -T "$binary" "$decoder" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/^GLIBC_//' | sort -Vu | tail -n 1)"
 if [[ -z "$glibc_version" ]]; then
   printf 'Could not determine required glibc version.\n' >&2
   exit 1

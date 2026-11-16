@@ -536,6 +536,7 @@ enum Scalar {
     Str,
     Bytes,
     Source,
+    Instruction,
     Format,
     Section,
     Observation,
@@ -777,6 +778,7 @@ enum NativeImport {
     Bytes,
     Text,
     Binary,
+    Asm,
     Lab,
     Audit,
     Formats,
@@ -1013,6 +1015,10 @@ fn collect_module(
             }
             if target == "std.binary" {
                 imports.insert(alias.clone(), NativeImport::Binary);
+                continue;
+            }
+            if target == "std.asm" {
+                imports.insert(alias.clone(), NativeImport::Asm);
                 continue;
             }
             if target == "std.lab" {
@@ -1333,6 +1339,17 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     let uses_net = generator.uses_net;
     let uses_formats = generator.uses_formats;
     let uses_lab = generator.uses_lab;
+    let uses_asm = modules.values().any(|module| {
+        module
+            .imports
+            .values()
+            .any(|import| matches!(import, NativeImport::Asm))
+    });
+    let asm_library = if uses_asm {
+        Some(find_asm_library()?)
+    } else {
+        None
+    };
     let assembly = generator.finish()?;
     let source_extension = path
         .extension()
@@ -1392,6 +1409,11 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     };
     let lab_runtime_path = if uses_lab {
         Some(scratch.write("native_lab.c", include_str!("native_lab.c"))?)
+    } else {
+        None
+    };
+    let asm_runtime_path = if uses_asm {
+        Some(scratch.write("native_asm.c", include_str!("native_asm.c"))?)
     } else {
         None
     };
@@ -1475,6 +1497,18 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .arg("-Werror")
             .arg(gcc_path(helper_path));
     }
+    if let Some(helper_path) = &asm_runtime_path {
+        compiler
+            .arg("-x")
+            .arg("c")
+            .arg("-std=c11")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg("-Werror")
+            .arg("-I")
+            .arg(gcc_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").as_path()))
+            .arg(gcc_path(helper_path));
+    }
     compiler
         .arg("-x")
         .arg("c")
@@ -1489,8 +1523,29 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             compiler.arg("-lws2_32");
         }
     }
+    if let Some(library) = &asm_library {
+        compiler.arg("-x").arg("none").arg(gcc_path(library));
+        if !cfg!(windows) {
+            compiler.arg("-Wl,-rpath,$ORIGIN");
+        }
+    }
     run_gcc(&mut compiler)?;
     verify_native_hardening(&candidate)?;
+    if let Some(library) = &asm_library {
+        let destination = output
+            .parent()
+            .ok_or("native output has no parent")?
+            .join(library.file_name().ok_or("decoder library has no filename")?);
+        let same_file = fs::canonicalize(&destination)
+            .ok()
+            .zip(fs::canonicalize(library).ok())
+            .is_some_and(|(left, right)| left == right);
+        if !same_file {
+            fs::copy(library, &destination).map_err(|error| {
+                format!("cannot install decoder sidecar {}: {error}", destination.display())
+            })?;
+        }
+    }
     fs::rename(&candidate, &output)
         .map_err(|error| format!("cannot install native output {}: {error}", output.display()))?;
     if let Some(sidecar) = assembly_sidecar {
@@ -1509,6 +1564,32 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     } else {
         Ok(output)
     }
+}
+
+fn find_asm_library() -> Result<PathBuf, String> {
+    let filename = if cfg!(windows) {
+        "galeikan_asm.dll"
+    } else {
+        "libgaleikan_asm.so"
+    };
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("cannot locate Galeikan executable: {error}"))?;
+    let directory = executable
+        .parent()
+        .ok_or("Galeikan executable has no parent directory")?;
+    let mut candidates = vec![directory.join(filename)];
+    if directory.file_name().and_then(|name| name.to_str()) == Some("deps") {
+        if let Some(parent) = directory.parent() {
+            candidates.push(parent.join(filename));
+        }
+    }
+    if !cfg!(windows) {
+        candidates.push(PathBuf::from("/usr/lib/galeikan").join(filename));
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| format!("missing native decoder library {filename}; reinstall Galeikan or build the library with cargo build --release --lib"))
 }
 
 fn run_gcc(compiler: &mut Command) -> Result<(), String> {
@@ -1650,6 +1731,7 @@ fn scalar_type(annotation: &str) -> Result<Scalar, String> {
         "str" => Ok(Scalar::Str),
         "bytes" => Ok(Scalar::Bytes),
         "Source" => Ok(Scalar::Source),
+        "Instruction" => Ok(Scalar::Instruction),
         "Format" => Ok(Scalar::Format),
         "Section" => Ok(Scalar::Section),
         "Observation" => Ok(Scalar::Observation),
@@ -1932,6 +2014,7 @@ impl Codegen {
             Some(NativeImport::Binary) => {
                 Err("std.binary functions must be called directly".into())
             }
+            Some(NativeImport::Asm) => Err("std.asm functions must be called directly".into()),
             Some(NativeImport::Lab) => Err("std.lab functions must be called directly".into()),
             Some(NativeImport::Audit) => Err("std.audit functions must be called directly".into()),
             Some(NativeImport::Formats) => {
@@ -2739,6 +2822,12 @@ impl Codegen {
             }
             Scalar::Bytes => self.print_bytes(depth + 1)?,
             Scalar::Source => self.print_source(depth + 1)?,
+            Scalar::Instruction => {
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_asm_display", self.arg0()).unwrap();
+                let ready = self.label();
+                writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+                self.print_value(Scalar::Str, depth + 1)?;
+            }
             Scalar::Format => self.print_format(depth + 1)?,
             Scalar::Section => self.print_section(depth + 1)?,
             Scalar::Observation => self.print_observation(depth + 1)?,
@@ -3938,6 +4027,7 @@ impl Codegen {
                 Some(NativeImport::Binary) => {
                     return self.binary_call(function, args, caller_scope)
                 }
+                Some(NativeImport::Asm) => return self.asm_call(function, args, caller_scope),
                 Some(NativeImport::Lab) => return self.lab_call(function, args, caller_scope),
                 Some(NativeImport::Audit) => return self.audit_call(function, args, caller_scope),
                 Some(NativeImport::Formats) => {
@@ -6208,6 +6298,83 @@ impl Codegen {
         let patch = self.label();
         writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    cmp QWORD PTR [r10], 1\n    je {patch}\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r10+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+16]\n    call gak_splice_source\n    jmp {produced}\n{patch}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_patch_source\n{produced}:\n    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r10+48]\n    mov {}, QWORD PTR [r10+40]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rax+104], r10\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    mov QWORD PTR [r10+r11*8+8], rax\n    inc QWORD PTR [rbp-{}]\n    jmp {loop_start}\n{loop_done}:\n    mov {}, QWORD PTR [rbp-{}]\n    call free\n    mov rax, QWORD PTR [rbp-{}]", case_slot * 8, source_slot * 8, replacement_slot * 8, source_slot * 8, replacement_slot * 8, produced_slot * 8, case_slot * 8, label_slot * 8, self.arg0(), case_slot * 8, self.arg1(), self.arg2(), produced_slot * 8, label_slot * 8, list_slot * 8, index_slot * 8, index_slot * 8, self.arg0(), plan_slot * 8, list_slot * 8).unwrap();
         Ok(Scalar::ListSource)
+    }
+
+    fn asm_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        if matches!(name, "decode" | "decode_u64") && matches!(args.len(), 3 | 4) {
+            if name == "decode_u64" && args.len() != 4 {
+                return Err("asm.decode_u64 expects four arguments".into());
+            }
+            if self.expr(&args[0], scope)? != Scalar::Source {
+                return Err(format!("asm.{name} expects Source"));
+            }
+            let source_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err(format!("asm.{name} offset must be i64"));
+            }
+            let offset_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", offset_slot * 8).unwrap();
+            let ip_slot = if args.len() == 4 {
+                let kind = self.expr(&args[2], scope)?;
+                if kind != if name == "decode_u64" { Scalar::UInt } else { Scalar::Int } {
+                    return Err(format!("asm.{name} address has the wrong type"));
+                }
+                if kind == Scalar::Int {
+                    let valid = self.label();
+                    let message = self.literal("instruction address must be nonnegative")?;
+                    writeln!(self.code, "    test rax, rax\n    jns {valid}\n    lea rax, [rip+{message}]\n    jmp gak_analyze_error_dynamic\n{valid}:").unwrap();
+                }
+                let slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                slot
+            } else {
+                offset_slot
+            };
+            let bitness_index = args.len() - 1;
+            if self.expr(&args[bitness_index], scope)? != Scalar::Int {
+                return Err(format!("asm.{name} bitness must be i64"));
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_decode\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), ip_slot * 8, self.arg3()).unwrap();
+            return Ok(Scalar::Instruction);
+        }
+        let (field, result) = match name {
+            "text" => (1, Scalar::Str),
+            "mnemonic" => (2, Scalar::Str),
+            "flow" => (3, Scalar::Str),
+            "address" => (4, Scalar::Str),
+            "target" => (5, Scalar::Str),
+            "size" => (1, Scalar::Int),
+            "offset" => (2, Scalar::Int),
+            "next" => (3, Scalar::Int),
+            "address_u64" => (4, Scalar::UInt),
+            "target_u64" => (5, Scalar::UInt),
+            "data_target_u64" => (6, Scalar::UInt),
+            "register_usage_complete" => (7, Scalar::Bool),
+            _ => return Err(format!("unknown native asm function or wrong arguments: {name}")),
+        };
+        if args.len() != 1 || self.expr(&args[0], scope)? != Scalar::Instruction {
+            return Err(format!("asm.{name} expects Instruction"));
+        }
+        let helper = if result == Scalar::Str {
+            "gak_native_asm_text"
+        } else {
+            "gak_native_asm_number"
+        };
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, rax\n    mov {}, {field}\n    call {helper}", self.arg0(), self.arg1()).unwrap();
+        if result == Scalar::Str {
+            writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+        } else {
+            writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+        }
+        Ok(result)
     }
 
     fn binary_call(

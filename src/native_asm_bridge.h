@@ -45,6 +45,7 @@ int32_t galeikan_asm_disassembly_at(const void *handle, size_t index,
 void galeikan_asm_instruction_free(void *handle);
 size_t galeikan_asm_instruction_size(const void *handle);
 uint64_t galeikan_asm_instruction_ip(const void *handle);
+int32_t galeikan_asm_sha256(const uint8_t *bytes, size_t length, uint8_t *output);
 /* Optional addresses return 1 and write output when present, otherwise 0. */
 int32_t galeikan_asm_instruction_target(const void *handle, uint64_t *output);
 int32_t galeikan_asm_instruction_data_target(const void *handle, uint64_t *output);

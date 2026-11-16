@@ -5492,13 +5492,97 @@ fn native_range_rejects_invalid_bounds_and_oversized_sequences_at_runtime() {
 }
 
 #[test]
-fn native_compiler_rejects_unsupported_modules() {
+fn native_compiler_rejects_unknown_standard_modules() {
     let s = Sandbox::new();
-    let script = s.write("module.gak", "import std.asm\nprint 42\n");
+    let script = s.write("module.gak", "import std.notimplemented\nprint 42\n");
     let result = s.compile(&script);
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("native compiler does not yet support standard or Python module std.asm"));
+        .contains("unknown standard module std.notimplemented"));
+}
+
+#[test]
+fn native_asm_decode_matches_vm_and_installs_decoder_sidecar() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "decode.gak",
+        "import std.binary\nimport std.asm\nfn inspect(source: Source) -> Instruction = asm.decode(source, 0, 0x1000, 64)\nlet source: Source = binary.snapshot(binary.from_hex(\"75 02 90 c3 90 c3\"))\nlet branch: Instruction = inspect(source)\nprint branch\nprint asm.text(branch)\nprint asm.mnemonic(branch)\nprint asm.flow(branch)\nprint asm.size(branch)\nprint asm.offset(branch)\nprint asm.next(branch)\nprint asm.address(branch)\nprint asm.target(branch)\nprint asm.address_u64(branch)\nprint asm.target_u64(branch)\nprint asm.register_usage_complete(branch)\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    assert!(executable.with_file_name(if cfg!(windows) {
+        "galeikan_asm.dll"
+    } else {
+        "libgaleikan_asm.so"
+    }).is_file());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
+fn native_asm_preserves_u64_addresses_and_decoder_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let high = s.write(
+        "high.gaks",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"75 02 90 c3\"))\nlet branch: Instruction = asm.decode_u64(source, 0, 0x8000000000000000u64, 64)\nprint asm.address_u64(branch)\nprint asm.target_u64(branch)\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&high)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    let built = s.compile(&high);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(vm.status.success());
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+
+    for (name, expression, expected) in [
+        (
+            "bad-bitness.gak",
+            "asm.decode(binary.snapshot(binary.from_hex(\"90\")), 0, 8)",
+            "x86 bitness must be 16, 32, or 64",
+        ),
+        (
+            "missing-target.gak",
+            "asm.target(asm.decode(binary.snapshot(binary.from_hex(\"90\")), 0, 64))",
+            "instruction has no direct branch target",
+        ),
+        (
+            "negative-address.gak",
+            "asm.decode(binary.snapshot(binary.from_hex(\"90\")), 0, -1, 64)",
+            "instruction address must be nonnegative",
+        ),
+    ] {
+        let script = s.write(
+            name,
+            &format!("import std.binary\nimport std.asm\nprint {expression}\n"),
+        );
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success());
+        assert!(String::from_utf8_lossy(&native.stderr).contains(expected));
+    }
 }
 
 #[test]

@@ -30,6 +30,8 @@ if (-not $SkipCargoBuild) {
 }
 $binary = Join-Path $projectRoot 'target\release\galeikan.exe'
 if (-not (Test-Path -LiteralPath $binary)) { throw "Missing binary: $binary" }
+$decoder = Join-Path $projectRoot 'target\release\galeikan_asm.dll'
+if (-not (Test-Path -LiteralPath $decoder)) { throw "Missing decoder library: $decoder" }
 & (Join-Path $PSScriptRoot 'build-vscode-extension.ps1') | Out-Null
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsix = Join-Path $distDir ("galeikan-language-{0}.vsix" -f $extensionManifest.version)

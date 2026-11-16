@@ -39,6 +39,7 @@ staging="$(mktemp -d)"
 trap 'rm -rf -- "$staging"' EXIT
 dpkg-deb --extract "$package" "$staging"
 binary="$staging/usr/bin/galeikan"
+test -f "$staging/usr/lib/galeikan/libgaleikan_asm.so"
 "$binary" --help >/dev/null
 [[ "$("$binary" --version)" == "Galeikan $version" ]]
 example="$staging/usr/share/doc/galeikan/examples/hello.gak"
