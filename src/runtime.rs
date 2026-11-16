@@ -204,8 +204,15 @@ impl Source {
                 "LimitExceeded: Source derivation depth exceeds {MAX_SOURCE_DEPTH}"
             ));
         }
-        let absolute_start = parent.start + start;
-        let absolute_end = parent.start + end;
+        parent.check_range(start, end)?;
+        let absolute_start = parent
+            .start
+            .checked_add(start)
+            .ok_or("source range out of bounds")?;
+        let absolute_end = parent
+            .start
+            .checked_add(end)
+            .ok_or("source range out of bounds")?;
         let digest = Sha256::digest(&parent.backing[absolute_start..absolute_end]);
         let sha256 = digest.iter().map(|b| format!("{b:02x}")).collect();
         let label = format!("{}[{start}..{end})", parent.label);
@@ -232,6 +239,10 @@ impl Source {
                 "LimitExceeded: Source derivation depth exceeds {MAX_SOURCE_DEPTH}"
             ));
         }
+        parent.check_range(start, end)?;
+        if replacement.len() != end - start {
+            return Err("patch replacement length does not match range".into());
+        }
         let mut bytes = parent.bytes().to_vec();
         bytes[start..end].copy_from_slice(replacement);
         let mut patched = Self::new(
@@ -254,6 +265,7 @@ impl Source {
                 "LimitExceeded: Source derivation depth exceeds {MAX_SOURCE_DEPTH}"
             ));
         }
+        parent.check_range(start, end)?;
         let new_size = parent
             .bytes()
             .len()
@@ -302,6 +314,12 @@ impl Source {
     }
     fn bytes(&self) -> &[u8] {
         &self.backing[self.start..self.end]
+    }
+    fn check_range(&self, start: usize, end: usize) -> Result<(), String> {
+        if start > end || end > self.bytes().len() {
+            return Err("source range out of bounds".into());
+        }
+        Ok(())
     }
     fn provenance(&self) -> String {
         let base = match &self.parent {
@@ -9875,6 +9893,46 @@ mod binary_tests {
         find_masked, find_strings, parse_hunt_hex, shannon_entropy_milli, Source, TextEncoding,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn source_derivations_reject_invalid_ranges_before_slicing() {
+        let root = Arc::new(Source::new(
+            "fixture".into(),
+            "fixture".into(),
+            vec![1, 2, 3],
+        ));
+        let nested = Arc::new(Source::view(root.clone(), 1, 3).unwrap());
+        for (start, end) in [(2, 1), (0, 4), (usize::MAX, usize::MAX)] {
+            assert_eq!(
+                Source::view(root.clone(), start, end).err().as_deref(),
+                Some("source range out of bounds")
+            );
+            assert_eq!(
+                Source::patch(root.clone(), start, end, &[]).err().as_deref(),
+                Some("source range out of bounds")
+            );
+            assert_eq!(
+                Source::splice(root.clone(), start, end, &[]).err().as_deref(),
+                Some("source range out of bounds")
+            );
+        }
+        assert_eq!(
+            Source::view(nested, 0, 3).err().as_deref(),
+            Some("source range out of bounds")
+        );
+        assert_eq!(
+            Source::patch(root.clone(), 1, 3, &[9]).err().as_deref(),
+            Some("patch replacement length does not match range")
+        );
+        assert_eq!(
+            Source::patch(root.clone(), 1, 3, &[9, 8]).unwrap().bytes(),
+            &[1, 9, 8]
+        );
+        assert_eq!(
+            Source::splice(root, 1, 2, &[9, 8]).unwrap().bytes(),
+            &[1, 9, 8, 3]
+        );
+    }
 
     #[test]
     fn mapped_views_keep_structured_address_provenance() {
