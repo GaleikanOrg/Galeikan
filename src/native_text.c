@@ -123,6 +123,12 @@ static int gak_utf8_valid(const uint8_t *data, uint64_t count) {
     return 1;
 }
 
+int gak_native_utf8_box_valid(const uint8_t *box) {
+    uint64_t count = 0;
+    memcpy(&count, box, sizeof count);
+    return gak_utf8_valid(box + sizeof count, count);
+}
+
 /* Width of one printable UTF-8 scalar. C0/C1 controls and invalid sequences
  * terminate a candidate string; other non-ASCII scalars are retained. */
 static uint64_t gak_utf8_printable_width(const uint8_t *data, uint64_t size,

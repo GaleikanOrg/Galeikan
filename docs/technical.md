@@ -72,6 +72,7 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 | Function | Current purpose |
 | --- | --- |
 | `from_hex`, `to_hex` | Decode hex text into bytes; encode bytes as hex text. |
+| `from_utf8`, `to_utf8` | Encode text as UTF-8 bytes (up to 1 MiB); decode bytes to text with strict UTF-8 validation. |
 | `pack` | Pack a checked integer or field into bytes using the requested representation. |
 | `concat`, `repeat`, `xor` | Concatenate, repeat, or XOR byte buffers with size checks. |
 | `at`, `find`, `contains` | Read a byte by index, locate a byte sequence, or test membership. |

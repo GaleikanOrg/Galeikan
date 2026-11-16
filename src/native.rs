@@ -7071,6 +7071,25 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
         match (name, args) {
+            ("from_utf8", [text]) => {
+                if self.expr(text, scope)? != Scalar::Str {
+                    return Err("bytes.from_utf8 expects str".into());
+                }
+                let input_slot = self.reserve_slot()?;
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov rax, QWORD PTR [rax]\n    cmp rax, 1048576\n    ja gak_bytes_limit\n    call gak_alloc_bytes\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r10+8]\n    mov {}, QWORD PTR [r10]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", input_slot * 8, result_slot * 8, self.arg0(), input_slot * 8, self.arg1(), self.arg2(), result_slot * 8).unwrap();
+                Ok(Scalar::Bytes)
+            }
+            ("to_utf8", [data]) => {
+                if self.expr(data, scope)? != Scalar::Bytes {
+                    return Err("bytes.to_utf8 expects bytes".into());
+                }
+                self.uses_text = true;
+                let input_slot = self.reserve_slot()?;
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    call gak_native_utf8_box_valid\n    test eax, eax\n    jz gak_cstring_utf8\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10]\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    lea {}, [r10+8]\n    mov {}, QWORD PTR [r10]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", input_slot * 8, self.arg0(), input_slot * 8, result_slot * 8, self.arg0(), input_slot * 8, self.arg1(), self.arg2(), result_slot * 8).unwrap();
+                Ok(Scalar::Str)
+            }
             ("from_base64" | "from_base64_url", [text]) => {
                 if self.expr(text, scope)? != Scalar::Str {
                     return Err(format!("bytes.{name} expects str"));
