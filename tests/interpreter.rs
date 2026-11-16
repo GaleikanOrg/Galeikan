@@ -3738,7 +3738,11 @@ fn comparisons_and_if_expressions_are_typed_and_lazy() {
     let reserved = s.write("reserved.gak", "let if = 1\nprint if\n");
     let out = s.run(&reserved, false);
     assert!(!out.status.success());
-    assert!(stderr(&out).contains("reserved binding name"));
+    assert!(
+        stderr(&out).contains("reserved.gak:1:5: invalid or reserved binding name"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]

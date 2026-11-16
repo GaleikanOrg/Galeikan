@@ -771,11 +771,12 @@ impl Parser {
         }
     }
     fn binding_ident(&mut self) -> Result<String, String> {
+        let (line, col) = (self.current().line, self.current().col);
         let name = self.ident()?;
         if valid_binding_name(&name) {
             Ok(name)
         } else {
-            Err(self.error("invalid or reserved binding name"))
+            Err(format!("{line}:{col}: invalid or reserved binding name"))
         }
     }
     fn type_name(&mut self) -> Result<String, String> {
