@@ -5,7 +5,9 @@ use iced_x86::{
     InstructionInfoOptions, IntelFormatter, OpAccess, OpKind, RflagsBits,
 };
 
-#[derive(Debug)]
+pub const MAX_DISASSEMBLY: usize = 10_000;
+
+#[derive(Clone, Debug)]
 pub struct Decoded {
     pub size: usize,
     pub ip: u64,

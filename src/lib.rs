@@ -7,6 +7,10 @@ use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
+struct DecodedCollection {
+    instructions: Vec<(usize, asm::Decoded)>,
+}
+
 fn write_error(error: *mut u8, capacity: usize, message: &str) -> i32 {
     if !error.is_null() && capacity > 0 {
         let bytes = message.as_bytes();
@@ -58,6 +62,104 @@ pub unsafe extern "C" fn galeikan_asm_decode(
         Ok(Err(message)) => write_error(error, error_capacity, &message),
         Err(_) => write_error(error, error_capacity, "x86 decoder failed"),
     }
+}
+
+/// Decode reachable instructions in ascending source-offset order. The handle
+/// owns its instructions and must be released with `galeikan_asm_disassembly_free`.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_reachable(
+    bytes: *const u8,
+    length: usize,
+    start_offset: usize,
+    base_ip: u64,
+    bitness: u32,
+    max_instructions: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if out.is_null() {
+        return write_error(error, error_capacity, "invalid decoder input");
+    }
+    // SAFETY: `out` is non-null and points to a writable pointer supplied by C.
+    unsafe { *out = ptr::null_mut() };
+    if !error.is_null() && error_capacity > 0 {
+        // SAFETY: The caller provides a writable error buffer.
+        unsafe { *error = 0 };
+    }
+    if (bytes.is_null() && length != 0) || length > 512 * 1024 * 1024 {
+        return write_error(error, error_capacity, "invalid decoder input");
+    }
+    if !(1..=asm::MAX_DISASSEMBLY).contains(&max_instructions) {
+        return write_error(
+            error,
+            error_capacity,
+            &format!(
+                "instruction count must be between 1 and {}",
+                asm::MAX_DISASSEMBLY
+            ),
+        );
+    }
+    let input = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: The caller keeps `length` readable bytes alive for this call.
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        asm::reachable(input, start_offset, base_ip, bitness, max_instructions)
+    })) {
+        Ok(Ok(instructions)) => {
+            let collection = DecodedCollection { instructions };
+            // SAFETY: `out` is non-null and points to a writable pointer supplied by C.
+            unsafe { *out = Box::into_raw(Box::new(collection)).cast() };
+            0
+        }
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "x86 decoder failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_free(handle: *mut c_void) {
+    if !handle.is_null() {
+        // SAFETY: This handle came from `galeikan_asm_reachable` and is freed once.
+        drop(unsafe { Box::from_raw(handle.cast::<DecodedCollection>()) });
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_count(handle: *const c_void) -> usize {
+    unsafe { handle.cast::<DecodedCollection>().as_ref() }
+        .map_or(0, |value| value.instructions.len())
+}
+
+/// Clone one instruction into an independently owned handle. On success the
+/// caller frees `out` with `galeikan_asm_instruction_free`.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_at(
+    handle: *const c_void,
+    index: usize,
+    out: *mut *mut c_void,
+    offset: *mut usize,
+) -> i32 {
+    if out.is_null() || offset.is_null() {
+        return 0;
+    }
+    // SAFETY: Both output slots are non-null and writable by the caller.
+    unsafe { *out = ptr::null_mut() };
+    let Some((instruction_offset, decoded)) =
+        (unsafe { handle.cast::<DecodedCollection>().as_ref() })
+            .and_then(|value| value.instructions.get(index))
+    else {
+        return 0;
+    };
+    // SAFETY: Both output slots are non-null and writable by the caller.
+    unsafe {
+        *out = Box::into_raw(Box::new(decoded.clone())).cast();
+        *offset = *instruction_offset;
+    }
+    1
 }
 
 #[no_mangle]
@@ -366,5 +468,70 @@ mod tests {
         );
         assert!(unsafe { galeikan_asm_instruction_register_writes_count(handle) } > 0);
         unsafe { galeikan_asm_instruction_free(handle) };
+    }
+
+    #[test]
+    fn reachable_ffi_preserves_instruction_lifetimes_and_errors() {
+        let code = [0x75_u8, 0x02, 0x90, 0xc3, 0x90, 0xc3];
+        let mut disassembly = ptr::null_mut();
+        let mut error = [0_u8; 128];
+        assert_eq!(
+            unsafe {
+                galeikan_asm_reachable(
+                    code.as_ptr(),
+                    code.len(),
+                    0,
+                    0x1000,
+                    64,
+                    5,
+                    &mut disassembly,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { galeikan_asm_disassembly_count(disassembly) }, 5);
+        let mut instruction = ptr::null_mut();
+        let mut offset = usize::MAX;
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_at(disassembly, 1, &mut instruction, &mut offset) },
+            1
+        );
+        assert_eq!(offset, 2);
+        assert_eq!(unsafe { galeikan_asm_instruction_ip(instruction) }, 0x1002);
+        unsafe { galeikan_asm_disassembly_free(disassembly) };
+        assert_eq!(unsafe { galeikan_asm_instruction_size(instruction) }, 1);
+        unsafe { galeikan_asm_instruction_free(instruction) };
+
+        instruction = 1_usize as *mut c_void;
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_at(ptr::null(), 0, &mut instruction, &mut offset) },
+            0
+        );
+        assert!(instruction.is_null());
+        disassembly = 1_usize as *mut c_void;
+        assert_eq!(
+            unsafe {
+                galeikan_asm_reachable(
+                    code.as_ptr(),
+                    code.len(),
+                    0,
+                    0x1000,
+                    64,
+                    0,
+                    &mut disassembly,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            },
+            -1
+        );
+        assert!(disassembly.is_null());
+        assert!(std::ffi::CStr::from_bytes_until_nul(&error)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("instruction count"));
     }
 }

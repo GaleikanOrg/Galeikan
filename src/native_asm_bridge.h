@@ -11,6 +11,15 @@ extern "C" {
 int32_t galeikan_asm_decode(const uint8_t *bytes, size_t length, size_t offset,
                             uint64_t ip, uint32_t bitness, void **out,
                             uint8_t *error, size_t error_capacity);
+int32_t galeikan_asm_reachable(const uint8_t *bytes, size_t length,
+                               size_t start_offset, uint64_t base_ip,
+                               uint32_t bitness, size_t max_instructions,
+                               void **out, uint8_t *error, size_t error_capacity);
+void galeikan_asm_disassembly_free(void *handle);
+size_t galeikan_asm_disassembly_count(const void *handle);
+/* Returns a separately owned instruction. Free it with instruction_free. */
+int32_t galeikan_asm_disassembly_at(const void *handle, size_t index,
+                                    void **out, size_t *offset);
 void galeikan_asm_instruction_free(void *handle);
 size_t galeikan_asm_instruction_size(const void *handle);
 uint64_t galeikan_asm_instruction_ip(const void *handle);
