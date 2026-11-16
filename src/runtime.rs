@@ -5057,6 +5057,26 @@ impl Runtime {
                 }
                 Ok(Value::Str(value.repeat(count)))
             }
+            ("replace", [value, pattern, replacement]) => {
+                let value = value.as_str()?;
+                let pattern = pattern.as_str()?;
+                let replacement = replacement.as_str()?;
+                if pattern.len() > 1_048_576 {
+                    return Err("replacement pattern exceeds 1048576 bytes".into());
+                }
+                let matches = if pattern.is_empty() {
+                    value.chars().count() + 1
+                } else {
+                    value.matches(pattern).count()
+                };
+                let removed = matches.checked_mul(pattern.len()).ok_or("string memory exceeds 64 MiB")?;
+                let inserted = matches.checked_mul(replacement.len()).ok_or("string memory exceeds 64 MiB")?;
+                let length = value.len().checked_sub(removed).and_then(|size| size.checked_add(inserted));
+                if length.is_none_or(|size| size > MAX_STRING_BYTES) {
+                    return Err("string memory exceeds 64 MiB".into());
+                }
+                Ok(Value::Str(value.replace(pattern, replacement)))
+            }
             ("find", [value, needle]) => {
                 let value = value.as_str()?;
                 let needle = needle.as_str()?;
@@ -9039,6 +9059,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "contains") => (&[Bytes, Bytes], Bool),
         ("text", "length" | "byte_length") => (&[Str], Int),
         ("text", "repeat") => (&[Str, Int], Str),
+        ("text", "replace") => (&[Str, Str, Str], Str),
         ("text", "find") => (&[Str, Str], Int),
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),
         ("text", "slice") => (&[Str, Int, Int], Str),

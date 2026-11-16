@@ -328,6 +328,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_str_limit", "string memory exceeds 64 MiB"),
     ("gak_text_slice_range", "text slice out of range"),
     ("gak_text_search_alloc", "text search allocation failed"),
+    ("gak_text_replace_pattern", "replacement pattern exceeds 1048576 bytes"),
     ("gak_bytes_index", "byte index out of range"),
     ("gak_slice_start", "slice start must not be negative"),
     ("gak_slice_end", "slice end must not be negative"),
@@ -7418,6 +7419,21 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_text_repeat\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), value_slot * 8, self.arg1(), count_slot * 8, self.arg2(), result_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
+            ("replace", [value, pattern, replacement]) => {
+                let mut slots = Vec::with_capacity(3);
+                for argument in [value, pattern, replacement] {
+                    if self.expr(argument, scope)? != Scalar::Str {
+                        return Err("text.replace expects str, str, str".into());
+                    }
+                    let slot = self.reserve_slot()?;
+                    writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                    slots.push(slot);
+                }
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    xor {}, {}\n    call gak_native_text_replace\n    cmp rax, -1\n    je gak_alloc_failure\n    cmp rax, -2\n    je gak_str_limit\n    cmp rax, -3\n    je gak_text_replace_pattern\n    call gak_alloc_str", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), self.arg3()).unwrap();
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_text_replace\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jne gak_alloc_failure\n    mov rax, r10", result_slot * 8, self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), result_slot * 8).unwrap();
+                Ok(Scalar::Str)
+            }
             ("find" | "contains" | "starts_with" | "ends_with", [value, needle]) => {
                 if self.expr(value, scope)? != Scalar::Str {
                     return Err(format!("text.{name} expects str arguments"));
@@ -8500,6 +8516,7 @@ impl Codegen {
             "gak_text_index_msg: .ascii \"text index out of range\\n\"\ngak_text_index_msg_end:\n",
         );
         out.push_str("gak_text_search_alloc_msg: .ascii \"text search allocation failed\\n\"\ngak_text_search_alloc_msg_end:\n");
+        out.push_str("gak_text_replace_pattern_msg: .ascii \"replacement pattern exceeds 1048576 bytes\\n\"\ngak_text_replace_pattern_msg_end:\n");
         out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_base64_invalid_msg: .ascii \"invalid base64 data\\n\"\ngak_base64_invalid_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str("gak_slice_start_msg: .ascii \"slice start must not be negative\\n\"\ngak_slice_start_msg_end:\ngak_slice_end_msg: .ascii \"slice end must not be negative\\n\"\ngak_slice_end_msg_end:\ngak_slice_bounds_msg: .ascii \"slice out of range\\n\"\ngak_slice_bounds_msg_end:\n");
         out.push_str(".p2align 2\ngak_sha_iv:\n");
@@ -9656,6 +9673,7 @@ gak_cli_utf8_done:
             ("gak_text_slice_range", "gak_text_slice_range_msg"),
             ("gak_text_index", "gak_text_index_msg"),
             ("gak_text_search_alloc", "gak_text_search_alloc_msg"),
+            ("gak_text_replace_pattern", "gak_text_replace_pattern_msg"),
             ("gak_output_failure", "gak_output_failure_msg"),
             ("gak_result_limit", "gak_result_limit_msg"),
             ("gak_hex_invalid", "gak_hex_invalid_msg"),

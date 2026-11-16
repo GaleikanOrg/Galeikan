@@ -809,6 +809,41 @@ fn text_repeat_matches_ast_vm_bundle_and_native() {
 }
 
 #[test]
+fn text_replace_matches_ast_vm_bundle_and_native() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "replace.gak",
+        "from std.text import replace, repeat\nfrom std.result import message\nfn oversized() -> Result<str> = replace(repeat(\"x\", 1048576), \"x\", repeat(\"y\", 65))\nfn pattern_limit() -> Result<str> = replace(\"abc\", repeat(\"a\", 1048576) + \"a\", \"z\")\nprint replace(\"Aλ😀Z\", \"λ😀\", \"_\")\nprint replace(\"aaaa\", \"aa\", \"b\")\nprint replace(\"λ😀\", \"\", \"|\")\nprint replace(\"\", \"\", \"x\")\nprint replace(\"λ😀\", \"x\", \"q\")\nprint replace(\"aaa\", \"aa\", \"b\")\nprint replace(\"aaa\", \"a\", \"\")\nprint replace(\"aaaab\", \"aaab\", \"X\")\nprint replace(\"abababa\", \"aba\", \"X\")\nprint replace(\"A\\0B\", \"\\0\", \"_\")\nprint message(oversized())\nprint message(pattern_limit())\n",
+    );
+    let expected = "A_Z\nbb\n|λ|😀|\nx\nλ😀\nba\n\naX\nXbX\nA_B\nstring memory exceeds 64 MiB\nreplacement pattern exceeds 1048576 bytes\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;

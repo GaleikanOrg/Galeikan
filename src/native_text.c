@@ -247,6 +247,73 @@ void gak_native_text_repeat(const uint8_t *box, uint64_t count,
         memcpy(output + index * size, box + 8, (size_t)size);
 }
 
+static int gak_text_append(uint8_t *output, uint64_t *written,
+                           const uint8_t *data, uint64_t size) {
+    if (size > 67108856u - *written) return 0;
+    if (output && size) memcpy(output + *written, data, (size_t)size);
+    *written += size;
+    return 1;
+}
+
+/* Returns the output size, -1 for allocation failure, -2 for the string
+ * limit, or -3 for an oversized pattern. NULL output measures only. */
+int64_t gak_native_text_replace(const uint8_t *box, const uint8_t *pattern_box,
+                                const uint8_t *replacement_box, uint8_t *output) {
+    const uint8_t *data = box + 8;
+    const uint8_t *pattern = pattern_box + 8;
+    const uint8_t *replacement = replacement_box + 8;
+    uint64_t size = gak_text_size(box);
+    uint64_t pattern_size = gak_text_size(pattern_box);
+    uint64_t replacement_size = gak_text_size(replacement_box);
+    uint64_t written = 0;
+    if (pattern_size > 1048576u) return -3;
+    if (pattern_size == 0) {
+        for (uint64_t offset = 0; offset <= size; ++offset) {
+            if ((offset == size || gak_text_boundary(data, offset)) &&
+                !gak_text_append(output, &written, replacement, replacement_size))
+                return -2;
+            if (offset < size && !gak_text_append(output, &written, data + offset, 1))
+                return -2;
+        }
+        return (int64_t)written;
+    }
+    uint32_t local_failure[256];
+    uint32_t *failure = local_failure;
+    if (pattern_size > sizeof(local_failure) / sizeof(local_failure[0])) {
+        failure = malloc((size_t)pattern_size * sizeof(*failure));
+        if (!failure) return -1;
+    }
+    failure[0] = 0;
+    uint32_t matched = 0;
+    for (uint64_t index = 1; index < pattern_size; ++index) {
+        while (matched && pattern[index] != pattern[matched])
+            matched = failure[matched - 1];
+        if (pattern[index] == pattern[matched]) ++matched;
+        failure[index] = matched;
+    }
+    uint64_t segment = 0;
+    int64_t result = -2;
+    matched = 0;
+    for (uint64_t index = 0; index < size; ++index) {
+        while (matched && data[index] != pattern[matched])
+            matched = failure[matched - 1];
+        if (data[index] == pattern[matched]) ++matched;
+        if (matched == pattern_size) {
+            uint64_t start = index + 1 - pattern_size;
+            if (!gak_text_append(output, &written, data + segment, start - segment) ||
+                !gak_text_append(output, &written, replacement, replacement_size))
+                goto finish;
+            segment = index + 1;
+            matched = 0;
+        }
+    }
+    if (gak_text_append(output, &written, data + segment, size - segment))
+        result = (int64_t)written;
+finish:
+    if (failure != local_failure) free(failure);
+    return result;
+}
+
 static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
                             const uint8_t *needle, uint64_t needle_size) {
     if (needle_size == 0) return 0;
