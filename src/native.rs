@@ -537,6 +537,7 @@ enum Scalar {
     Bytes,
     Source,
     Instruction,
+    Disassembly,
     Format,
     Section,
     Observation,
@@ -1732,6 +1733,7 @@ fn scalar_type(annotation: &str) -> Result<Scalar, String> {
         "bytes" => Ok(Scalar::Bytes),
         "Source" => Ok(Scalar::Source),
         "Instruction" => Ok(Scalar::Instruction),
+        "Disassembly" => Ok(Scalar::Disassembly),
         "Format" => Ok(Scalar::Format),
         "Section" => Ok(Scalar::Section),
         "Observation" => Ok(Scalar::Observation),
@@ -2827,6 +2829,9 @@ impl Codegen {
                 let ready = self.label();
                 writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
                 self.print_value(Scalar::Str, depth + 1)?;
+            }
+            Scalar::Disassembly => {
+                return Err("native Disassembly formatting is not yet supported".into());
             }
             Scalar::Format => self.print_format(depth + 1)?,
             Scalar::Section => self.print_section(depth + 1)?,
@@ -6306,6 +6311,128 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if name == "reachable" && args.len() == 5 {
+            if self.expr(&args[0], scope)? != Scalar::Source {
+                return Err("asm.reachable expects Source".into());
+            }
+            let source_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("asm.reachable offset must be i64".into());
+            }
+            let offset_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", offset_slot * 8).unwrap();
+            if self.expr(&args[2], scope)? != Scalar::UInt {
+                return Err("asm.reachable base address must be u64".into());
+            }
+            let base_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", base_slot * 8).unwrap();
+            if self.expr(&args[3], scope)? != Scalar::Int {
+                return Err("asm.reachable bitness must be i64".into());
+            }
+            let bitness_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", bitness_slot * 8).unwrap();
+            if self.expr(&args[4], scope)? != Scalar::Int {
+                return Err("asm.reachable count must be i64".into());
+            }
+            let count_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), base_slot * 8, self.arg3(), bitness_slot * 8).unwrap();
+            if self.windows {
+                writeln!(self.code, "    sub rsp, 48\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rsp+32], r10\n    call gak_native_asm_reachable\n    add rsp, 48", count_slot * 8).unwrap();
+            } else {
+                writeln!(self.code, "    mov r8, QWORD PTR [rbp-{}]\n    call gak_native_asm_reachable", count_slot * 8).unwrap();
+            }
+            let ready = self.label();
+            writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
+            return Ok(Scalar::Disassembly);
+        }
+        if name == "at" && args.len() == 2 {
+            if self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err("asm.at expects Disassembly".into());
+            }
+            let lines_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", lines_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("asm.at index must be i64".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_at\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1()).unwrap();
+            return Ok(Scalar::Instruction);
+        }
+        if name == "successors" && args.len() == 1 {
+            if self.expr(&args[0], scope)? != Scalar::Instruction {
+                return Err("asm.successors expects Instruction".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, rax\n    call gak_native_asm_instruction_successors\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+            return Ok(Scalar::ListUInt);
+        }
+        if name == "block_successors" && args.len() == 2 {
+            if self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err("asm.block_successors expects Disassembly".into());
+            }
+            let lines_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", lines_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("asm.block_successors index must be i64".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_block_successors\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1()).unwrap();
+            return Ok(Scalar::ListUInt);
+        }
+        if matches!(name, "call_targets" | "data_refs" | "xrefs" | "data_xrefs") {
+            let expected = if matches!(name, "xrefs" | "data_xrefs") { 2 } else { 1 };
+            if args.len() != expected || self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err(format!("asm.{name} expects Disassembly"));
+            }
+            let lines_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", lines_slot * 8).unwrap();
+            if expected == 2 {
+                if self.expr(&args[1], scope)? != Scalar::UInt {
+                    return Err(format!("asm.{name} target must be u64"));
+                }
+            } else {
+                self.code.push_str("    xor eax, eax\n");
+            }
+            let kind = match name {
+                "call_targets" => 1,
+                "data_refs" => 2,
+                "xrefs" => 3,
+                _ => 4,
+            };
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, {kind}\n    mov {}, rax\n    call gak_native_asm_references\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1(), self.arg2()).unwrap();
+            return Ok(Scalar::ListUInt);
+        }
+        let disassembly_field = match name {
+            "count" => Some((1, Scalar::Int, 1)),
+            "block_count" => Some((2, Scalar::Int, 1)),
+            "overlap_count" => Some((3, Scalar::Int, 1)),
+            "overlap_at" => Some((4, Scalar::Bool, 2)),
+            "block_start" => Some((5, Scalar::UInt, 2)),
+            "block_end" => Some((6, Scalar::UInt, 2)),
+            "block_instruction_count" => Some((7, Scalar::Int, 2)),
+            "block_unresolved" => Some((8, Scalar::Bool, 2)),
+            _ => None,
+        };
+        if let Some((field, result, arity)) = disassembly_field {
+            if args.len() != arity || self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err(format!("asm.{name} expects Disassembly"));
+            }
+            let lines_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", lines_slot * 8).unwrap();
+            if arity == 2 {
+                if self.expr(&args[1], scope)? != Scalar::Int {
+                    return Err(format!("asm.{name} index must be i64"));
+                }
+            } else {
+                self.code.push_str("    xor eax, eax\n");
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {field}\n    call gak_native_asm_disassembly_number\n    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1(), self.arg2()).unwrap();
+            return Ok(result);
+        }
         if matches!(name, "decode" | "decode_u64") && matches!(args.len(), 3 | 4) {
             if name == "decode_u64" && args.len() != 4 {
                 return Err("asm.decode_u64 expects four arguments".into());

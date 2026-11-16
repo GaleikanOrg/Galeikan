@@ -5586,6 +5586,72 @@ fn native_asm_preserves_u64_addresses_and_decoder_errors() {
 }
 
 #[test]
+fn native_asm_reachable_matches_vm_blocks_and_bounds() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "reachable.gak",
+        concat!(
+            "import std.binary\nimport std.asm\nimport std.list\n",
+            "let source = binary.snapshot(binary.from_hex(\"75 03 90 c3 90 c3\"))\n",
+            "let lines: Disassembly = asm.reachable(source, 0, 0x8000000000000000u64, 64, 4)\n",
+            "let edges: List<u64> = asm.successors(asm.at(lines, 0))\n",
+            "let block_edges: List<u64> = asm.block_successors(lines, 0)\n",
+            "let incoming: List<u64> = asm.xrefs(lines, 0x8000000000000005u64)\n",
+            "print asm.count(lines)\nprint asm.block_count(lines)\nprint asm.overlap_count(lines)\n",
+            "print asm.block_start(lines, 0)\nprint asm.block_end(lines, 0)\n",
+            "print asm.block_instruction_count(lines, 0)\nprint asm.block_unresolved(lines, 0)\n",
+            "print asm.mnemonic(asm.at(lines, 0))\nprint asm.address_u64(asm.at(lines, 3))\n",
+            "print asm.overlap_at(lines, 0)\nprint list.count(edges)\nprint edges[0]\nprint edges[1]\n",
+            "print block_edges[1]\nprint list.count(incoming)\nprint incoming[0]\n",
+            "print list.count(asm.call_targets(lines))\nprint list.count(asm.data_refs(lines))\n",
+            "print list.count(asm.data_xrefs(lines, 0u64))\n",
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+
+    for (name, body, expected) in [
+        (
+            "reachable-count.gaks",
+            "let lines = asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 0)\nprint asm.count(lines)",
+            "instruction count must be between 1 and 10000",
+        ),
+        (
+            "reachable-offset.gak",
+            "let lines = asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 1, 0u64, 64, 1)\nprint asm.count(lines)",
+            "reachable entry offset out of bounds",
+        ),
+        (
+            "reachable-at.gak",
+            "print asm.at(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 1)",
+            "instruction index out of range",
+        ),
+    ] {
+        let script = s.write(name, &format!("import std.binary\nimport std.asm\n{body}\n"));
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success());
+        assert!(String::from_utf8_lossy(&native.stderr).contains(expected));
+    }
+}
+
+#[test]
 fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
     if !gcc_available() {
         return;
