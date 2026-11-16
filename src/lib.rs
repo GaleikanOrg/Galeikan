@@ -78,6 +78,44 @@ pub unsafe extern "C" fn galeikan_asm_instruction_ip(handle: *const c_void) -> u
     unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.ip)
 }
 
+fn optional_address(value: Option<u64>, output: *mut u64) -> i32 {
+    match value {
+        Some(address) if !output.is_null() => {
+            // SAFETY: The caller provides a writable address slot.
+            unsafe { *output = address };
+            1
+        }
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_instruction_target(
+    handle: *const c_void,
+    output: *mut u64,
+) -> i32 {
+    let target = unsafe { handle.cast::<asm::Decoded>().as_ref() }.and_then(|value| value.target);
+    optional_address(target, output)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_instruction_data_target(
+    handle: *const c_void,
+    output: *mut u64,
+) -> i32 {
+    let target =
+        unsafe { handle.cast::<asm::Decoded>().as_ref() }.and_then(|value| value.data_target);
+    optional_address(target, output)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_instruction_register_usage_complete(
+    handle: *const c_void,
+) -> i32 {
+    unsafe { handle.cast::<asm::Decoded>().as_ref() }
+        .is_some_and(|value| value.register_usage_complete) as i32
+}
+
 fn copy_text(value: &str, output: *mut u8, capacity: usize) -> usize {
     let bytes = value.as_bytes();
     if !output.is_null() && capacity >= bytes.len() {
@@ -115,6 +153,67 @@ pub unsafe extern "C" fn galeikan_asm_instruction_flow(
 ) -> usize {
     unsafe { handle.cast::<asm::Decoded>().as_ref() }
         .map_or(0, |value| copy_text(value.flow, output, capacity))
+}
+
+macro_rules! string_list_accessors {
+    ($count:ident, $get:ident, $field:ident) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $count(handle: *const c_void) -> usize {
+            unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.$field.len())
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn $get(
+            handle: *const c_void,
+            index: usize,
+            output: *mut u8,
+            capacity: usize,
+        ) -> usize {
+            unsafe { handle.cast::<asm::Decoded>().as_ref() }
+                .and_then(|value| value.$field.get(index))
+                .map_or(0, |text| copy_text(text, output, capacity))
+        }
+    };
+}
+
+string_list_accessors!(
+    galeikan_asm_instruction_register_reads_count,
+    galeikan_asm_instruction_register_read,
+    register_reads
+);
+string_list_accessors!(
+    galeikan_asm_instruction_register_writes_count,
+    galeikan_asm_instruction_register_write,
+    register_writes
+);
+string_list_accessors!(
+    galeikan_asm_instruction_flags_read_count,
+    galeikan_asm_instruction_flag_read,
+    flags_read
+);
+string_list_accessors!(
+    galeikan_asm_instruction_flags_modified_count,
+    galeikan_asm_instruction_flag_modified,
+    flags_modified
+);
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_instruction_successors_count(handle: *const c_void) -> usize {
+    unsafe { handle.cast::<asm::Decoded>().as_ref() }
+        .and_then(|value| value.successors().ok())
+        .map_or(0, |successors| successors.len())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_instruction_successor(
+    handle: *const c_void,
+    index: usize,
+    output: *mut u64,
+) -> i32 {
+    let address = unsafe { handle.cast::<asm::Decoded>().as_ref() }
+        .and_then(|value| value.successors().ok())
+        .and_then(|successors| successors.get(index).copied());
+    optional_address(address, output)
 }
 
 #[cfg(test)]
@@ -182,5 +281,90 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("bitness"));
+    }
+
+    #[test]
+    fn decoder_ffi_exposes_control_flow_and_operands() {
+        let branch = [0x75_u8, 0x02];
+        let mut handle = ptr::null_mut();
+        let mut error = [0_u8; 128];
+        assert_eq!(
+            unsafe {
+                galeikan_asm_decode(
+                    branch.as_ptr(),
+                    branch.len(),
+                    0,
+                    0x1000,
+                    64,
+                    &mut handle,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            },
+            0
+        );
+        let mut address = 0;
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_target(handle, &mut address) },
+            1
+        );
+        assert_eq!(address, 0x1004);
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_successors_count(handle) },
+            2
+        );
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_successor(handle, 0, &mut address) },
+            1
+        );
+        assert_eq!(address, 0x1002);
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_successor(handle, 1, &mut address) },
+            1
+        );
+        assert_eq!(address, 0x1004);
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_successor(handle, 2, &mut address) },
+            0
+        );
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_flags_read_count(handle) },
+            1
+        );
+        let mut flag = [0_u8; 4];
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_flag_read(handle, 0, flag.as_mut_ptr(), flag.len()) },
+            2
+        );
+        assert_eq!(&flag[..2], b"zf");
+        unsafe { galeikan_asm_instruction_free(handle) };
+
+        let memory = [0x48_u8, 0x8b, 0x05, 0, 0, 0, 0];
+        assert_eq!(
+            unsafe {
+                galeikan_asm_decode(
+                    memory.as_ptr(),
+                    memory.len(),
+                    0,
+                    0x2000,
+                    64,
+                    &mut handle,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_data_target(handle, &mut address) },
+            1
+        );
+        assert_eq!(address, 0x2007);
+        assert_eq!(
+            unsafe { galeikan_asm_instruction_register_usage_complete(handle) },
+            1
+        );
+        assert!(unsafe { galeikan_asm_instruction_register_writes_count(handle) } > 0);
+        unsafe { galeikan_asm_instruction_free(handle) };
     }
 }
