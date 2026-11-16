@@ -5648,6 +5648,7 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "print block_edges[1]\nprint list.count(incoming)\nprint incoming[0]\n",
             "print list.count(asm.call_targets(lines))\nprint list.count(asm.data_refs(lines))\n",
             "print list.count(asm.data_xrefs(lines, 0u64))\n",
+            "for instruction in lines {\n    print asm.mnemonic(instruction)\n}\n",
         ),
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))

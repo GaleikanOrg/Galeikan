@@ -3646,9 +3646,11 @@ impl Codegen {
             Scalar::Str
         } else if kind == Scalar::Regions {
             Scalar::Region
+        } else if kind == Scalar::Disassembly {
+            Scalar::Instruction
         } else {
             kind.element()
-                .ok_or("native for needs a typed List, Offsets, bytes, Source, str, Regions, or std.iter.range(...) iterable")?
+                .ok_or("native for needs a typed List, Offsets, bytes, Source, str, Disassembly, Regions, or std.iter.range(...) iterable")?
         };
         let list_slot = self.reserve_slot()?;
         let index_slot = self.reserve_slot()?;
@@ -3659,6 +3661,11 @@ impl Codegen {
                 self.reserve_slot()?,
                 self.reserve_slot()?,
             ))
+        } else {
+            None
+        };
+        let disassembly_count_slot = if kind == Scalar::Disassembly {
+            Some(self.reserve_slot()?)
         } else {
             None
         };
@@ -3680,6 +3687,8 @@ impl Codegen {
         } else if let Some((length_slot, byte_slot, _)) = text_slots {
             self.uses_text = true;
             writeln!(self.code, "    mov {}, rax\n    call gak_native_text_length\n    cmp rax, 100000\n    ja gak_loop_limit\n    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], 0", self.arg0(), length_slot * 8, byte_slot * 8).unwrap();
+        } else if let Some(count_slot) = disassembly_count_slot {
+            writeln!(self.code, "    mov {}, rax\n    call gak_native_asm_disassembly_count\n    cmp rax, 100000\n    ja gak_loop_limit\n    mov QWORD PTR [rbp-{}], rax", self.arg0(), count_slot * 8).unwrap();
         }
         let start = self.label();
         let end = self.label();
@@ -3700,6 +3709,8 @@ impl Codegen {
                 length_slot * 8
             )
             .unwrap();
+        } else if let Some(count_slot) = disassembly_count_slot {
+            writeln!(self.code, "    cmp rax, QWORD PTR [rbp-{}]", count_slot * 8).unwrap();
         } else {
             self.code.push_str("    cmp rax, QWORD PTR [r10]\n");
         }
@@ -3712,6 +3723,9 @@ impl Codegen {
         } else if let Some((_, byte_slot, width_slot)) = text_slots {
             let width_ready = self.label();
             writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    cmp r11, QWORD PTR [r10]\n    jae gak_text_index\n    movzx eax, BYTE PTR [r10+r11+8]\n    mov r9d, 1\n    cmp al, 128\n    jb {width_ready}\n    mov r9d, 2\n    cmp al, 224\n    jb {width_ready}\n    mov r9d, 3\n    cmp al, 240\n    jb {width_ready}\n    mov r9d, 4\n{width_ready}:\n    mov rax, r11\n    add rax, r9\n    jc gak_text_index\n    cmp rax, QWORD PTR [r10]\n    ja gak_text_index\n    mov QWORD PTR [rbp-{}], rax\n    mov QWORD PTR [rbp-{}], r9\n    mov rax, r9\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{}], rax\n    lea {}, [rax+8]\n    mov r10, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [rbp-{}]\n    sub r11, QWORD PTR [rbp-{}]\n    lea {}, [r10+r11+8]\n    mov {}, QWORD PTR [rbp-{}]\n    call memcpy\n    mov rax, QWORD PTR [rbp-{}]", byte_slot * 8, byte_slot * 8, width_slot * 8, item_slot * 8, self.arg0(), list_slot * 8, byte_slot * 8, width_slot * 8, self.arg1(), self.arg2(), width_slot * 8, item_slot * 8).unwrap();
+        } else if kind == Scalar::Disassembly {
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, r10\n    mov {}, rax\n    call gak_native_asm_at\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1()).unwrap();
         } else {
             self.code.push_str("    mov rax, QWORD PTR [r10+rax*8+8]\n");
         }
