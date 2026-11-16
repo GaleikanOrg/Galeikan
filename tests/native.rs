@@ -10144,6 +10144,67 @@ fn generated_utf8_binary_scans_match_all_execution_modes() {
 }
 
 #[test]
+fn generated_utf16_binary_scans_match_all_execution_modes() {
+    fn draw(state: &mut u64, limit: u64) -> usize {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state % limit) as usize
+    }
+
+    let fragments = [
+        "41 00", "00 41", "bb 03", "03 bb", "3d d8 00 de",
+        "d8 3d de 00", "00 00", "3d d8", "00 de", "d8 3d",
+        "de 00", "ff", "20 00", "00 20",
+    ];
+    let mut state = 0x6c2d_b4e8_19f7_a305_u64;
+    let mut source = String::from("from std.binary import from_hex, snapshot, strings, read_text\n");
+    let mut actions = String::new();
+    for index in 0..40 {
+        let bytes = (0..draw(&mut state, 9))
+            .map(|_| fragments[draw(&mut state, fragments.len() as u64)])
+            .collect::<Vec<_>>()
+            .join(" ");
+        source.push_str(&format!("let sample{index} = snapshot(from_hex(\"{bytes}\"))\n"));
+        for encoding in ["utf16le", "utf16be"] {
+            actions.push_str(&format!(
+                "print strings(sample{index}, 1, \"{encoding}\")\nfor at in strings(sample{index}, 1, \"{encoding}\") {{\n    print read_text(sample{index}, at, 4096, \"{encoding}\")\n}}\n"
+            ));
+        }
+    }
+    source.push_str(&actions);
+    let s = Sandbox::new();
+    let script = s.write("utf16-scans-generated.gaks", &source);
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        if let Some(bytes) = expected.as_ref() {
+            assert_eq!(&output.stdout, bytes, "{engine}");
+        } else {
+            expected = Some(output.stdout);
+        }
+    }
+    let expected = expected.unwrap();
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_binary_read_text_matches_vm_for_ascii_utf16le_and_views() {
     if !gcc_available() {
         return;
