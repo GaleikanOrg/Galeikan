@@ -3757,6 +3757,39 @@ fn compound_assignments_match_all_execution_modes_and_keep_mutability_checks() {
 }
 
 #[test]
+fn binary_histogram_and_entropy_windows_match_all_execution_modes_on_views() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "binary-distribution.gaks",
+        "from std.binary import from_hex, snapshot, view, histogram, entropy_windows, offset, width, value\nlet bytes = from_hex(\"00 01 01 ff 00\")\nlet region = view(snapshot(bytes), 1, 3)\nlet counts = histogram(region)\nlet windows = entropy_windows(region, 2, 1)\nprint len(counts)\nprint counts[0]\nprint counts[1]\nprint counts[255]\nprint histogram(bytes)[0]\nprint histogram(from_hex(\"\"))[0]\nprint len(windows)\nprint offset(windows[0])\nprint offset(windows[1])\nprint width(windows[1])\nprint value(windows[0])\nprint value(windows[1])\n",
+    );
+    let expected = b"256\n0\n2\n1\n2\n0\n2\n0\n1\n2\n0\n1000\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli)
+            .args(["run", script.to_str().unwrap(), "--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected);
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected);
+    }
+}
+
+#[test]
 fn native_binary_research_lists_match_vm_for_formats_sections_and_offsets() {
     if !gcc_available() {
         return;
