@@ -1331,7 +1331,6 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     let uses_python = generator.uses_python;
     let uses_process = generator.uses_process;
     let uses_net = generator.uses_net;
-    let uses_text = generator.uses_text;
     let uses_formats = generator.uses_formats;
     let uses_lab = generator.uses_lab;
     let assembly = generator.finish()?;
@@ -1383,11 +1382,9 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     } else {
         None
     };
-    let text_runtime_path = if uses_text {
-        Some(scratch.write("native_text.c", include_str!("native_text.c"))?)
-    } else {
-        None
-    };
+    // The generated runtime contains UTF-8/UTF-16 helper calls even when the
+    // source program itself never invokes text operations.
+    let text_runtime_path = scratch.write("native_text.c", include_str!("native_text.c"))?;
     let formats_runtime_path = if uses_formats {
         Some(scratch.write("native_formats.c", include_str!("native_formats.c"))?)
     } else {
@@ -1450,16 +1447,14 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .arg("-Werror")
             .arg(gcc_path(helper_path));
     }
-    if let Some(helper_path) = &text_runtime_path {
-        compiler
-            .arg("-x")
-            .arg("c")
-            .arg("-std=c11")
-            .arg("-Wall")
-            .arg("-Wextra")
-            .arg("-Werror")
-            .arg(gcc_path(helper_path));
-    }
+    compiler
+        .arg("-x")
+        .arg("c")
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg(gcc_path(&text_runtime_path));
     if let Some(helper_path) = &formats_runtime_path {
         compiler
             .arg("-x")

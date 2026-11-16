@@ -2987,7 +2987,8 @@ fn strings_find_ascii_and_utf16le_in_ast_vm_and_bundle() {
         "strings.gak",
         "import std.binary\nlet source = binary.snapshot(binary.from_hex(\"00 47 41 4b 00 61 62 63 20 31 ff 58 00 59 00 00\"))\nlet view = binary.view(source, 5, 5)\nprint binary.strings(source, 3, \"ascii\")\nprint binary.strings(source, 2, \"utf16le\")\nprint binary.read_text(source, 1, 3, \"ascii\")\nprint binary.read_text(source, 5, 5, \"ascii\")\nprint binary.read_text(source, 11, 2, \"utf16le\")\nprint binary.strings(view, 3, \"ascii\")\n",
     );
-    let expected = "[1, 5]\n[11]\nGAK\nabc 1\nXY\n[0]\n";
+    // UTF-16 candidates are scanned on both byte alignments and may overlap.
+    let expected = "[1, 5]\n[0, 1]\nGAK\nabc 1\nXY\n[0]\n";
     for engine in ["ast", "vm"] {
         let result = s.run_engine(&script, engine, false, &[]);
         assert!(result.status.success(), "{}", stderr(&result));
@@ -3016,8 +3017,8 @@ fn strings_validate_encoding_ranges_and_read_limit() {
     for (name, call, message) in [
         (
             "bad-encoding",
-            "binary.strings(source, 1, \"utf8\")",
-            "text encoding must be ascii, utf16le, or utf16be",
+            "binary.strings(source, 1, \"utf16\")",
+            "text encoding must be ascii, utf8, utf16le, or utf16be",
         ),
         (
             "bad-minimum",
