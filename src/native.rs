@@ -1564,7 +1564,11 @@ fn run_gcc(compiler: &mut Command) -> Result<(), String> {
 
 fn verify_native_hardening(path: &Path) -> Result<(), String> {
     const MAX_INSPECT_BYTES: u64 = 512 * 1024 * 1024;
-    let file = fs::File::open(path)
+    let parent = path.parent().ok_or("native output has no parent directory")?;
+    let root = parent
+        .canonicalize()
+        .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?;
+    let (file, _) = file_access::open_authorized(path, std::slice::from_ref(&root))
         .map_err(|error| format!("cannot inspect native output {}: {error}", path.display()))?;
     let length = file
         .metadata()
@@ -9808,6 +9812,29 @@ gak_cli_utf8_done:
 #[cfg(test)]
 mod source_validation_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_hardening_rejects_fifo_without_waiting_for_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "galeikan-native-hardening-fifo-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let fifo = directory.join("output.native");
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let error = verify_native_hardening(&fifo).unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn native_hardening_rejects_a_modified_output_header() {
