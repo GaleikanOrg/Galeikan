@@ -17,6 +17,28 @@ int32_t galeikan_asm_reachable(const uint8_t *bytes, size_t length,
                                void **out, uint8_t *error, size_t error_capacity);
 void galeikan_asm_disassembly_free(void *handle);
 size_t galeikan_asm_disassembly_count(const void *handle);
+size_t galeikan_asm_disassembly_overlap_count(const void *handle);
+int32_t galeikan_asm_disassembly_overlap_at(const void *handle, size_t index,
+                                            int32_t *output);
+typedef struct {
+    uint64_t start;
+    uint64_t end;
+    size_t first_index;
+    size_t instruction_count;
+    size_t successor_count;
+    int32_t unresolved;
+} GaleikanAsmBlock;
+size_t galeikan_asm_disassembly_block_count(const void *handle);
+int32_t galeikan_asm_disassembly_block(const void *handle, size_t index,
+                                       GaleikanAsmBlock *output);
+int32_t galeikan_asm_disassembly_block_successor(const void *handle,
+                                                 size_t block_index,
+                                                 size_t successor_index,
+                                                 uint64_t *output);
+/* kind: 1=call targets, 2=data refs, 3=xrefs, 4=data xrefs. */
+size_t galeikan_asm_disassembly_references(const void *handle, uint32_t kind,
+                                            uint64_t target, uint64_t *output,
+                                            size_t capacity);
 /* Returns a separately owned instruction. Free it with instruction_free. */
 int32_t galeikan_asm_disassembly_at(const void *handle, size_t index,
                                     void **out, size_t *offset);

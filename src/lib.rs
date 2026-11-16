@@ -9,6 +9,24 @@ use std::ptr;
 
 struct DecodedCollection {
     instructions: Vec<(usize, asm::Decoded)>,
+    blocks: Vec<asm::Block>,
+    overlaps: Vec<bool>,
+}
+
+impl DecodedCollection {
+    fn new(instructions: Vec<(usize, asm::Decoded)>) -> Result<Self, String> {
+        let decoded = instructions
+            .iter()
+            .map(|(_, instruction)| instruction)
+            .collect::<Vec<_>>();
+        let blocks = asm::blocks(&decoded)?;
+        let overlaps = asm::overlaps(&decoded)?;
+        Ok(Self {
+            instructions,
+            blocks,
+            overlaps,
+        })
+    }
 }
 
 fn write_error(error: *mut u8, capacity: usize, message: &str) -> i32 {
@@ -110,7 +128,10 @@ pub unsafe extern "C" fn galeikan_asm_reachable(
         asm::reachable(input, start_offset, base_ip, bitness, max_instructions)
     })) {
         Ok(Ok(instructions)) => {
-            let collection = DecodedCollection { instructions };
+            let collection = match DecodedCollection::new(instructions) {
+                Ok(collection) => collection,
+                Err(message) => return write_error(error, error_capacity, &message),
+            };
             // SAFETY: `out` is non-null and points to a writable pointer supplied by C.
             unsafe { *out = Box::into_raw(Box::new(collection)).cast() };
             0
@@ -160,6 +181,119 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_at(
         *offset = *instruction_offset;
     }
     1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_count(handle: *const c_void) -> usize {
+    unsafe { handle.cast::<DecodedCollection>().as_ref() }.map_or(0, |value| {
+        value.overlaps.iter().filter(|overlap| **overlap).count()
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_at(
+    handle: *const c_void,
+    index: usize,
+    output: *mut i32,
+) -> i32 {
+    let overlap = unsafe { handle.cast::<DecodedCollection>().as_ref() }
+        .and_then(|value| value.overlaps.get(index));
+    match overlap {
+        Some(overlap) if !output.is_null() => {
+            // SAFETY: The caller provides a writable output slot.
+            unsafe { *output = i32::from(*overlap) };
+            1
+        }
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block_count(handle: *const c_void) -> usize {
+    unsafe { handle.cast::<DecodedCollection>().as_ref() }.map_or(0, |value| value.blocks.len())
+}
+
+/// Copies one block's scalar metadata. Successor addresses are queried below.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block(
+    handle: *const c_void,
+    index: usize,
+    output: *mut GaleikanAsmBlock,
+) -> i32 {
+    let block = unsafe { handle.cast::<DecodedCollection>().as_ref() }
+        .and_then(|value| value.blocks.get(index));
+    match block {
+        Some(block) if !output.is_null() => {
+            // SAFETY: The caller provides a writable output struct.
+            unsafe {
+                *output = GaleikanAsmBlock {
+                    start: block.start,
+                    end: block.end,
+                    first_index: block.first_index,
+                    instruction_count: block.instruction_count,
+                    successor_count: block.successors.len(),
+                    unresolved: i32::from(block.unresolved),
+                }
+            };
+            1
+        }
+        _ => 0,
+    }
+}
+
+#[repr(C)]
+pub struct GaleikanAsmBlock {
+    pub start: u64,
+    pub end: u64,
+    pub first_index: usize,
+    pub instruction_count: usize,
+    pub successor_count: usize,
+    pub unresolved: i32,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block_successor(
+    handle: *const c_void,
+    block_index: usize,
+    successor_index: usize,
+    output: *mut u64,
+) -> i32 {
+    let address = unsafe { handle.cast::<DecodedCollection>().as_ref() }
+        .and_then(|value| value.blocks.get(block_index))
+        .and_then(|block| block.successors.get(successor_index).copied());
+    optional_address(address, output)
+}
+
+/// Query direct call targets, data references, direct xrefs, or data xrefs.
+/// Returns the required count and copies only when capacity is sufficient.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_references(
+    handle: *const c_void,
+    kind: u32,
+    target: u64,
+    output: *mut u64,
+    capacity: usize,
+) -> usize {
+    let Some(collection) = (unsafe { handle.cast::<DecodedCollection>().as_ref() }) else {
+        return 0;
+    };
+    let decoded = collection
+        .instructions
+        .iter()
+        .map(|(_, instruction)| instruction)
+        .collect::<Vec<_>>();
+    let addresses = match kind {
+        1 => asm::call_targets(&decoded),
+        2 => asm::data_refs(&decoded),
+        3 => asm::xrefs(&decoded, target),
+        4 => asm::data_xrefs(&decoded, target),
+        _ => return 0,
+    };
+    if !output.is_null() && capacity >= addresses.len() {
+        // SAFETY: The caller provides an array with at least `capacity` entries.
+        unsafe { ptr::copy_nonoverlapping(addresses.as_ptr(), output, addresses.len()) };
+    }
+    addresses.len()
 }
 
 #[no_mangle]
@@ -492,6 +626,50 @@ mod tests {
             0
         );
         assert_eq!(unsafe { galeikan_asm_disassembly_count(disassembly) }, 5);
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_block_count(disassembly) },
+            3
+        );
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_overlap_count(disassembly) },
+            0
+        );
+        let mut overlap = -1;
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_overlap_at(disassembly, 0, &mut overlap) },
+            1
+        );
+        assert_eq!(overlap, 0);
+        let mut block = GaleikanAsmBlock {
+            start: 0,
+            end: 0,
+            first_index: 0,
+            instruction_count: 0,
+            successor_count: 0,
+            unresolved: 0,
+        };
+        assert_eq!(
+            unsafe { galeikan_asm_disassembly_block(disassembly, 0, &mut block) },
+            1
+        );
+        assert_eq!((block.start, block.end), (0x1000, 0x1002));
+        assert_eq!(block.successor_count, 2);
+        let mut destination = 0;
+        assert_eq!(
+            unsafe {
+                galeikan_asm_disassembly_block_successor(disassembly, 0, 1, &mut destination)
+            },
+            1
+        );
+        assert_eq!(destination, 0x1004);
+        let mut reference = 0;
+        assert_eq!(
+            unsafe {
+                galeikan_asm_disassembly_references(disassembly, 3, 0x1004, &mut reference, 1)
+            },
+            1
+        );
+        assert_eq!(reference, 0x1000);
         let mut instruction = ptr::null_mut();
         let mut offset = usize::MAX;
         assert_eq!(
