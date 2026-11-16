@@ -13,9 +13,16 @@ __SHADOW_ENTER__
     mov r14, r11
     mov r15, QWORD PTR [rbx+24]
     sub r15, QWORD PTR [rbx+16]
+    cmp r12, r15
+    ja gak_binary_out_of_bounds
+    mov rax, r15
+    sub rax, r12
+    cmp r13, rax
+    ja gak_binary_out_of_bounds
     mov rax, r15
     sub rax, r13
     add rax, QWORD PTR [r14]
+    jc gak_splice_size_overflow
     call gak_alloc_source_backing
     mov r15, rax
     lea rdi, [r15+8]
