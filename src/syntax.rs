@@ -740,12 +740,33 @@ impl Parser {
             self.bump();
             Ok(())
         } else {
-            Err(self.error(&format!("expected {kind:?}")))
+            let expected = match &kind {
+                TokenKind::Ident(word) => format!("'{word}'"),
+                TokenKind::LParen => "'('".into(),
+                TokenKind::RParen => "')'".into(),
+                TokenKind::LBrace => "'{'".into(),
+                TokenKind::RBrace => "'}'".into(),
+                TokenKind::LBracket => "'['".into(),
+                TokenKind::RBracket => "']'".into(),
+                TokenKind::Less => "'<'".into(),
+                TokenKind::Greater => "'>'".into(),
+                TokenKind::Equal => "'='".into(),
+                TokenKind::Colon => "':'".into(),
+                TokenKind::Comma => "','".into(),
+                TokenKind::FatArrow => "'=>'".into(),
+                TokenKind::Newline => "end of line".into(),
+                _ => format!("{kind:?}"),
+            };
+            Err(self.error(&format!("expected {expected}")))
         }
     }
     fn ident(&mut self) -> Result<String, String> {
-        match self.bump().kind {
-            TokenKind::Ident(v) => Ok(v),
+        match &self.current().kind {
+            TokenKind::Ident(v) => {
+                let name = v.clone();
+                self.bump();
+                Ok(name)
+            }
             _ => Err(self.error("identifier expected")),
         }
     }
@@ -804,7 +825,7 @@ impl Parser {
                 self.tokens[self.pos].col += 1;
                 Ok(())
             }
-            _ => Err(self.error("expected Greater")),
+            _ => Err(self.error("expected '>'")),
         }
     }
     fn optional_type(&mut self) -> Result<Option<String>, String> {

@@ -2818,6 +2818,16 @@ fn parser_reports_source_position() {
     let out = s.run(&script, false);
     assert!(!out.status.success());
     assert!(stderr(&out).contains("bad.gak:2:1:"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("expected ')'"), "{}", stderr(&out));
+
+    let invalid_binding = s.write("invalid_binding.gak", "let = 1\n");
+    let out = s.run(&invalid_binding, false);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("invalid_binding.gak:1:5: identifier expected"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -3764,7 +3774,7 @@ fn else_if_chain_matches_ast_vm_and_bundle_without_changing_precedence() {
     );
     let output = s.run(&missing_else, false);
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("expected Ident(\"else\")"));
+    assert!(stderr(&output).contains("expected 'else'"));
 
     let deeply_nested = s.write(
         "deep_else_if.gak",
