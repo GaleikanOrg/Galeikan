@@ -144,10 +144,19 @@ pub fn python_module_path(base: &Path, target: &str) -> Result<PathBuf, String> 
 
 pub fn resolve(entry: &Path) -> Result<Project, String> {
     let parent = entry.parent().ok_or("entry has no parent directory")?;
-    let Some(root) = parent
-        .ancestors()
-        .find(|dir| dir.join("galeikan.json").is_file())
-    else {
+    let mut manifest_root = None;
+    for dir in parent.ancestors() {
+        let manifest = dir.join("galeikan.json");
+        match fs::symlink_metadata(&manifest) {
+            Ok(_) => {
+                manifest_root = Some(dir);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot inspect {}: {error}", manifest.display())),
+        }
+    }
+    let Some(root) = manifest_root else {
         return Ok(Project {
             root: parent.to_path_buf(),
             packages: BTreeMap::new(),
@@ -439,8 +448,10 @@ fn read_lock(root: &Path) -> Result<Lockfile, String> {
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
     let mut bytes = Vec::new();
-    fs::File::open(path)
+    let root = path.parent().ok_or("project file has no parent directory")?;
+    file_access::open_authorized(path, &[root.to_path_buf()])
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+        .0
         .take(MAX_MANIFEST + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
