@@ -12,6 +12,7 @@
     { "include": "#namespaces" },
     { "include": "#typeContexts" },
     { "include": "#types" },
+    { "include": "#languageVariables" },
     { "include": "#keywords" },
     { "include": "#constants" },
     { "include": "#numbers" },
@@ -108,6 +109,9 @@
         { "name": "entity.name.type.galeikan", "match": "\\b(?:Source|Observation|Finding|Format|Section|Instruction|Disassembly|Region|Regions|Offsets|Diff|HttpResponse|Result|List)\\b" },
         { "name": "entity.name.type.galeikan", "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*[<,{)])" }
       ]
+    },
+    "languageVariables": {
+      "patterns": [{ "name": "variable.language.galeikan", "match": "\\bself\\b" }]
     },
     "keywords": {
       "patterns": [{
