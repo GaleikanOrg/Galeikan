@@ -967,6 +967,56 @@ fn text_join_matches_ast_vm_bundle_and_native() {
 }
 
 #[test]
+fn generated_text_split_join_matches_all_execution_modes() {
+    fn draw(state: &mut u64, limit: u64) -> usize {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state % limit) as usize
+    }
+
+    let s = Sandbox::new();
+    let mut state = 0xa9d4_7f3b_61c8_2095_u64;
+    let alphabet = ['a', 'b', 'λ', '😀'];
+    let mut source = String::from("from std.text import split, join\n");
+    let mut expected = String::new();
+    for _ in 0..64 {
+        let value = (0..draw(&mut state, 19))
+            .map(|_| alphabet[draw(&mut state, alphabet.len() as u64)])
+            .collect::<String>();
+        let separator = (0..draw(&mut state, 4) + 1)
+            .map(|_| alphabet[draw(&mut state, alphabet.len() as u64)])
+            .collect::<String>();
+        let parts = value.split(&separator).collect::<Vec<_>>();
+        source.push_str(&format!("print len(split(\"{value}\", \"{separator}\"))\n"));
+        source.push_str(&format!("print join(split(\"{value}\", \"{separator}\"), \"|\")\n"));
+        expected.push_str(&format!("{}\n{}\n", parts.len(), parts.join("|")));
+    }
+    let script = s.write("split-join-generated.gaks", &source);
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;
