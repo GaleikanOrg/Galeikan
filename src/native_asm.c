@@ -36,6 +36,9 @@ typedef struct GakAsmDisassembly {
     void *decoded;
     uint64_t offset_bias;
     uint64_t address_kind;
+    const GakSourceHead *display_source;
+    uint64_t range_start;
+    uint64_t range_end;
 } GakAsmDisassembly;
 
 static struct {
@@ -120,6 +123,19 @@ static uint64_t *gak_asm_box_u64_list(size_t count) {
     box[0] = (uint64_t)count;
     boxed_list_bytes += size;
     return box;
+}
+
+static int gak_asm_bounds(void *decoded, uint64_t bias,
+                          uint64_t *start, uint64_t *end) {
+    size_t relative_start = 0, relative_end = 0;
+    if (!galeikan_asm_disassembly_bounds(decoded, &relative_start, &relative_end) ||
+        bias > UINT64_MAX - relative_end) {
+        gak_asm_fail("invalid Disassembly instruction range");
+        return 0;
+    }
+    *start = bias + relative_start;
+    *end = bias + relative_end;
+    return 1;
 }
 
 GakAsmInstruction *gak_native_asm_decode(const GakSourceHead *source,
@@ -268,6 +284,11 @@ GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
         gak_asm_fail("native Disassembly instruction count exceeds 100000");
         return NULL;
     }
+    uint64_t range_start = 0, range_end = 0;
+    if (!gak_asm_bounds(decoded, 0, &range_start, &range_end)) {
+        galeikan_asm_disassembly_free(decoded);
+        return NULL;
+    }
     GakAsmDisassembly *disassembly = malloc(sizeof *disassembly);
     if (!disassembly) {
         galeikan_asm_disassembly_free(decoded);
@@ -288,6 +309,9 @@ GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
     disassembly->decoded = decoded;
     disassembly->offset_bias = 0;
     disassembly->address_kind = 0;
+    disassembly->display_source = source;
+    disassembly->range_start = range_start;
+    disassembly->range_end = range_end;
     disassembly->next_owned = owned_disassemblies;
     owned_disassemblies = disassembly;
     disassembly_instruction_count += count;
@@ -344,6 +368,11 @@ static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7
             return NULL;
         }
     }
+    uint64_t range_start = 0, range_end = 0;
+    if (!gak_asm_bounds(decoded, info[1], &range_start, &range_end)) {
+        galeikan_asm_disassembly_free(decoded);
+        return NULL;
+    }
     GakAsmDisassembly *disassembly = malloc(sizeof *disassembly);
     if (!disassembly) {
         galeikan_asm_disassembly_free(decoded);
@@ -362,6 +391,9 @@ static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7
     disassembly->decoded = decoded;
     disassembly->offset_bias = info[1];
     disassembly->address_kind = info[5];
+    disassembly->display_source = source;
+    disassembly->range_start = range_start;
+    disassembly->range_end = range_end;
     disassembly->next_owned = owned_disassemblies;
     owned_disassemblies = disassembly;
     disassembly_instruction_count += found;
@@ -384,6 +416,29 @@ uint64_t gak_native_asm_disassembly_count(const GakAsmDisassembly *disassembly) 
         return 0;
     }
     return galeikan_asm_disassembly_count(disassembly->decoded);
+}
+
+const GakSourceHead *gak_native_asm_disassembly_source(const GakAsmDisassembly *disassembly) {
+    gak_asm_error = NULL;
+    if (!disassembly || !disassembly->display_source) {
+        gak_asm_fail("invalid Disassembly Source");
+        return NULL;
+    }
+    return disassembly->display_source;
+}
+
+uint64_t gak_native_asm_linear_end(const GakAsmDisassembly *disassembly) {
+    gak_asm_error = NULL;
+    if (!disassembly) {
+        gak_asm_fail("invalid Disassembly");
+        return 0;
+    }
+    return disassembly->range_end;
+}
+
+void gak_native_asm_set_display_source(GakAsmDisassembly *disassembly,
+                                        const GakSourceHead *source) {
+    if (disassembly) disassembly->display_source = source;
 }
 
 GakAsmInstruction *gak_native_asm_at(const GakAsmDisassembly *disassembly,
@@ -449,6 +504,8 @@ uint64_t gak_native_asm_disassembly_number(const GakAsmDisassembly *disassembly,
     if (kind == 1) return galeikan_asm_disassembly_count(disassembly->decoded);
     if (kind == 2) return galeikan_asm_disassembly_block_count(disassembly->decoded);
     if (kind == 3) return galeikan_asm_disassembly_overlap_count(disassembly->decoded);
+    if (kind == 9) return disassembly->range_start;
+    if (kind == 10) return disassembly->range_end;
     if (index < 0) {
         gak_asm_fail(kind == 4 ? "instruction index out of range" : "block index out of range");
         return 0;

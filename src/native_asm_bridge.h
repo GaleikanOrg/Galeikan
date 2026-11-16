@@ -20,6 +20,7 @@ int32_t galeikan_asm_linear(const uint8_t *bytes, size_t length,
                             void **out, uint8_t *error, size_t error_capacity);
 void galeikan_asm_disassembly_free(void *handle);
 size_t galeikan_asm_disassembly_count(const void *handle);
+int32_t galeikan_asm_disassembly_bounds(const void *handle, size_t *start, size_t *end);
 size_t galeikan_asm_disassembly_overlap_count(const void *handle);
 int32_t galeikan_asm_disassembly_overlap_at(const void *handle, size_t index,
                                             int32_t *output);

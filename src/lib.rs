@@ -223,6 +223,38 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_count(handle: *const c_void) -
         .map_or(0, |value| value.instructions.len())
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_bounds(
+    handle: *const c_void,
+    start: *mut usize,
+    end: *mut usize,
+) -> i32 {
+    if start.is_null() || end.is_null() {
+        return 0;
+    }
+    let Some(collection) = (unsafe { handle.cast::<DecodedCollection>().as_ref() }) else {
+        return 0;
+    };
+    let Some(first) = collection.instructions.first() else {
+        return 0;
+    };
+    let mut low = first.0;
+    let mut high = 0usize;
+    for (offset, instruction) in &collection.instructions {
+        let Some(next) = offset.checked_add(instruction.size) else {
+            return 0;
+        };
+        low = low.min(*offset);
+        high = high.max(next);
+    }
+    // SAFETY: Both output slots are non-null and writable by the caller.
+    unsafe {
+        *start = low;
+        *end = high;
+    }
+    1
+}
+
 /// Clone one instruction into an independently owned handle. On success the
 /// caller frees `out` with `galeikan_asm_instruction_free`.
 #[no_mangle]
@@ -704,6 +736,12 @@ mod tests {
                                 &mut disassembly, error.as_mut_ptr(), error.len())
         }, 0);
         assert_eq!(unsafe { galeikan_asm_disassembly_count(disassembly) }, 3);
+        let mut start = usize::MAX;
+        let mut end = 0;
+        assert_eq!(unsafe {
+            galeikan_asm_disassembly_bounds(disassembly, &mut start, &mut end)
+        }, 1);
+        assert_eq!((start, end), (0, 7));
         for (index, expected_offset) in [(0, 0), (1, 5), (2, 6)] {
             let mut instruction = ptr::null_mut();
             let mut offset = usize::MAX;

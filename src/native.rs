@@ -2345,13 +2345,61 @@ impl Codegen {
             Scalar::Observation => self.print_impact_observation()?,
             Scalar::Diff => self.print_impact_diff()?,
             Scalar::Finding => self.print_finding(true)?,
+            Scalar::Disassembly => self.print_impact_disassembly()?,
             _ => {
                 return Err(
-                    "impact expects Observation, Diff, or Finding in native programs".into(),
+                    "impact expects Observation, Diff, Finding, or Disassembly in native programs".into(),
                 )
             }
         }
         self.write_const("\n")
+    }
+
+    fn print_asm_disassembly_number(
+        &mut self,
+        disassembly_slot: usize,
+        kind: u32,
+        depth: usize,
+    ) -> Result<(), String> {
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    xor {}, {}\n    mov {}, {kind}\n    call gak_native_asm_disassembly_number\n    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), disassembly_slot * 8, self.arg1(), self.arg1(), self.arg2()).unwrap();
+        self.print_value(Scalar::UInt, depth)
+    }
+
+    fn print_disassembly(&mut self, depth: usize) -> Result<(), String> {
+        let disassembly_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", disassembly_slot * 8).unwrap();
+        self.write_const("disassembly(count: ")?;
+        self.print_asm_disassembly_number(disassembly_slot, 1, depth)?;
+        self.write_const(", blocks: ")?;
+        self.print_asm_disassembly_number(disassembly_slot, 2, depth)?;
+        self.write_const(", source: \"")?;
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_asm_disassembly_source\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax", self.arg0(), disassembly_slot * 8, source_slot * 8).unwrap();
+        self.print_source_label(source_slot, depth)?;
+        self.write_const("\", sha256: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]", source_slot * 8).unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const(")")
+    }
+
+    fn print_impact_disassembly(&mut self) -> Result<(), String> {
+        let disassembly_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        let ready = self.label();
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    call gak_native_asm_disassembly_source\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax", disassembly_slot * 8, self.arg0(), source_slot * 8).unwrap();
+        self.write_const("impact { ")?;
+        self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+        self.write_const(", range: [")?;
+        self.print_asm_disassembly_number(disassembly_slot, 9, 0)?;
+        self.write_const("..")?;
+        self.print_asm_disassembly_number(disassembly_slot, 10, 0)?;
+        self.write_const("), instructions: ")?;
+        self.print_asm_disassembly_number(disassembly_slot, 1, 0)?;
+        self.write_const(", blocks: ")?;
+        self.print_asm_disassembly_number(disassembly_slot, 2, 0)?;
+        self.write_const(" }")
     }
 
     fn print_finding(&mut self, impact: bool) -> Result<(), String> {
@@ -2833,9 +2881,7 @@ impl Codegen {
                 writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
                 self.print_value(Scalar::Str, depth + 1)?;
             }
-            Scalar::Disassembly => {
-                return Err("native Disassembly formatting is not yet supported".into());
-            }
+            Scalar::Disassembly => self.print_disassembly(depth + 1)?,
             Scalar::Format => self.print_format(depth + 1)?,
             Scalar::Section => self.print_section(depth + 1)?,
             Scalar::Observation => self.print_observation(depth + 1)?,
@@ -6352,6 +6398,13 @@ impl Codegen {
                 "gak_native_asm_reachable_entry"
             };
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rbp-{}]\n    call gak_native_formats_x86_entry_region_info\n    test eax, eax\n    jnz {mapped}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{mapped}:\n    lea {}, [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {helper}\n    test rax, rax\n    jnz {decoded}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{decoded}:", self.arg0(), report_slot * 8, self.arg1(), info_slot * 8, self.arg0(), info_slot * 8, self.arg1(), count_slot * 8).unwrap();
+            if name == "linear" {
+                let disassembly_slot = self.reserve_slot()?;
+                let end_slot = self.reserve_slot()?;
+                let end_ready = self.label();
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    call gak_native_asm_linear_end\n    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {end_ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{end_ready}:\n    mov QWORD PTR [rbp-{}], rax", disassembly_slot * 8, self.arg0(), end_slot * 8).unwrap();
+                writeln!(self.code, "    mov rdx, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    mov r10, QWORD PTR [rbp-{}+8]\n    add r10, QWORD PTR [rdx+16]\n    mov r11, QWORD PTR [rbp-{}]\n    add r11, QWORD PTR [rdx+16]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n    mov r10, QWORD PTR [rbp-{}+40]\n    mov QWORD PTR [rax+96], r10\n    mov r10, QWORD PTR [rbp-{}+32]\n    mov QWORD PTR [rax+104], r10\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+88]\n    mov QWORD PTR [rax+88], r10\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_set_display_source\n    mov rax, QWORD PTR [rbp-{}]", info_slot * 8, info_slot * 8, end_slot * 8, info_slot * 8, info_slot * 8, info_slot * 8, self.arg0(), disassembly_slot * 8, self.arg1(), disassembly_slot * 8).unwrap();
+            }
             return Ok(Scalar::Disassembly);
         }
         if name == "entry" {

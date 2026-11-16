@@ -5639,6 +5639,23 @@ fn native_asm_entry_matches_vm_for_executable_pe_and_elf() {
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
     assert_eq!(native.stdout, vm.stdout);
 
+    let display_script = s.write(
+        "disassembly-display.gak",
+        &format!(
+            "import std.binary\nimport std.formats\nimport std.asm\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_linear = asm.linear(pe, 3)\nlet elf_linear = asm.linear(elf, 3)\nlet pe_reachable = asm.reachable_entry(pe, 3)\nlet elf_reachable = asm.reachable_entry(elf, 3)\nprint pe_linear\nimpact pe_linear\nprint elf_linear\nimpact elf_linear\nprint pe_reachable\nimpact pe_reachable\nprint elf_reachable\nimpact elf_reachable\n",
+            hex(&pe), hex(&elf)
+        ),
+    );
+    let display_vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run").arg(&display_script).args(["--engine", "vm"]).output().unwrap();
+    assert!(display_vm.status.success(), "{}", String::from_utf8_lossy(&display_vm.stderr));
+    let display_built = s.compile(&display_script);
+    assert!(display_built.status.success(), "{}", String::from_utf8_lossy(&display_built.stderr));
+    let display_executable = PathBuf::from(String::from_utf8(display_built.stdout).unwrap().trim());
+    let display_native = Command::new(display_executable).output().unwrap();
+    assert!(display_native.status.success(), "{}", String::from_utf8_lossy(&display_native.stderr));
+    assert_eq!(display_native.stdout, display_vm.stdout);
+
     let mut pe_noexec = pe.clone();
     pe_noexec[section + 36..section + 40].copy_from_slice(&0x4000_0040_u32.to_le_bytes());
     let mut elf_noexec = elf.clone();
@@ -5746,6 +5763,7 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "print list.count(asm.call_targets(lines))\nprint list.count(asm.data_refs(lines))\n",
             "print list.count(asm.data_xrefs(lines, 0u64))\n",
             "for instruction in lines {\n    print asm.mnemonic(instruction)\n}\n",
+            "print lines\nimpact lines\n",
         ),
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
