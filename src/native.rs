@@ -1499,6 +1499,9 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .arg(gcc_path(helper_path));
     }
     if let Some(helper_path) = &asm_runtime_path {
+        if uses_formats {
+            compiler.arg("-DGALEIKAN_ASM_FORMATS");
+        }
         compiler
             .arg("-x")
             .arg("c")
@@ -6325,6 +6328,32 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if matches!(name, "linear" | "reachable_entry") {
+            if args.len() != 2 || self.expr(&args[0], scope)? != Scalar::Format {
+                return Err(format!("asm.{name} expects Format and i64 count"));
+            }
+            self.uses_formats = true;
+            let report_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err(format!("asm.{name} count must be i64"));
+            }
+            let count_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
+            let mut info_slot = 0;
+            for _ in 0..7 {
+                info_slot = self.reserve_slot()?;
+            }
+            let mapped = self.label();
+            let decoded = self.label();
+            let helper = if name == "linear" {
+                "gak_native_asm_linear_entry"
+            } else {
+                "gak_native_asm_reachable_entry"
+            };
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rbp-{}]\n    call gak_native_formats_x86_entry_region_info\n    test eax, eax\n    jnz {mapped}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{mapped}:\n    lea {}, [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {helper}\n    test rax, rax\n    jnz {decoded}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{decoded}:", self.arg0(), report_slot * 8, self.arg1(), info_slot * 8, self.arg0(), info_slot * 8, self.arg1(), count_slot * 8).unwrap();
+            return Ok(Scalar::Disassembly);
+        }
         if name == "entry" {
             if args.len() != 1 || self.expr(&args[0], scope)? != Scalar::Format {
                 return Err("asm.entry expects Format".into());
@@ -6333,7 +6362,7 @@ impl Codegen {
             let report_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", report_slot * 8).unwrap();
             let mut info_slot = 0;
-            for _ in 0..6 {
+            for _ in 0..7 {
                 info_slot = self.reserve_slot()?;
             }
             let mapped = self.label();

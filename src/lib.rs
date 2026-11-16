@@ -142,6 +142,73 @@ pub unsafe extern "C" fn galeikan_asm_reachable(
     }
 }
 
+/// Decode a fixed number of consecutive instructions from a bounded entry region.
+/// The returned handle uses the same accessors and ownership as reachable disassembly.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_linear(
+    bytes: *const u8,
+    length: usize,
+    base_ip: u64,
+    bitness: u32,
+    count: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if out.is_null() {
+        return write_error(error, error_capacity, "invalid decoder input");
+    }
+    // SAFETY: The caller provides a writable output pointer.
+    unsafe { *out = ptr::null_mut() };
+    if !error.is_null() && error_capacity > 0 {
+        // SAFETY: The caller provides a writable error buffer.
+        unsafe { *error = 0 };
+    }
+    if (bytes.is_null() && length != 0) || length > 512 * 1024 * 1024 {
+        return write_error(error, error_capacity, "invalid decoder input");
+    }
+    if !(1..=asm::MAX_DISASSEMBLY).contains(&count) {
+        return write_error(
+            error,
+            error_capacity,
+            &format!("instruction count must be between 1 and {}", asm::MAX_DISASSEMBLY),
+        );
+    }
+    let input = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: The caller keeps `length` readable bytes alive for this call.
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut instructions = Vec::with_capacity(count);
+        let mut decoder = asm::DecodeContext::new();
+        let mut offset = 0usize;
+        let mut ip = base_ip;
+        for _ in 0..count {
+            if offset >= input.len() {
+                return Err("linear disassembly exceeds executable entry region".to_owned());
+            }
+            let decoded = decoder.decode(input, offset, ip, bitness)?;
+            ip = ip
+                .checked_add(decoded.size as u64)
+                .ok_or("instruction address overflow")?;
+            let next = offset + decoded.size;
+            instructions.push((offset, decoded));
+            offset = next;
+        }
+        DecodedCollection::new(instructions)
+    })) {
+        Ok(Ok(collection)) => {
+            // SAFETY: `out` is non-null and writable.
+            unsafe { *out = Box::into_raw(Box::new(collection)).cast() };
+            0
+        }
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "x86 decoder failed"),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_free(handle: *mut c_void) {
     if !handle.is_null() {
@@ -625,6 +692,37 @@ mod tests {
         );
         assert!(unsafe { galeikan_asm_instruction_register_writes_count(handle) } > 0);
         unsafe { galeikan_asm_instruction_free(handle) };
+    }
+
+    #[test]
+    fn linear_ffi_stops_at_region_boundary_and_keeps_offsets() {
+        let code = [0xe8_u8, 0x02, 0, 0, 0, 0x90, 0x90];
+        let mut disassembly = ptr::null_mut();
+        let mut error = [0_u8; 128];
+        assert_eq!(unsafe {
+            galeikan_asm_linear(code.as_ptr(), code.len(), 0x1000, 64, 3,
+                                &mut disassembly, error.as_mut_ptr(), error.len())
+        }, 0);
+        assert_eq!(unsafe { galeikan_asm_disassembly_count(disassembly) }, 3);
+        for (index, expected_offset) in [(0, 0), (1, 5), (2, 6)] {
+            let mut instruction = ptr::null_mut();
+            let mut offset = usize::MAX;
+            assert_eq!(unsafe {
+                galeikan_asm_disassembly_at(disassembly, index, &mut instruction, &mut offset)
+            }, 1);
+            assert_eq!(offset, expected_offset);
+            assert_eq!(unsafe { galeikan_asm_instruction_ip(instruction) },
+                       0x1000 + expected_offset as u64);
+            unsafe { galeikan_asm_instruction_free(instruction) };
+        }
+        unsafe { galeikan_asm_disassembly_free(disassembly) };
+        assert_eq!(unsafe {
+            galeikan_asm_linear(code.as_ptr(), code.len(), 0x1000, 64, 4,
+                                &mut disassembly, error.as_mut_ptr(), error.len())
+        }, -1);
+        assert!(disassembly.is_null());
+        assert!(std::ffi::CStr::from_bytes_until_nul(&error).unwrap().to_str().unwrap()
+            .contains("linear disassembly exceeds executable entry region"));
     }
 
     #[test]

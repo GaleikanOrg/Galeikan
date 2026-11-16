@@ -1279,8 +1279,8 @@ void *gak_native_formats_entry_view(const void *value, int64_t count) {
         : gak_elf_va(format, format->entry, (uint64_t)count);
 }
 
-/* out: Source, file start, file end, x86 bitness, entry address, address kind. */
-int gak_native_formats_x86_entry_info(const void *value, uint64_t out[6]) {
+/* out: Source, file start, file end, x86 bitness, entry address, address kind, Format. */
+static int gak_x86_entry_info(const void *value, uint64_t out[7], int full_region) {
     const GakFormat *format = value;
     gak_formats_error = NULL;
     if (!format || !out) {
@@ -1343,21 +1343,53 @@ int gak_native_formats_x86_entry_info(const void *value, uint64_t out[6]) {
     }
     uint64_t captured = source->end - source->start - start;
     if (remaining > captured) remaining = captured;
-    if (remaining > 15) remaining = 15;
-    GakFormatRange *window = format->kind == 1
-        ? gak_pe_rva(format, format->entry, remaining)
-        : gak_elf_va(format, format->entry, remaining);
-    if (!window) return 0;
-    int valid = window->start == start && window->end == start + remaining;
-    format_memory -= sizeof(*window);
-    free(window);
-    if (!valid) { gak_format_fail("entry file range is not contiguous"); return 0; }
+    if (!full_region) {
+        if (remaining > 15) remaining = 15;
+        GakFormatRange *window = format->kind == 1
+            ? gak_pe_rva(format, format->entry, remaining)
+            : gak_elf_va(format, format->entry, remaining);
+        if (!window) return 0;
+        int valid = window->start == start && window->end == start + remaining;
+        format_memory -= sizeof(*window);
+        free(window);
+        if (!valid) { gak_format_fail("entry file range is not contiguous"); return 0; }
+    }
     out[0] = (uint64_t)(uintptr_t)source;
     out[1] = start;
     out[2] = start + remaining;
     out[3] = format->bits;
     out[4] = format->entry;
     out[5] = format->kind;
+    out[6] = (uint64_t)(uintptr_t)format;
+    return 1;
+}
+
+int gak_native_formats_x86_entry_info(const void *value, uint64_t out[7]) {
+    return gak_x86_entry_info(value, out, 0);
+}
+
+int gak_native_formats_x86_entry_region_info(const void *value, uint64_t out[7]) {
+    return gak_x86_entry_info(value, out, 1);
+}
+
+int gak_native_formats_x86_instruction_range(const void *value, uint64_t ip,
+                                              uint64_t size, uint64_t file_start) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (!format || !size) {
+        gak_format_fail("invalid x86 instruction range"); return 0;
+    }
+    GakFormatRange *mapped = format->kind == 1
+        ? gak_pe_rva(format, ip, size)
+        : gak_elf_va(format, ip, size);
+    if (!mapped) return 0;
+    int valid = mapped->start == file_start && mapped->end == file_start + size;
+    format_memory -= sizeof(*mapped);
+    free(mapped);
+    if (!valid) {
+        gak_format_fail("instruction bytes do not map to the expected file range");
+        return 0;
+    }
     return 1;
 }
 

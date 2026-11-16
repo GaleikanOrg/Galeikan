@@ -5,6 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef GALEIKAN_ASM_FORMATS
+extern int gak_native_formats_x86_instruction_range(const void *format,
+                                                     uint64_t ip, uint64_t size,
+                                                     uint64_t file_start);
+extern uint8_t *gak_formats_error;
+#endif
+
 /* Source layout is shared with generated native programs. */
 typedef struct {
     const uint8_t *backing;
@@ -27,6 +34,8 @@ typedef struct GakAsmDisassembly {
     const GakSourceHead *source;
     uint64_t start_offset;
     void *decoded;
+    uint64_t offset_bias;
+    uint64_t address_kind;
 } GakAsmDisassembly;
 
 static struct {
@@ -277,11 +286,96 @@ GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
     disassembly->source = source;
     disassembly->start_offset = (uint64_t)offset;
     disassembly->decoded = decoded;
+    disassembly->offset_bias = 0;
+    disassembly->address_kind = 0;
     disassembly->next_owned = owned_disassemblies;
     owned_disassemblies = disassembly;
     disassembly_instruction_count += count;
     return disassembly;
 }
+
+#ifdef GALEIKAN_ASM_FORMATS
+static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7],
+                                                            int64_t count, int linear) {
+    gak_asm_error = NULL;
+    if (!info) { gak_asm_fail("invalid x86 entry region"); return NULL; }
+    const GakSourceHead *source = (const GakSourceHead *)(uintptr_t)info[0];
+    if (!source || !source->backing || source->end < source->start ||
+        source->end > *(const uint64_t *)source->backing ||
+        info[1] >= info[2] || info[2] > source->end - source->start ||
+        (info[3] != 32 && info[3] != 64) || (info[5] != 1 && info[5] != 2) || !info[6]) {
+        gak_asm_fail("invalid x86 entry region"); return NULL;
+    }
+    if (count < 1 || count > 10000) {
+        gak_asm_fail("instruction count must be between 1 and 10000"); return NULL;
+    }
+    const uint8_t *bytes = source->backing + sizeof(uint64_t) + source->start + info[1];
+    size_t length = (size_t)(info[2] - info[1]);
+    uint8_t error[256] = {0};
+    void *decoded = NULL;
+    int failed = linear
+        ? galeikan_asm_linear(bytes, length, info[4], (uint32_t)info[3],
+                              (size_t)count, &decoded, error, sizeof error)
+        : galeikan_asm_reachable(bytes, length, 0, info[4], (uint32_t)info[3],
+                                 (size_t)count, &decoded, error, sizeof error);
+    if (failed) { gak_asm_fail((const char *)error); return NULL; }
+    size_t found = galeikan_asm_disassembly_count(decoded);
+    if (found > 100000 - disassembly_instruction_count) {
+        galeikan_asm_disassembly_free(decoded);
+        gak_asm_fail("native Disassembly instruction count exceeds 100000");
+        return NULL;
+    }
+    for (size_t index = 0; index < found; index++) {
+        void *instruction = NULL;
+        size_t relative = 0;
+        if (!galeikan_asm_disassembly_at(decoded, index, &instruction, &relative)) {
+            galeikan_asm_disassembly_free(decoded);
+            gak_asm_fail("cannot read decoded entry instruction"); return NULL;
+        }
+        uint64_t size = galeikan_asm_instruction_size(instruction);
+        uint64_t ip = galeikan_asm_instruction_ip(instruction);
+        galeikan_asm_instruction_free(instruction);
+        if (relative > length || size > length - relative ||
+            !gak_native_formats_x86_instruction_range((const void *)(uintptr_t)info[6],
+                                                       ip, size, info[1] + relative)) {
+            galeikan_asm_disassembly_free(decoded);
+            if (gak_formats_error) gak_asm_error = gak_formats_error;
+            else gak_asm_fail("instruction bytes do not map to the expected file range");
+            return NULL;
+        }
+    }
+    GakAsmDisassembly *disassembly = malloc(sizeof *disassembly);
+    if (!disassembly) {
+        galeikan_asm_disassembly_free(decoded);
+        gak_asm_fail("native allocation failed"); return NULL;
+    }
+    if (!exit_handler_registered) {
+        if (atexit(gak_asm_release_all)) {
+            free(disassembly);
+            galeikan_asm_disassembly_free(decoded);
+            gak_asm_fail("cannot register decoder cleanup"); return NULL;
+        }
+        exit_handler_registered = 1;
+    }
+    disassembly->source = source;
+    disassembly->start_offset = info[1];
+    disassembly->decoded = decoded;
+    disassembly->offset_bias = info[1];
+    disassembly->address_kind = info[5];
+    disassembly->next_owned = owned_disassemblies;
+    owned_disassemblies = disassembly;
+    disassembly_instruction_count += found;
+    return disassembly;
+}
+
+GakAsmDisassembly *gak_native_asm_linear_entry(const uint64_t info[7], int64_t count) {
+    return gak_native_asm_entry_disassembly(info, count, 1);
+}
+
+GakAsmDisassembly *gak_native_asm_reachable_entry(const uint64_t info[7], int64_t count) {
+    return gak_native_asm_entry_disassembly(info, count, 0);
+}
+#endif
 
 uint64_t gak_native_asm_disassembly_count(const GakAsmDisassembly *disassembly) {
     gak_asm_error = NULL;
@@ -318,10 +412,11 @@ GakAsmInstruction *gak_native_asm_at(const GakAsmDisassembly *disassembly,
         return NULL;
     }
     instruction->source = disassembly->source;
-    instruction->offset = (uint64_t)offset;
+    instruction->offset = (uint64_t)offset + disassembly->offset_bias;
     instruction->decoded = decoded;
-    instruction->address_kind = 0;
-    instruction->address = 0;
+    instruction->address_kind = disassembly->address_kind;
+    instruction->address = disassembly->address_kind
+        ? galeikan_asm_instruction_ip(decoded) : 0;
     instruction->next_owned = owned_instructions;
     owned_instructions = instruction;
     instruction_count++;
