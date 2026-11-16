@@ -6360,6 +6360,38 @@ impl Codegen {
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_at\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1()).unwrap();
             return Ok(Scalar::Instruction);
         }
+        if name == "block_instruction" && args.len() == 3 {
+            if self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err("asm.block_instruction expects Disassembly".into());
+            }
+            let lines_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", lines_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("asm.block_instruction block index must be i64".into());
+            }
+            let block_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", block_slot * 8).unwrap();
+            if self.expr(&args[2], scope)? != Scalar::Int {
+                return Err("asm.block_instruction instruction index must be i64".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_block_instruction\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1(), block_slot * 8, self.arg2()).unwrap();
+            return Ok(Scalar::Instruction);
+        }
+        if matches!(name, "register_reads" | "register_writes" | "flags_read" | "flags_modified") {
+            if args.len() != 1 || self.expr(&args[0], scope)? != Scalar::Instruction {
+                return Err(format!("asm.{name} expects Instruction"));
+            }
+            let field = match name {
+                "register_reads" => 1,
+                "register_writes" => 2,
+                "flags_read" => 3,
+                _ => 4,
+            };
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, rax\n    mov {}, {field}\n    call gak_native_asm_names\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1()).unwrap();
+            return Ok(Scalar::ListStr);
+        }
         if name == "successors" && args.len() == 1 {
             if self.expr(&args[0], scope)? != Scalar::Instruction {
                 return Err("asm.successors expects Instruction".into());

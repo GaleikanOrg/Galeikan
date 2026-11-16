@@ -5652,6 +5652,74 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
 }
 
 #[test]
+fn native_asm_register_flags_and_block_instruction_match_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "registers.gaks",
+        concat!(
+            "import std.binary\nimport std.asm\nimport std.list\n",
+            "let source = binary.snapshot(binary.from_hex(\"48 89 d8 48 01 d8 75 01 90 c3\"))\n",
+            "let mov = asm.decode(source, 0, 0x1000, 64)\n",
+            "let add = asm.decode(source, 3, 0x1003, 64)\n",
+            "let branch = asm.decode(source, 6, 0x1006, 64)\n",
+            "let fxsave = asm.decode(binary.snapshot(binary.from_hex(\"0f ae 00\")), 0, 64)\n",
+            "let lines = asm.reachable(source, 0, 0x1000u64, 64, 5)\n",
+            "let reads: List<str> = asm.register_reads(add)\n",
+            "let writes: List<str> = asm.register_writes(add)\n",
+            "let modified: List<str> = asm.flags_modified(add)\n",
+            "print asm.register_reads(mov)[0]\nprint asm.register_writes(mov)[0]\n",
+            "print list.count(reads)\nprint reads[0]\nprint reads[1]\nprint writes[0]\n",
+            "print list.count(modified)\nprint modified[0]\n",
+            "print asm.flags_read(branch)[0]\n",
+            "print list.count(asm.flags_modified(mov))\n",
+            "print asm.register_usage_complete(mov)\n",
+            "print asm.register_usage_complete(fxsave)\n",
+            "print asm.mnemonic(asm.block_instruction(lines, 0, 1))\n",
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+
+    for (name, expression, expected) in [
+        (
+            "block-index.gak",
+            "asm.block_instruction(lines, 9, 0)",
+            "block index out of range",
+        ),
+        (
+            "block-within.gak",
+            "asm.block_instruction(lines, 0, 9)",
+            "block instruction index out of range",
+        ),
+    ] {
+        let source = format!(
+            "import std.binary\nimport std.asm\nlet lines = asm.reachable(binary.snapshot(binary.from_hex(\"90 c3\")), 0, 0u64, 64, 2)\nprint {expression}\n"
+        );
+        let script = s.write(name, &source);
+        let built = s.compile(&script);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success());
+        assert!(String::from_utf8_lossy(&native.stderr).contains(expected));
+    }
+}
+
+#[test]
 fn native_compiler_removes_temporary_c_helpers_after_success_and_failure() {
     if !gcc_available() {
         return;

@@ -267,6 +267,22 @@ GakAsmInstruction *gak_native_asm_at(const GakAsmDisassembly *disassembly,
     return instruction;
 }
 
+GakAsmInstruction *gak_native_asm_block_instruction(
+    const GakAsmDisassembly *disassembly, int64_t block_index, int64_t within) {
+    gak_asm_error = NULL;
+    GaleikanAsmBlock block;
+    if (!disassembly || block_index < 0 ||
+        !galeikan_asm_disassembly_block(disassembly->decoded, (size_t)block_index, &block)) {
+        gak_asm_fail("block index out of range");
+        return NULL;
+    }
+    if (within < 0 || (uint64_t)within >= block.instruction_count) {
+        gak_asm_fail("block instruction index out of range");
+        return NULL;
+    }
+    return gak_native_asm_at(disassembly, (int64_t)(block.first_index + (size_t)within));
+}
+
 uint64_t gak_native_asm_disassembly_number(const GakAsmDisassembly *disassembly,
                                              int64_t index, uint32_t kind) {
     gak_asm_error = NULL;
@@ -358,6 +374,51 @@ uint64_t *gak_native_asm_references(const GakAsmDisassembly *disassembly,
                                             result + 1, count) != count) {
         gak_asm_fail("cannot read Disassembly references");
         return NULL;
+    }
+    return result;
+}
+
+uint64_t *gak_native_asm_names(const GakAsmInstruction *instruction, uint32_t kind) {
+    gak_asm_error = NULL;
+    if (!instruction) {
+        gak_asm_fail("invalid Instruction");
+        return NULL;
+    }
+    size_t (*count_fn)(const void *) = NULL;
+    size_t (*get_fn)(const void *, size_t, uint8_t *, size_t) = NULL;
+    switch (kind) {
+        case 1:
+            count_fn = galeikan_asm_instruction_register_reads_count;
+            get_fn = galeikan_asm_instruction_register_read;
+            break;
+        case 2:
+            count_fn = galeikan_asm_instruction_register_writes_count;
+            get_fn = galeikan_asm_instruction_register_write;
+            break;
+        case 3:
+            count_fn = galeikan_asm_instruction_flags_read_count;
+            get_fn = galeikan_asm_instruction_flag_read;
+            break;
+        case 4:
+            count_fn = galeikan_asm_instruction_flags_modified_count;
+            get_fn = galeikan_asm_instruction_flag_modified;
+            break;
+        default:
+            gak_asm_fail("unknown Instruction name list");
+            return NULL;
+    }
+    size_t count = count_fn(instruction->decoded);
+    uint64_t *result = gak_asm_box_u64_list(count);
+    if (!result) return NULL;
+    for (size_t index = 0; index < count; index++) {
+        size_t length = get_fn(instruction->decoded, index, NULL, 0);
+        uint8_t *text = gak_asm_box_text(NULL, length);
+        if (!text) return NULL;
+        if (get_fn(instruction->decoded, index, text + sizeof(uint64_t), length) != length) {
+            gak_asm_fail("cannot read Instruction name");
+            return NULL;
+        }
+        result[index + 1] = (uint64_t)(uintptr_t)text;
     }
     return result;
 }
