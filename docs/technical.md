@@ -96,7 +96,7 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 | `view`, `extract`, `patch`, `splice` | Create bounded source views, extract bytes, replace a span immutably, or insert/remove bytes while keeping lineage. |
 | `deep`, `value`, `signed_value`, `value_u64`, `offset`, `width` | Decode a typed integer observation and read its value, signed value, unsigned value, byte offset, or width. `deep` accepts `u8`, signed/unsigned 16/32/64-bit little/big-endian fields, and canonical `uleb128`/`sleb128`. |
 | `bits`, `signed_bits`, `patch_bits`, `patch_signed_bits` | Read or immutably change 1–64 bits with explicit `lsb0`/`msb0` ordering and signedness checks. |
-| `read_text`, `read_cstring`, `read_utf8`, `read_wstring` | Decode bounded fixed-length or terminated ASCII/UTF-8/UTF-16 text. |
+| `read_text`, `read_cstring`, `read_utf8`, `read_wstring` | Decode bounded fixed-length or terminated ASCII/UTF-8/UTF-16 text. `read_text` and `strings` accept `ascii`, `utf8`, `utf16le`, and `utf16be`; UTF-8 scans count Unicode scalars and skip malformed sequences. |
 | `size`, `sha256`, `crc32`, `entropy`, `entropy_windows`, `histogram` | Get size, SHA-256, CRC32 (including an optional previous CRC for chunking), global entropy, source-span-aware window entropy, or a 256-count byte-frequency list. `histogram` accepts bytes or a `Source`. |
 | `find`, `contains`, `hunt`, `strings` | Search bounded source bytes, match a byte pattern, or enumerate candidate strings. |
 | `hexdump`, `diff`, `diff_offsets`, `diff_count` | Produce a bounded hex view; compare sources and inspect changed offsets/count. |

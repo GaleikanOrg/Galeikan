@@ -123,6 +123,68 @@ static int gak_utf8_valid(const uint8_t *data, uint64_t count) {
     return 1;
 }
 
+/* Width of one printable UTF-8 scalar. C0/C1 controls and invalid sequences
+ * terminate a candidate string; other non-ASCII scalars are retained. */
+static uint64_t gak_utf8_printable_width(const uint8_t *data, uint64_t size,
+                                          uint64_t offset) {
+    if (offset >= size) return 0;
+    uint8_t a = data[offset];
+    uint64_t remaining = size - offset;
+    if (a >= 0x20 && a <= 0x7e) return 1;
+    if (a >= 0xc2 && a <= 0xdf && remaining >= 2) {
+        uint8_t b = data[offset + 1];
+        if ((b & 0xc0) != 0x80 || (a == 0xc2 && b < 0xa0)) return 0;
+        return 2;
+    }
+    if (a >= 0xe0 && a <= 0xef && remaining >= 3) {
+        uint8_t b = data[offset + 1], c = data[offset + 2];
+        if ((b & 0xc0) != 0x80 || (c & 0xc0) != 0x80 ||
+            (a == 0xe0 && b < 0xa0) || (a == 0xed && b >= 0xa0)) return 0;
+        return 3;
+    }
+    if (a >= 0xf0 && a <= 0xf4 && remaining >= 4) {
+        uint8_t b = data[offset + 1], c = data[offset + 2], d = data[offset + 3];
+        if ((b & 0xc0) != 0x80 || (c & 0xc0) != 0x80 || (d & 0xc0) != 0x80 ||
+            (a == 0xf0 && b < 0x90) || (a == 0xf4 && b >= 0x90)) return 0;
+        return 4;
+    }
+    return 0;
+}
+
+int64_t gak_native_utf8_strings_scan(const uint8_t *data, uint64_t size,
+                                      uint64_t minimum, uint8_t *list_box) {
+    uint64_t offset = 0, count = 0;
+    while (offset < size) {
+        uint64_t width = gak_utf8_printable_width(data, size, offset);
+        if (!width) { ++offset; continue; }
+        uint64_t start = offset, characters = 0;
+        do {
+            ++characters;
+            offset += width;
+            width = gak_utf8_printable_width(data, size, offset);
+        } while (width);
+        if (characters >= minimum) {
+            if (count == 10000u) return -1;
+            if (list_box) memcpy(list_box + 8 + count * 8, &start, sizeof(start));
+            ++count;
+        }
+    }
+    return (int64_t)count;
+}
+
+int64_t gak_native_utf8_text_length(const uint8_t *data, uint64_t size,
+                                    uint64_t offset, uint64_t max_chars) {
+    if (offset >= size) return 0;
+    uint64_t start = offset, characters = 0;
+    uint64_t width;
+    while ((width = gak_utf8_printable_width(data, size, offset)) != 0) {
+        if (characters == max_chars) return -1;
+        ++characters;
+        offset += width;
+    }
+    return (int64_t)(offset - start);
+}
+
 /* Returns 0 on success, 1 for a range error, 2 for invalid UTF-8. */
 int gak_native_read_utf8(const uint8_t *source, uint64_t offset, uint64_t length) {
     const uint8_t *backing;

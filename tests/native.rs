@@ -10024,6 +10024,37 @@ fn utf16be_binary_text_matches_ast_vm_and_native() {
 }
 
 #[test]
+fn utf8_binary_strings_and_text_match_all_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "utf8-text.gak",
+        "from std.binary import from_hex, snapshot, view, strings, read_text\nfrom std.result import message\nfn short(source: Source) -> Result<str> = read_text(source, 1, 2, \"utf8\")\nfn control(source: Source) -> Result<str> = read_text(source, 10, 2, \"utf8\")\nlet source = snapshot(from_hex(\"00 41 ce bb f0 9f 98 80 21 00 c2 80 42 43 ff 44\"))\nlet part = view(source, 2, 7)\nprint strings(source, 2, \"utf8\")\nprint strings(source, 1, \"utf8\")\nprint strings(part, 2, \"utf8\")\nprint read_text(source, 1, 4, \"utf8\")\nprint read_text(part, 0, 3, \"utf8\")\nprint read_text(source, 12, 2, \"utf8\")\nprint message(short(source))\nprint message(control(source))\n",
+    );
+    let expected = "[1, 12]\n[1, 12, 15]\n[0]\nAλ😀!\nλ😀!\nBC\nLimitExceeded: text exceeds 2 characters\nno printable text at offset\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn native_binary_read_text_matches_vm_for_ascii_utf16le_and_views() {
     if !gcc_available() {
         return;
@@ -10209,7 +10240,7 @@ fn native_binary_read_text_errors_match_vm_and_result_capture() {
             "text-large-max.gak",
             "read_text(source, 0, 4097, \"ascii\")",
         ),
-        ("text-encoding.gak", "read_text(source, 0, 1, \"utf8\")"),
+        ("text-encoding.gak", "read_text(source, 0, 1, \"utf32\")"),
         (
             "text-out-of-bounds.gak",
             "read_text(source, 4097, 1, \"ascii\")",
@@ -10330,8 +10361,9 @@ fn native_binary_strings_errors_and_hit_limit_match_vm() {
             "strings-large-minimum.gak",
             "strings(source, 4097, \"ascii\")",
         ),
-        ("strings-encoding.gak", "strings(source, 1, \"utf8\")"),
+        ("strings-encoding.gak", "strings(source, 1, \"utf32\")"),
         ("strings-too-many.gak", "strings(source, 1, \"ascii\")"),
+        ("strings-too-many-utf8.gak", "strings(source, 1, \"utf8\")"),
     ] {
         let script = s.write(name, &format!("from std.binary import from_hex, snapshot, strings\nfrom std.bytes import repeat\nlet source = snapshot(repeat(from_hex(\"41 00\"), 10001))\nprint {expression}\n"));
         let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))

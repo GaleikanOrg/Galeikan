@@ -9451,6 +9451,7 @@ fn diff_offsets(left: &[u8], right: &[u8], limit: usize) -> Result<Vec<usize>, S
 #[derive(Clone, Copy)]
 enum TextEncoding {
     Ascii,
+    Utf8,
     Utf16Le,
     Utf16Be,
 }
@@ -9459,15 +9460,16 @@ impl TextEncoding {
     fn parse(name: &str) -> Result<Self, String> {
         match name {
             "ascii" => Ok(Self::Ascii),
+            "utf8" => Ok(Self::Utf8),
             "utf16le" => Ok(Self::Utf16Le),
             "utf16be" => Ok(Self::Utf16Be),
-            _ => Err("text encoding must be ascii, utf16le, or utf16be".into()),
+            _ => Err("text encoding must be ascii, utf8, utf16le, or utf16be".into()),
         }
     }
 
     fn width(self) -> usize {
         match self {
-            Self::Ascii => 1,
+            Self::Ascii | Self::Utf8 => 1,
             Self::Utf16Le | Self::Utf16Be => 2,
         }
     }
@@ -9476,6 +9478,7 @@ impl TextEncoding {
         let first = *bytes.get(offset)?;
         let character = match self {
             Self::Ascii => first,
+            Self::Utf8 => return None,
             Self::Utf16Le if bytes.get(offset + 1) == Some(&0) => first,
             Self::Utf16Be if first == 0 => *bytes.get(offset + 1)?,
             _ => return None,
@@ -9484,11 +9487,49 @@ impl TextEncoding {
     }
 }
 
+fn utf8_printable_width(bytes: &[u8], offset: usize) -> Option<usize> {
+    let first = *bytes.get(offset)?;
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let character = std::str::from_utf8(bytes.get(offset..offset.checked_add(width)?)?)
+        .ok()?.chars().next()? as u32;
+    ((0x20..=0x7e).contains(&character) || character >= 0xa0).then_some(width)
+}
+
 fn find_strings(
     bytes: &[u8],
     minimum: usize,
     encoding: TextEncoding,
 ) -> Result<Vec<usize>, String> {
+    if matches!(encoding, TextEncoding::Utf8) {
+        let mut hits = Vec::new();
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let Some(width) = utf8_printable_width(bytes, offset) else {
+                offset += 1;
+                continue;
+            };
+            let start = offset;
+            let mut count = 1;
+            offset += width;
+            while let Some(width) = utf8_printable_width(bytes, offset) {
+                count += 1;
+                offset += width;
+            }
+            if count >= minimum {
+                hits.push(start);
+                if hits.len() > MAX_HITS {
+                    return Err("too many strings".into());
+                }
+            }
+        }
+        return Ok(hits);
+    }
     let mut hits = Vec::new();
     let mut offset = 0;
     while offset < bytes.len() {
@@ -9520,6 +9561,22 @@ fn read_text(
 ) -> Result<String, String> {
     if offset >= bytes.len() {
         return Err("text offset out of bounds".into());
+    }
+    if matches!(encoding, TextEncoding::Utf8) {
+        let mut cursor = offset;
+        let mut count = 0;
+        while let Some(width) = utf8_printable_width(bytes, cursor) {
+            if count == max_chars {
+                return Err(format!("LimitExceeded: text exceeds {max_chars} characters"));
+            }
+            count += 1;
+            cursor += width;
+        }
+        if count == 0 {
+            return Err("no printable text at offset".into());
+        }
+        return std::str::from_utf8(&bytes[offset..cursor])
+            .map(str::to_owned).map_err(|_| "invalid UTF-8 text".into());
     }
     let mut text = String::new();
     let mut cursor = offset;

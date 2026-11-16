@@ -371,7 +371,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_max_chars_limit", "max_chars must be 1 to 4096"),
     (
         "gak_text_encoding",
-        "text encoding must be ascii, utf16le, or utf16be",
+        "text encoding must be ascii, utf8, utf16le, or utf16be",
     ),
     ("gak_text_offset_bounds", "text offset out of bounds"),
     ("gak_text_not_printable", "no printable text at offset"),
@@ -6678,6 +6678,7 @@ impl Codegen {
                 Ok(Scalar::Str)
             }
             ("read_text", [source, offset, max_chars, encoding]) => {
+                self.uses_text = true;
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.read_text expects Source".into());
                 }
@@ -6709,13 +6710,15 @@ impl Codegen {
                 let encoding_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_text_offset_negative\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_max_chars_range\n    cmp r10, 1\n    jb gak_max_chars_limit\n    cmp r10, 4096\n    ja gak_max_chars_limit", encoding_slot * 8, offset_slot * 8, max_slot * 8).unwrap();
                 let ascii = self.literal("ascii")?;
+                let utf8 = self.literal("utf8")?;
                 let utf16le = self.literal("utf16le")?;
                 let utf16be = self.literal("utf16be")?;
                 let utf16_label = self.label();
                 let utf16be_label = self.label();
+                let utf8_label = self.label();
                 let ready = self.label();
                 let not_limit = self.label();
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r8d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r8d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r8d, 3\n{ready}:\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    cmp r10, rdx\n    jae gak_text_offset_bounds\n    mov r9, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea rax, [r11+r9+8]\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_read_text\n    cmp rax, -1\n    jne {not_limit}\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_text_limit_message\n    jmp gak_text_limit_dynamic\n{not_limit}:\n    test rax, rax\n    jz gak_text_not_printable", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, offset_slot * 8, max_slot * 8, max_slot * 8).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r8d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r8d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf8_label}\n    mov r8d, 3\n    jmp {ready}\n{utf8_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf8}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r8d, 4\n{ready}:\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    cmp r10, rdx\n    jae gak_text_offset_bounds\n    mov r9, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea rax, [r11+r9+8]\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_read_text\n    cmp rax, -1\n    jne {not_limit}\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_text_limit_message\n    jmp gak_text_limit_dynamic\n{not_limit}:\n    test rax, rax\n    jz gak_text_not_printable", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, offset_slot * 8, max_slot * 8, max_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
             ("read_cstring", [source, offset, max_bytes]) => {
@@ -6849,6 +6852,7 @@ impl Codegen {
                 Ok(Scalar::Str)
             }
             ("strings", [source, minimum, encoding]) => {
+                self.uses_text = true;
                 if self.expr(source, scope)? != Scalar::Source {
                     return Err("binary.strings expects Source".into());
                 }
@@ -6875,12 +6879,14 @@ impl Codegen {
                 let encoding_slot = self.reserve_slot()?;
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rbp-{}]\n    test r10, r10\n    js gak_strings_minimum_range\n    cmp r10, 1\n    jb gak_strings_minimum_limit\n    cmp r10, 4096\n    ja gak_strings_minimum_limit", encoding_slot * 8, minimum_slot * 8).unwrap();
                 let ascii = self.literal("ascii")?;
+                let utf8 = self.literal("utf8")?;
                 let utf16le = self.literal("utf16le")?;
                 let utf16be = self.literal("utf16be")?;
                 let utf16_label = self.label();
                 let utf16be_label = self.label();
+                let utf8_label = self.label();
                 let ready = self.label();
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r11d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r11d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r11d, 3\n{ready}:\n    mov r8, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r8+24]\n    sub rdx, QWORD PTR [r8+16]\n    mov r10, QWORD PTR [r8+16]\n    mov r8, QWORD PTR [r8]\n    lea rax, [r8+r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_find_strings\n    cmp rax, -1\n    je gak_strings_many", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, minimum_slot * 8).unwrap();
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r11d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r11d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf8_label}\n    mov r11d, 3\n    jmp {ready}\n{utf8_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf8}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r11d, 4\n{ready}:\n    mov r8, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r8+24]\n    sub rdx, QWORD PTR [r8+16]\n    mov r10, QWORD PTR [r8+16]\n    mov r8, QWORD PTR [r8]\n    lea rax, [r8+r10+8]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_find_strings\n    cmp rax, -1\n    je gak_strings_many", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, minimum_slot * 8).unwrap();
                 Ok(Scalar::Offsets)
             }
             ("hunt", [source, pattern]) => {
@@ -8670,7 +8676,7 @@ impl Codegen {
             )
             .unwrap();
         }
-        out.push_str("gak_text_offset_negative_msg: .ascii \"text offset must not be negative\\n\"\ngak_text_offset_negative_msg_end:\ngak_max_chars_range_msg: .ascii \"max_chars out of range\\n\"\ngak_max_chars_range_msg_end:\ngak_max_chars_limit_msg: .ascii \"max_chars must be 1 to 4096\\n\"\ngak_max_chars_limit_msg_end:\ngak_text_encoding_msg: .ascii \"text encoding must be ascii, utf16le, or utf16be\\n\"\ngak_text_encoding_msg_end:\ngak_text_offset_bounds_msg: .ascii \"text offset out of bounds\\n\"\ngak_text_offset_bounds_msg_end:\ngak_text_not_printable_msg: .ascii \"no printable text at offset\\n\"\ngak_text_not_printable_msg_end:\n");
+        out.push_str("gak_text_offset_negative_msg: .ascii \"text offset must not be negative\\n\"\ngak_text_offset_negative_msg_end:\ngak_max_chars_range_msg: .ascii \"max_chars out of range\\n\"\ngak_max_chars_range_msg_end:\ngak_max_chars_limit_msg: .ascii \"max_chars must be 1 to 4096\\n\"\ngak_max_chars_limit_msg_end:\ngak_text_encoding_msg: .ascii \"text encoding must be ascii, utf8, utf16le, or utf16be\\n\"\ngak_text_encoding_msg_end:\ngak_text_offset_bounds_msg: .ascii \"text offset out of bounds\\n\"\ngak_text_offset_bounds_msg_end:\ngak_text_not_printable_msg: .ascii \"no printable text at offset\\n\"\ngak_text_not_printable_msg_end:\n");
         out.push_str("gak_strings_minimum_range_msg: .ascii \"minimum string length out of range\\n\"\ngak_strings_minimum_range_msg_end:\ngak_strings_minimum_limit_msg: .ascii \"minimum string length must be 1 to 4096\\n\"\ngak_strings_minimum_limit_msg_end:\ngak_strings_many_msg: .ascii \"too many strings\\n\"\ngak_strings_many_msg_end:\n");
         out.push_str("gak_hunt_invalid_hex_msg: .ascii \"invalid hex pattern\\n\"\ngak_hunt_invalid_hex_msg_end:\ngak_hunt_hex_limit_msg: .ascii \"hex pattern exceeds 1048576 bytes\\n\"\ngak_hunt_hex_limit_msg_end:\ngak_hunt_odd_hex_msg: .ascii \"hex pattern needs an even number of nibbles\\n\"\ngak_hunt_odd_hex_msg_end:\ngak_hunt_mask_limit_msg: .ascii \"masked hex pattern exceeds 64 bytes\\n\"\ngak_hunt_mask_limit_msg_end:\ngak_hunt_empty_msg: .ascii \"empty search pattern\\n\"\ngak_hunt_empty_msg_end:\ngak_hunt_many_msg: .ascii \"too many matches\\n\"\ngak_hunt_many_msg_end:\n");
         out.push_str("gak_diff_limit_negative_msg: .ascii \"max_differences out of range\\n\"\ngak_diff_limit_negative_msg_end:\ngak_diff_limit_msg: .ascii \"max_differences must be at most 10000\\n\"\ngak_diff_limit_msg_end:\ngak_diff_many_msg: .ascii \"LimitExceeded: too many differences\\n\"\ngak_diff_many_msg_end:\ngak_diff_memory_msg: .ascii \"native Diff memory exceeds 64 MiB\\n\"\ngak_diff_memory_msg_end:\n");
@@ -9043,6 +9049,8 @@ gak_hexdump_put:
     mov r13, r10
     mov r14, r11
     mov r15, r8
+    cmp r15, 4
+    je gak_read_text_utf8
     mov rdi, r8
     cmp rdi, 3
     jne gak_read_text_width_ready
@@ -9112,7 +9120,12 @@ gak_read_text_copy_byte:
 gak_read_text_done:
     mov rax, r12
     jmp gak_read_text_return
-gak_read_text_none:
+gak_read_text_utf8:
+"#,
+        );
+        writeln!(out, "    mov {}, rbx\n    mov {}, r12\n    mov {}, r13\n    mov {}, r14\n    call gak_native_utf8_text_length\n    cmp rax, 0\n    jle gak_read_text_return\n    mov r14, rax\n    call gak_alloc_str\n    mov r12, rax\n    lea {}, [rax+8]\n    lea {}, [rbx+r13]\n    mov {}, r14\n    call memcpy\n    mov rax, r12\n    jmp gak_read_text_return", self.arg0(), self.arg1(), self.arg2(), self.arg3(), self.arg0(), self.arg1(), self.arg2()).unwrap();
+        out.push_str(
+            r#"gak_read_text_none:
     xor eax, eax
     jmp gak_read_text_return
 gak_read_text_limit:
@@ -9239,6 +9252,14 @@ gak_find_strings_return:
     pop rbx
     ret
 gak_strings_scan:
+    cmp r14, 4
+    jne gak_strings_scan_ascii
+"#,
+        );
+        let scan_stack = if self.windows { 40 } else { 8 };
+        writeln!(out, "    sub rsp, {scan_stack}\n    mov {}, rbx\n    mov {}, r12\n    mov {}, r13\n    mov {}, r15\n    call gak_native_utf8_strings_scan\n    add rsp, {scan_stack}\n    ret", self.arg0(), self.arg1(), self.arg2(), self.arg3()).unwrap();
+        out.push_str(
+            r#"gak_strings_scan_ascii:
     xor r8d, r8d
     xor r9d, r9d
 gak_strings_outer:
