@@ -303,6 +303,39 @@ pub fn to_hex(data: &[u8]) -> Result<String, String> {
     Ok(hex_bytes(data))
 }
 
+pub fn from_utf16(text: &str, big_endian: bool) -> Result<Vec<u8>, String> {
+    let units = text.encode_utf16().count();
+    let length = units.checked_mul(2).ok_or("bytes length overflow")?;
+    bounded(length)?;
+    let mut result = Vec::with_capacity(length);
+    for unit in text.encode_utf16() {
+        let encoded = if big_endian {
+            unit.to_be_bytes()
+        } else {
+            unit.to_le_bytes()
+        };
+        result.extend_from_slice(&encoded);
+    }
+    Ok(result)
+}
+
+pub fn to_utf16(data: &[u8], big_endian: bool) -> Result<String, String> {
+    if data.len() % 2 != 0 {
+        return Err("invalid UTF-16 data".into());
+    }
+    let units = data.chunks_exact(2).map(|chunk| {
+        let bytes = [chunk[0], chunk[1]];
+        if big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        }
+    });
+    std::char::decode_utf16(units)
+        .map(|scalar| scalar.map_err(|_| "invalid UTF-16 data".to_owned()))
+        .collect()
+}
+
 pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,

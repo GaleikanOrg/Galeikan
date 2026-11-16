@@ -73,6 +73,7 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 | --- | --- |
 | `from_hex`, `to_hex` | Decode hex text into bytes; encode bytes as hex text. |
 | `from_utf8`, `to_utf8` | Encode text as UTF-8 bytes (up to 1 MiB); decode bytes to text with strict UTF-8 validation. |
+| `from_utf16le`, `from_utf16be`, `to_utf16le`, `to_utf16be` | Convert text and bytes using UTF-16 little or big endian, rejecting odd-length input and invalid surrogate pairs. Encoded bytes are limited to 1 MiB. |
 | `pack` | Pack a checked integer or field into bytes using the requested representation. |
 | `concat`, `repeat`, `xor` | Concatenate, repeat, or XOR byte buffers with size checks. |
 | `at`, `find`, `contains` | Read a byte by index, locate a byte sequence, or test membership. |

@@ -10286,6 +10286,45 @@ fn native_binary_read_cstring_matches_vm_and_captures_errors() {
 }
 
 #[test]
+fn utf16_bytes_conversion_matches_all_execution_modes() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "bytes-utf16.gak",
+        "from std.bytes import from_hex, from_utf16le, from_utf16be, to_hex, to_utf16le, to_utf16be\nfrom std.result import message\nfrom std.text import repeat\nfn decode_le(data: bytes) -> Result<str> = to_utf16le(data)\nfn decode_be(data: bytes) -> Result<str> = to_utf16be(data)\nfn encode(text: str) -> Result<bytes> = from_utf16le(text)\nlet text = \"Aλ😀\\x00Z\"\nprint to_hex(from_utf16le(text))\nprint to_hex(from_utf16be(text))\nprint to_utf16le(from_utf16le(text)) == text\nprint to_utf16be(from_utf16be(text)) == text\nprint to_utf16le(from_hex(\"\")) == \"\"\nprint message(decode_le(from_hex(\"00\")))\nprint message(decode_le(from_hex(\"00 d8\")))\nprint message(decode_le(from_hex(\"00 dc\")))\nprint message(decode_be(from_hex(\"d8 00 00 41\")))\nprint len(from_utf16le(repeat(\"x\", 524288)))\nprint message(encode(repeat(\"x\", 524288) + \"x\"))\n",
+    );
+    let expected = b"4100bb033dd800de00005a00\n004103bbd83dde000000005a\ntrue\ntrue\ntrue\ninvalid UTF-16 data\ninvalid UTF-16 data\ninvalid UTF-16 data\ninvalid UTF-16 data\n1048576\nLimitExceeded: bytes result exceeds 1048576 bytes\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected, "bundle");
+    let compiled = s.compile(&script);
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected, "native");
+}
+
+#[test]
 fn utf8_bytes_conversion_matches_all_execution_modes() {
     if !gcc_available() {
         return;

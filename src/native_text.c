@@ -129,6 +129,80 @@ int gak_native_utf8_box_valid(const uint8_t *box) {
     return gak_utf8_valid(box + sizeof count, count);
 }
 
+/* Modes: UTF-8 -> UTF-16 LE/BE (0/1), UTF-16 LE/BE -> UTF-8 (2/3).
+ * A NULL output measures the result before the caller allocates it. */
+int64_t gak_native_utf16_convert(const uint8_t *box, int64_t mode, uint8_t *output) {
+    uint64_t size = 0, written = 0;
+    memcpy(&size, box, sizeof size);
+    const uint8_t *data = box + 8;
+    int big = (mode & 1) != 0;
+    if (mode < 2) {
+        if (!gak_utf8_valid(data, size)) return -1;
+        for (uint64_t i = 0; i < size;) {
+            uint32_t scalar = data[i++];
+            if (scalar >= 0xc2 && scalar <= 0xdf) {
+                scalar = ((scalar & 0x1f) << 6) | (data[i++] & 0x3f);
+            } else if (scalar >= 0xe0 && scalar <= 0xef) {
+                scalar = ((scalar & 0x0f) << 12) | ((data[i++] & 0x3f) << 6);
+                scalar |= data[i++] & 0x3f;
+            } else if (scalar >= 0xf0) {
+                scalar = ((scalar & 0x07) << 18) | ((data[i++] & 0x3f) << 12);
+                scalar |= (data[i++] & 0x3f) << 6;
+                scalar |= data[i++] & 0x3f;
+            }
+            uint16_t first = scalar <= 0xffff ? (uint16_t)scalar
+                : (uint16_t)(0xd800 + ((scalar - 0x10000) >> 10));
+            uint16_t second = (uint16_t)(0xdc00 + ((scalar - 0x10000) & 0x3ff));
+            uint64_t width = scalar <= 0xffff ? 2 : 4;
+            if (written + width > 1048576) return -2;
+            if (output) {
+                output[written] = big ? (uint8_t)(first >> 8) : (uint8_t)first;
+                output[written + 1] = big ? (uint8_t)first : (uint8_t)(first >> 8);
+                if (width == 4) {
+                    output[written + 2] = big ? (uint8_t)(second >> 8) : (uint8_t)second;
+                    output[written + 3] = big ? (uint8_t)second : (uint8_t)(second >> 8);
+                }
+            }
+            written += width;
+        }
+    } else {
+        if (size & 1) return -1;
+        for (uint64_t i = 0; i < size;) {
+            uint32_t scalar = big ? ((uint32_t)data[i] << 8) | data[i + 1]
+                                  : ((uint32_t)data[i + 1] << 8) | data[i];
+            i += 2;
+            if (scalar >= 0xd800 && scalar <= 0xdbff) {
+                if (size - i < 2) return -1;
+                uint32_t low = big ? ((uint32_t)data[i] << 8) | data[i + 1]
+                                   : ((uint32_t)data[i + 1] << 8) | data[i];
+                if (low < 0xdc00 || low > 0xdfff) return -1;
+                scalar = 0x10000 + ((scalar - 0xd800) << 10) + low - 0xdc00;
+                i += 2;
+            } else if (scalar >= 0xdc00 && scalar <= 0xdfff) return -1;
+            uint64_t width = scalar < 0x80 ? 1 : scalar < 0x800 ? 2
+                : scalar < 0x10000 ? 3 : 4;
+            if (output) {
+                if (width == 1) output[written] = (uint8_t)scalar;
+                else if (width == 2) {
+                    output[written] = (uint8_t)(0xc0 | (scalar >> 6));
+                    output[written + 1] = (uint8_t)(0x80 | (scalar & 0x3f));
+                } else if (width == 3) {
+                    output[written] = (uint8_t)(0xe0 | (scalar >> 12));
+                    output[written + 1] = (uint8_t)(0x80 | ((scalar >> 6) & 0x3f));
+                    output[written + 2] = (uint8_t)(0x80 | (scalar & 0x3f));
+                } else {
+                    output[written] = (uint8_t)(0xf0 | (scalar >> 18));
+                    output[written + 1] = (uint8_t)(0x80 | ((scalar >> 12) & 0x3f));
+                    output[written + 2] = (uint8_t)(0x80 | ((scalar >> 6) & 0x3f));
+                    output[written + 3] = (uint8_t)(0x80 | (scalar & 0x3f));
+                }
+            }
+            written += width;
+        }
+    }
+    return (int64_t)written;
+}
+
 /* Width of one printable UTF-8 scalar. C0/C1 controls and invalid sequences
  * terminate a candidate string; other non-ASCII scalars are retained. */
 static uint64_t gak_utf8_printable_width(const uint8_t *data, uint64_t size,

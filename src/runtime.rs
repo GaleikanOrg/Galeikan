@@ -4996,6 +4996,12 @@ impl Runtime {
                     .map_err(|_| "invalid UTF-8 string")?
                     .to_owned(),
             )),
+            ("from_utf16le" | "from_utf16be", [text]) => Ok(Value::Bytes(Arc::new(
+                bytes::from_utf16(text.as_str()?, name == "from_utf16be")?,
+            ))),
+            ("to_utf16le" | "to_utf16be", [Value::Bytes(data)]) => Ok(Value::Str(
+                bytes::to_utf16(data, name == "to_utf16be")?,
+            )),
             ("from_hex", [text]) => Ok(Value::Bytes(Arc::new(parse_hex(text.as_str()?)?))),
             ("from_base64", [text]) => Ok(Value::Bytes(Arc::new(bytes::from_base64(
                 text.as_str()?,
@@ -9107,9 +9113,9 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         return Ok(result);
     }
     let (expected, result): (&[Type], Type) = match (module, name) {
-        ("bytes", "from_hex" | "from_base64" | "from_base64_url" | "from_utf8") => (&[Str], Bytes),
+        ("bytes", "from_hex" | "from_base64" | "from_base64_url" | "from_utf8" | "from_utf16le" | "from_utf16be") => (&[Str], Bytes),
         ("bytes", "pack") => (&[Type::Any, Str], Bytes),
-        ("bytes", "to_hex" | "to_utf8") => (&[Bytes], Str),
+        ("bytes", "to_hex" | "to_utf8" | "to_utf16le" | "to_utf16be") => (&[Bytes], Str),
         ("bytes", "to_base64" | "to_base64_url") => (&[Bytes], Str),
         ("bytes", "concat" | "xor" | "bit_and" | "bit_or") => (&[Bytes, Bytes], Bytes),
         ("bytes", "repeat") => (&[Bytes, Int], Bytes),
