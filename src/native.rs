@@ -6718,7 +6718,8 @@ impl Codegen {
                 let utf8_label = self.label();
                 let ready = self.label();
                 let not_limit = self.label();
-                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r8d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r8d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf8_label}\n    mov r8d, 3\n    jmp {ready}\n{utf8_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf8}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r8d, 4\n{ready}:\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    cmp r10, rdx\n    jae gak_text_offset_bounds\n    mov r9, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea rax, [r11+r9+8]\n    mov r11, QWORD PTR [rbp-{}]\n    call gak_read_text\n    cmp rax, -1\n    jne {not_limit}\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_text_limit_message\n    jmp gak_text_limit_dynamic\n{not_limit}:\n    test rax, rax\n    jz gak_text_not_printable", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, offset_slot * 8, max_slot * 8, max_slot * 8).unwrap();
+                let source_offset = source_slot * 8;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{ascii}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16_label}\n    mov r8d, 1\n    jmp {ready}\n{utf16_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16le}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf16be_label}\n    mov r8d, 2\n    jmp {ready}\n{utf16be_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf16be}]\n    call gak_str_eq\n    test eax, eax\n    jz {utf8_label}\n    mov r8d, 3\n    jmp {ready}\n{utf8_label}:\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rip+{utf8}]\n    call gak_str_eq\n    test eax, eax\n    jz gak_text_encoding\n    mov r8d, 4\n{ready}:\n    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+24]\n    sub rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    cmp r10, rdx\n    jae gak_text_offset_bounds\n    mov r9, QWORD PTR [r11+16]\n    mov r11, QWORD PTR [r11]\n    lea rax, [r11+r9+8]\n    mov r11, QWORD PTR [rbp-{}]\n    mov r9, QWORD PTR [rbp-{source_offset}]\n    call gak_read_text\n    cmp rax, -1\n    jne {not_limit}\n    mov rax, QWORD PTR [rbp-{}]\n    call gak_text_limit_message\n    jmp gak_text_limit_dynamic\n{not_limit}:\n    test rax, rax\n    jz gak_text_not_printable", self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), self.arg0(), encoding_slot * 8, self.arg1(), source_slot * 8, offset_slot * 8, max_slot * 8, max_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
             ("read_cstring", [source, offset, max_bytes]) => {
@@ -9049,6 +9050,10 @@ gak_hexdump_put:
     mov r13, r10
     mov r14, r11
     mov r15, r8
+    cmp r15, 2
+    je gak_read_text_utf16
+    cmp r15, 3
+    je gak_read_text_utf16
     cmp r15, 4
     je gak_read_text_utf8
     mov rdi, r8
@@ -9124,6 +9129,8 @@ gak_read_text_utf8:
 "#,
         );
         writeln!(out, "    mov {}, rbx\n    mov {}, r12\n    mov {}, r13\n    mov {}, r14\n    call gak_native_utf8_text_length\n    cmp rax, 0\n    jle gak_read_text_return\n    mov r14, rax\n    call gak_alloc_str\n    mov r12, rax\n    lea {}, [rax+8]\n    lea {}, [rbx+r13]\n    mov {}, r14\n    call memcpy\n    mov rax, r12\n    jmp gak_read_text_return", self.arg0(), self.arg1(), self.arg2(), self.arg3(), self.arg0(), self.arg1(), self.arg2()).unwrap();
+        out.push_str("gak_read_text_utf16:\n    mov rbx, r9\n    mov r15, r14\n    cmp r8, 3\n    jne gak_read_text_utf16_options\n    or r15, 65536\ngak_read_text_utf16_options:\n");
+        writeln!(out, "    mov {}, rbx\n    mov {}, r13\n    mov {}, r15\n    xor {}, {}\n    call gak_native_utf16_text\n    cmp rax, 0\n    jle gak_read_text_return\n    mov r14, rax\n    call gak_alloc_str\n    mov r12, rax\n    mov {}, rbx\n    mov {}, r13\n    mov {}, r15\n    lea {}, [rax+8]\n    call gak_native_utf16_text\n    mov rax, r12\n    jmp gak_read_text_return", self.arg0(), self.arg1(), self.arg2(), self.arg3(), self.arg3(), self.arg0(), self.arg1(), self.arg2(), self.arg3()).unwrap();
         out.push_str(
             r#"gak_read_text_none:
     xor eax, eax
@@ -9252,12 +9259,12 @@ gak_find_strings_return:
     pop rbx
     ret
 gak_strings_scan:
-    cmp r14, 4
-    jne gak_strings_scan_ascii
+    cmp r14, 1
+    je gak_strings_scan_ascii
 "#,
         );
         let scan_stack = if self.windows { 40 } else { 8 };
-        writeln!(out, "    sub rsp, {scan_stack}\n    mov {}, rbx\n    mov {}, r12\n    mov {}, r13\n    mov {}, r15\n    call gak_native_utf8_strings_scan\n    add rsp, {scan_stack}\n    ret", self.arg0(), self.arg1(), self.arg2(), self.arg3()).unwrap();
+        writeln!(out, "    sub rsp, {scan_stack}\n    mov {}, rbx\n    mov {}, r12\n    mov {}, r13\n    mov {}, r15\n    cmp r14, 4\n    je gak_strings_scan_utf8\n    cmp r14, 3\n    jne gak_strings_scan_utf16\n    or {}, 65536\ngak_strings_scan_utf16:\n    call gak_native_utf16_strings_scan\n    jmp gak_strings_scan_return\ngak_strings_scan_utf8:\n    call gak_native_utf8_strings_scan\ngak_strings_scan_return:\n    add rsp, {scan_stack}\n    ret", self.arg0(), self.arg1(), self.arg2(), self.arg3(), self.arg2()).unwrap();
         out.push_str(
             r#"gak_strings_scan_ascii:
     xor r8d, r8d

@@ -9982,7 +9982,7 @@ fn utf16be_binary_text_matches_ast_vm_and_native() {
     let s = Sandbox::new();
     let script = s.write(
         "utf16be-text.gak",
-        "from std.binary import from_hex, snapshot, read_text, strings\nfrom std.result import is_error\nfn probe(source: Source) -> Result<str> = read_text(source, 0, 1, \"utf16be\")\nlet source = snapshot(from_hex(\"00 41 00 42 00 00 41 00 42 00 00 43\"))\nlet truncated = snapshot(from_hex(\"00\"))\nprint read_text(source, 0, 2, \"utf16be\")\nprint read_text(source, 5, 2, \"utf16be\")\nprint read_text(source, 6, 2, \"utf16le\")\nprint read_text(source, 10, 1, \"utf16be\")\nprint strings(source, 2, \"utf16be\")\nprint strings(source, 2, \"utf16le\")\nprint strings(truncated, 1, \"utf16be\")\nprint is_error(probe(truncated))\n",
+        "from std.binary import from_hex, snapshot, read_text, strings\nfrom std.result import is_error\nfn probe(source: Source) -> Result<str> = read_text(source, 0, 1, \"utf16be\")\nlet source = snapshot(from_hex(\"00 41 00 42 00 00 41 00 42 00 00 43\"))\nlet truncated = snapshot(from_hex(\"00\"))\nprint read_text(source, 0, 2, \"utf16be\")\nprint read_text(source, 5, 2, \"utf16be\")\nprint read_text(source, 6, 3, \"utf16le\")\nprint read_text(source, 10, 1, \"utf16be\")\nprint strings(source, 2, \"utf16be\")\nprint strings(source, 2, \"utf16le\")\nprint strings(truncated, 1, \"utf16be\")\nprint is_error(probe(truncated))\n",
     );
     let run = |engine: &str| {
         Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -10005,7 +10005,7 @@ fn utf16be_binary_text_matches_ast_vm_and_native() {
         String::from_utf8_lossy(&vm.stderr)
     );
     assert_eq!(ast.stdout, vm.stdout);
-    assert_eq!(vm.stdout, b"AB\nAB\nAB\nC\n[0, 5]\n[1, 6]\n[]\ntrue\n");
+    assert_eq!(vm.stdout, "AB\nAB\nAB䌀\nC\n[0, 1, 6]\n[0, 1, 6]\n[]\ntrue\n".as_bytes());
 
     let built = s.compile(&script);
     assert!(
@@ -10021,6 +10021,37 @@ fn utf16be_binary_text_matches_ast_vm_and_native() {
         String::from_utf8_lossy(&native.stderr)
     );
     assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
+fn unicode_utf16_binary_text_matches_all_execution_modes() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "unicode-utf16.gak",
+        "from std.binary import from_hex, snapshot, view, strings, read_text\nfrom std.result import message\nfn short(source: Source) -> Result<str> = read_text(source, 1, 3, \"utf16le\")\nfn broken(source: Source) -> Result<str> = read_text(source, 0, 4, \"utf16le\")\nlet little = snapshot(from_hex(\"00 41 00 bb 03 3d d8 00 de 5a 00 00 00\"))\nlet big = snapshot(from_hex(\"00 00 41 03 bb d8 3d de 00 00 5a 00 00\"))\nlet part = view(little, 1, 10)\nlet invalid = snapshot(from_hex(\"3d d8 41 00\"))\nprint strings(little, 4, \"utf16le\")\nprint strings(big, 4, \"utf16be\")\nprint read_text(little, 1, 4, \"utf16le\")\nprint read_text(big, 1, 4, \"utf16be\")\nprint read_text(part, 0, 4, \"utf16le\")\nprint message(short(little))\nprint message(broken(invalid))\n",
+    );
+    let expected = "[0, 1]\n[1]\nAλ😀Z\nAλ😀Z\nAλ😀Z\nLimitExceeded: text exceeds 3 characters\nno printable text at offset\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
 }
 
 #[test]

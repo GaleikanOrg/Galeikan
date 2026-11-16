@@ -103,6 +103,8 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 
 `crc32` is a conventional checksum; use SHA-256 when cryptographic collision resistance matters. Entropy and pattern hits are evidence for investigation, not automatic classification. Source size, string count, mutation count, and entropy-window count have implementation limits that return errors rather than silently truncating results.
 
+`strings` scans UTF-16LE/BE on both byte alignments and reports sorted candidate offsets. `read_text` decodes valid Unicode scalars, including surrogate pairs; malformed pairs end a printable run. As with any binary string scan, candidate offsets can include false positives.
+
 ### `std.formats`
 
 `probe(source)` produces a `Format` for supported PE or ELF data. Format accessors inspect file structures; they do not execute the file. The following is the current public accessor catalog, grouped by the object returned.

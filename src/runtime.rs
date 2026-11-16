@@ -9501,6 +9501,33 @@ fn utf8_printable_width(bytes: &[u8], offset: usize) -> Option<usize> {
     ((0x20..=0x7e).contains(&character) || character >= 0xa0).then_some(width)
 }
 
+fn utf16_printable(bytes: &[u8], offset: usize, big_endian: bool) -> Option<(char, usize)> {
+    let pair = bytes.get(offset..offset.checked_add(2)?)?;
+    let first = if big_endian {
+        u16::from_be_bytes([pair[0], pair[1]])
+    } else {
+        u16::from_le_bytes([pair[0], pair[1]])
+    };
+    let (scalar, width) = if (0xd800..=0xdbff).contains(&first) {
+        let pair = bytes.get(offset.checked_add(2)?..offset.checked_add(4)?)?;
+        let second = if big_endian {
+            u16::from_be_bytes([pair[0], pair[1]])
+        } else {
+            u16::from_le_bytes([pair[0], pair[1]])
+        };
+        if !(0xdc00..=0xdfff).contains(&second) {
+            return None;
+        }
+        (0x10000 + ((u32::from(first) - 0xd800) << 10)
+            + (u32::from(second) - 0xdc00), 4)
+    } else {
+        (u32::from(first), 2)
+    };
+    let character = char::from_u32(scalar)?;
+    ((0x20..=0x7e).contains(&scalar) || scalar >= 0xa0)
+        .then_some((character, width))
+}
+
 fn find_strings(
     bytes: &[u8],
     minimum: usize,
@@ -9528,6 +9555,34 @@ fn find_strings(
                 }
             }
         }
+        return Ok(hits);
+    }
+    if matches!(encoding, TextEncoding::Utf16Le | TextEncoding::Utf16Be) {
+        let big_endian = matches!(encoding, TextEncoding::Utf16Be);
+        let mut hits = Vec::new();
+        for alignment in 0..2 {
+            let mut offset = alignment;
+            while offset < bytes.len() {
+                let Some((_, width)) = utf16_printable(bytes, offset, big_endian) else {
+                    offset += 2;
+                    continue;
+                };
+                let start = offset;
+                let mut count = 1;
+                offset += width;
+                while let Some((_, width)) = utf16_printable(bytes, offset, big_endian) {
+                    count += 1;
+                    offset += width;
+                }
+                if count >= minimum {
+                    hits.push(start);
+                    if hits.len() > MAX_HITS {
+                        return Err("too many strings".into());
+                    }
+                }
+            }
+        }
+        hits.sort_unstable();
         return Ok(hits);
     }
     let mut hits = Vec::new();
@@ -9577,6 +9632,24 @@ fn read_text(
         }
         return std::str::from_utf8(&bytes[offset..cursor])
             .map(str::to_owned).map_err(|_| "invalid UTF-8 text".into());
+    }
+    if matches!(encoding, TextEncoding::Utf16Le | TextEncoding::Utf16Be) {
+        let big_endian = matches!(encoding, TextEncoding::Utf16Be);
+        let mut text = String::new();
+        let mut cursor = offset;
+        let mut count = 0;
+        while let Some((character, width)) = utf16_printable(bytes, cursor, big_endian) {
+            if count == max_chars {
+                return Err(format!("LimitExceeded: text exceeds {max_chars} characters"));
+            }
+            text.push(character);
+            count += 1;
+            cursor += width;
+        }
+        if text.is_empty() {
+            return Err("no printable text at offset".into());
+        }
+        return Ok(text);
     }
     let mut text = String::new();
     let mut cursor = offset;

@@ -185,6 +185,116 @@ int64_t gak_native_utf8_text_length(const uint8_t *data, uint64_t size,
     return (int64_t)(offset - start);
 }
 
+static uint64_t gak_utf16_printable(const uint8_t *data, uint64_t size,
+                                    uint64_t offset, int big_endian,
+                                    uint32_t *scalar) {
+    if (offset >= size || size - offset < 2) return 0;
+    uint32_t first = big_endian
+        ? ((uint32_t)data[offset] << 8) | data[offset + 1]
+        : ((uint32_t)data[offset + 1] << 8) | data[offset];
+    uint64_t width = 2;
+    if (first >= 0xd800 && first <= 0xdbff) {
+        if (size - offset < 4) return 0;
+        uint32_t second = big_endian
+            ? ((uint32_t)data[offset + 2] << 8) | data[offset + 3]
+            : ((uint32_t)data[offset + 3] << 8) | data[offset + 2];
+        if (second < 0xdc00 || second > 0xdfff) return 0;
+        first = 0x10000 + ((first - 0xd800) << 10) + (second - 0xdc00);
+        width = 4;
+    } else if (first >= 0xdc00 && first <= 0xdfff) return 0;
+    if (!((first >= 0x20 && first <= 0x7e) || first >= 0xa0)) return 0;
+    *scalar = first;
+    return width;
+}
+
+static int gak_compare_offset(const void *left, const void *right) {
+    uint64_t a, b;
+    memcpy(&a, left, sizeof(a));
+    memcpy(&b, right, sizeof(b));
+    return (a > b) - (a < b);
+}
+
+/* options stores the minimum character count in bits 0..15 and sets bit 16
+ * for big endian. list_box is NULL during the counting pass. */
+int64_t gak_native_utf16_strings_scan(const uint8_t *data, uint64_t size,
+                                       uint64_t options, uint8_t *list_box) {
+    uint64_t minimum = options & 0xffffu;
+    int big_endian = (options & 0x10000u) != 0;
+    uint64_t count = 0;
+    for (uint64_t alignment = 0; alignment < 2; ++alignment) {
+        uint64_t offset = alignment;
+        while (offset < size) {
+            uint32_t scalar;
+            uint64_t width = gak_utf16_printable(data, size, offset, big_endian, &scalar);
+            if (!width) { offset += 2; continue; }
+            uint64_t start = offset, characters = 0;
+            do {
+                ++characters;
+                offset += width;
+                width = gak_utf16_printable(data, size, offset, big_endian, &scalar);
+            } while (width);
+            if (characters >= minimum) {
+                if (count == 10000u) return -1;
+                if (list_box) memcpy(list_box + 8 + count * 8, &start, sizeof(start));
+                ++count;
+            }
+        }
+    }
+    if (list_box && count > 1)
+        qsort(list_box + 8, (size_t)count, sizeof(uint64_t), gak_compare_offset);
+    return (int64_t)count;
+}
+
+/* Returns UTF-8 byte length, -1 for max_chars overflow, or zero when the
+ * offset does not start printable UTF-16. NULL output measures only. */
+int64_t gak_native_utf16_text(const uint8_t *source, uint64_t offset,
+                               uint64_t options, uint8_t *output) {
+    const uint8_t *backing;
+    uint64_t start, end;
+    memcpy(&backing, source, sizeof(backing));
+    memcpy(&start, source + 16, sizeof(start));
+    memcpy(&end, source + 24, sizeof(end));
+    uint64_t size = end - start;
+    if (offset >= size) return 0;
+    const uint8_t *data = backing + 8 + start;
+    uint64_t max_chars = options & 0xffffu;
+    int big_endian = (options & 0x10000u) != 0;
+    uint64_t position = offset, characters = 0, written = 0;
+    uint32_t scalar;
+    uint64_t width;
+    while ((width = gak_utf16_printable(data, size, position, big_endian, &scalar)) != 0) {
+        if (characters == max_chars) return -1;
+        ++characters;
+        position += width;
+        if (scalar < 0x80) {
+            if (output) output[written] = (uint8_t)scalar;
+            ++written;
+        } else if (scalar < 0x800) {
+            if (output) {
+                output[written] = (uint8_t)(0xc0 | (scalar >> 6));
+                output[written + 1] = (uint8_t)(0x80 | (scalar & 0x3f));
+            }
+            written += 2;
+        } else if (scalar < 0x10000) {
+            if (output) {
+                output[written] = (uint8_t)(0xe0 | (scalar >> 12));
+                output[written + 1] = (uint8_t)(0x80 | ((scalar >> 6) & 0x3f));
+                output[written + 2] = (uint8_t)(0x80 | (scalar & 0x3f));
+            }
+            written += 3;
+        } else {
+            if (output) {
+                output[written] = (uint8_t)(0xf0 | (scalar >> 18));
+                output[written + 1] = (uint8_t)(0x80 | ((scalar >> 12) & 0x3f));
+                output[written + 2] = (uint8_t)(0x80 | ((scalar >> 6) & 0x3f));
+                output[written + 3] = (uint8_t)(0x80 | (scalar & 0x3f));
+            }
+            written += 4;
+        }
+    }
+    return (int64_t)written;
+}
+
 /* Returns 0 on success, 1 for a range error, 2 for invalid UTF-8. */
 int gak_native_read_utf8(const uint8_t *source, uint64_t offset, uint64_t length) {
     const uint8_t *backing;
