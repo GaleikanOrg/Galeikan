@@ -39,6 +39,16 @@ static size_t instruction_count;
 static size_t disassembly_instruction_count;
 static size_t boxed_text_bytes;
 static size_t boxed_list_bytes;
+static void gak_asm_fail(const char *message);
+
+const GakSourceHead *gak_native_asm_parent_source(const GakAsmInstruction *instruction) {
+    gak_asm_error = NULL;
+    if (!instruction || !instruction->source) {
+        gak_asm_fail("invalid Instruction");
+        return NULL;
+    }
+    return instruction->source;
+}
 
 static void gak_asm_release_all(void) {
     while (owned_instructions) {

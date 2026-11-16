@@ -5532,6 +5532,46 @@ fn native_asm_decode_matches_vm_and_installs_decoder_sidecar() {
 }
 
 #[test]
+fn native_asm_instruction_bytes_and_source_match_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "instruction-source.gak",
+        concat!(
+            "import std.binary\nimport std.bytes\nimport std.asm\n",
+            "let source = binary.snapshot(binary.from_hex(\"90 75 02 90 c3\"))\n",
+            "let branch = asm.decode(source, 1, 0x1001, 64)\n",
+            "let view: Source = asm.source(branch)\n",
+            "let lines = asm.reachable(source, 0, 0x1000u64, 64, 4)\n",
+            "let second = asm.at(lines, 1)\n",
+            "print bytes.to_hex(asm.bytes(branch))\n",
+            "print binary.size(view)\n",
+            "print binary.sha256(view)\n",
+            "print view\n",
+            "print bytes.to_hex(binary.extract(view, 0, binary.size(view)))\n",
+            "print bytes.to_hex(asm.bytes(second))\n",
+            "print binary.sha256(asm.source(second))\n",
+            "print asm.source(second)\n",
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn native_asm_preserves_u64_addresses_and_decoder_errors() {
     if !gcc_available() {
         return;

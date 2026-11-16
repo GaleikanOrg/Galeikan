@@ -6311,6 +6311,25 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if matches!(name, "source" | "bytes") {
+            if args.len() != 1 || self.expr(&args[0], scope)? != Scalar::Instruction {
+                return Err(format!("asm.{name} expects Instruction"));
+            }
+            let instruction_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", instruction_slot * 8).unwrap();
+            let source_slot = self.reserve_slot()?;
+            let size_slot = self.reserve_slot()?;
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, rax\n    call gak_native_asm_parent_source\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, 1\n    call gak_native_asm_number", self.arg0(), source_slot * 8, self.arg0(), instruction_slot * 8, self.arg1()).unwrap();
+            let size_ready = self.label();
+            writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {size_ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{size_ready}:\n    mov QWORD PTR [rbp-{}], rax", size_slot * 8).unwrap();
+            if name == "source" {
+                writeln!(self.code, "    mov rdx, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+16]\n    add r10, QWORD PTR [rdx+16]\n    mov r11, r10\n    add r11, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11+88]\n    mov QWORD PTR [rax+88], r11", source_slot * 8, instruction_slot * 8, size_slot * 8, source_slot * 8).unwrap();
+                return Ok(Scalar::Source);
+            }
+            writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    add rdx, QWORD PTR [r10+16]\n    mov rax, QWORD PTR [r10]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_bytes_extract", instruction_slot * 8, source_slot * 8, size_slot * 8).unwrap();
+            return Ok(Scalar::Bytes);
+        }
         if name == "reachable" && args.len() == 5 {
             if self.expr(&args[0], scope)? != Scalar::Source {
                 return Err("asm.reachable expects Source".into());
