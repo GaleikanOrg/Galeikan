@@ -901,6 +901,41 @@ fn generated_text_replacements_match_all_execution_modes() {
 }
 
 #[test]
+fn text_split_matches_ast_vm_bundle_and_native() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "split.gak",
+        "from std.text import split, repeat\nfrom std.result import message\nfn empty_separator() -> Result<List<str>> = split(\"abc\", \"\")\nfn oversized_separator() -> Result<List<str>> = split(\"abc\", repeat(\"x\", 1048576) + \"x\")\nfn too_many() -> Result<List<str>> = split(repeat(\"a\", 100000), \"a\")\nlet parts: List<str> = split(\"Aλ😀λZ\", \"λ\")\nlet repeated = split(\"aaaa\", \"aa\")\nprint len(parts)\nprint parts[0]\nprint parts[1]\nprint parts[2]\nprint len(repeated)\nprint repeated[0] == \"\"\nprint repeated[1] == \"\"\nprint repeated[2] == \"\"\nprint len(split(\"\", \",\"))\nprint split(\"\", \",\")[0] == \"\"\nprint split(\"A\\0B\", \"\\0\")[1]\nprint split(\"λ😀\", \"😀\")[1] == \"\"\nprint message(empty_separator())\nprint message(oversized_separator())\nprint message(too_many())\n",
+    );
+    let expected = "3\nA\n😀\nZ\n3\ntrue\ntrue\ntrue\n1\ntrue\nB\ntrue\ntext separator must not be empty\ntext separator exceeds 1048576 bytes\ntext split exceeds 100000 items\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;

@@ -314,6 +314,52 @@ finish:
     return result;
 }
 
+/* Returns the number of parts, -1 for an empty separator, -2 for too many
+ * parts, -3 for an oversized separator, or -4 for allocation failure. */
+int64_t gak_native_text_split_plan(const uint8_t *box,
+                                   const uint8_t *separator_box,
+                                   uint64_t *starts) {
+    const uint8_t *data = box + 8;
+    const uint8_t *separator = separator_box + 8;
+    uint64_t size = gak_text_size(box);
+    uint64_t separator_size = gak_text_size(separator_box);
+    if (separator_size == 0) return -1;
+    if (separator_size > 1048576u) return -3;
+    uint32_t local_failure[256];
+    uint32_t *failure = local_failure;
+    if (separator_size > sizeof(local_failure) / sizeof(local_failure[0])) {
+        failure = malloc((size_t)separator_size * sizeof(*failure));
+        if (!failure) return -4;
+    }
+    failure[0] = 0;
+    uint32_t matched = 0;
+    for (uint64_t index = 1; index < separator_size; ++index) {
+        while (matched && separator[index] != separator[matched])
+            matched = failure[matched - 1];
+        if (separator[index] == separator[matched]) ++matched;
+        failure[index] = matched;
+    }
+    uint64_t count = 1;
+    int64_t result = -2;
+    if (starts) starts[0] = 0;
+    matched = 0;
+    for (uint64_t index = 0; index < size; ++index) {
+        while (matched && data[index] != separator[matched])
+            matched = failure[matched - 1];
+        if (data[index] == separator[matched]) ++matched;
+        if (matched == separator_size) {
+            if (count == 100000u) goto finish;
+            if (starts) starts[count] = index + 1;
+            ++count;
+            matched = 0;
+        }
+    }
+    result = (int64_t)count;
+finish:
+    if (failure != local_failure) free(failure);
+    return result;
+}
+
 static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
                             const uint8_t *needle, uint64_t needle_size) {
     if (needle_size == 0) return 0;

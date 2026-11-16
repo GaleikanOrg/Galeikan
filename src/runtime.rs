@@ -5077,6 +5077,24 @@ impl Runtime {
                 }
                 Ok(Value::Str(value.replace(pattern, replacement)))
             }
+            ("split", [value, separator]) => {
+                let value = value.as_str()?;
+                let separator = separator.as_str()?;
+                if separator.is_empty() {
+                    return Err("text separator must not be empty".into());
+                }
+                if separator.len() > 1_048_576 {
+                    return Err("text separator exceeds 1048576 bytes".into());
+                }
+                let mut parts = Vec::new();
+                for part in value.split(separator) {
+                    if parts.len() >= MAX_LOOP_ITEMS {
+                        return Err(format!("text split exceeds {MAX_LOOP_ITEMS} items"));
+                    }
+                    parts.push(Value::Str(part.to_owned()));
+                }
+                Ok(Value::List(Arc::new(parts), Some(ResultKind::Str)))
+            }
             ("find", [value, needle]) => {
                 let value = value.as_str()?;
                 let needle = needle.as_str()?;
@@ -9060,6 +9078,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("text", "length" | "byte_length") => (&[Str], Int),
         ("text", "repeat") => (&[Str, Int], Str),
         ("text", "replace") => (&[Str, Str, Str], Str),
+        ("text", "split") => (&[Str, Str], Type::List(Some(ResultKind::Str))),
         ("text", "find") => (&[Str, Str], Int),
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),
         ("text", "slice") => (&[Str, Int, Int], Str),

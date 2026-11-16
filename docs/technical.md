@@ -81,6 +81,8 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 | Function | Current purpose |
 | --- | --- |
 | `length`, `byte_length` | Count Unicode characters or UTF-8 bytes. |
+| `repeat`, `replace` | Repeat text within the result-size limit, or replace all non-overlapping substring matches. |
+| `split` | Split text on a nonempty separator into `List<str>`, retaining empty leading, trailing, and adjacent fields; at most 100,000 fields. |
 | `find`, `contains` | Find a substring or test whether it occurs. |
 | `starts_with`, `ends_with` | Test a text prefix or suffix. |
 | `slice` | Take a checked character-indexed substring. |

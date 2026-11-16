@@ -329,6 +329,9 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_text_slice_range", "text slice out of range"),
     ("gak_text_search_alloc", "text search allocation failed"),
     ("gak_text_replace_pattern", "replacement pattern exceeds 1048576 bytes"),
+    ("gak_text_split_empty", "text separator must not be empty"),
+    ("gak_text_split_pattern", "text separator exceeds 1048576 bytes"),
+    ("gak_text_split_limit", "text split exceeds 100000 items"),
     ("gak_bytes_index", "byte index out of range"),
     ("gak_slice_start", "slice start must not be negative"),
     ("gak_slice_end", "slice end must not be negative"),
@@ -7434,6 +7437,39 @@ impl Codegen {
                 writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_text_replace\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jne gak_alloc_failure\n    mov rax, r10", result_slot * 8, self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8, self.arg3(), result_slot * 8).unwrap();
                 Ok(Scalar::Str)
             }
+            ("split", [value, separator]) => {
+                if self.expr(value, scope)? != Scalar::Str {
+                    return Err("text.split expects str and str".into());
+                }
+                let value_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
+                if self.expr(separator, scope)? != Scalar::Str {
+                    return Err("text.split expects str and str".into());
+                }
+                let separator_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", separator_slot * 8).unwrap();
+                let value_offset = value_slot * 8;
+                let separator_offset = separator_slot * 8;
+                writeln!(self.code, "    mov {}, QWORD PTR [rbp-{value_offset}]\n    mov {}, QWORD PTR [rbp-{separator_offset}]\n    xor {}, {}\n    call gak_native_text_split_plan\n    cmp rax, -1\n    je gak_text_split_empty\n    cmp rax, -2\n    je gak_text_split_limit\n    cmp rax, -3\n    je gak_text_split_pattern\n    cmp rax, -4\n    je gak_text_search_alloc\n    call gak_alloc_list", self.arg0(), self.arg1(), self.arg2(), self.arg2()).unwrap();
+                let list_slot = self.reserve_slot()?;
+                let list_offset = list_slot * 8;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{list_offset}], rax\n    mov {}, QWORD PTR [rbp-{value_offset}]\n    mov {}, QWORD PTR [rbp-{separator_offset}]\n    lea {}, [rax+8]\n    call gak_native_text_split_plan\n    mov r10, QWORD PTR [rbp-{list_offset}]\n    cmp rax, QWORD PTR [r10]\n    jne gak_text_search_alloc", self.arg0(), self.arg1(), self.arg2()).unwrap();
+                let next_slot = self.reserve_slot()?;
+                let index_slot = self.reserve_slot()?;
+                let start_slot = self.reserve_slot()?;
+                let length_slot = self.reserve_slot()?;
+                let part_slot = self.reserve_slot()?;
+                let next_offset = next_slot * 8;
+                let index_offset = index_slot * 8;
+                let start_offset = start_slot * 8;
+                let length_offset = length_slot * 8;
+                let part_offset = part_slot * 8;
+                let loop_label = self.label();
+                let done = self.label();
+                writeln!(self.code, "    mov r11, QWORD PTR [rbp-{value_offset}]\n    mov r10, QWORD PTR [r11]\n    mov r11, QWORD PTR [rbp-{separator_offset}]\n    add r10, QWORD PTR [r11]\n    mov QWORD PTR [rbp-{next_offset}], r10\n    mov r10, QWORD PTR [rbp-{list_offset}]\n    mov r10, QWORD PTR [r10]\n    mov QWORD PTR [rbp-{index_offset}], r10\n{loop_label}:\n    mov r10, QWORD PTR [rbp-{index_offset}]\n    test r10, r10\n    jz {done}\n    dec r10\n    mov QWORD PTR [rbp-{index_offset}], r10\n    mov r11, QWORD PTR [rbp-{list_offset}]\n    mov r10, QWORD PTR [r11+r10*8+8]\n    mov QWORD PTR [rbp-{start_offset}], r10\n    mov rax, QWORD PTR [rbp-{next_offset}]\n    mov r11, QWORD PTR [rbp-{separator_offset}]\n    sub rax, QWORD PTR [r11]\n    sub rax, r10\n    mov QWORD PTR [rbp-{length_offset}], rax\n    call gak_alloc_str\n    mov QWORD PTR [rbp-{part_offset}], rax").unwrap();
+                writeln!(self.code, "    lea {}, [rax+8]\n    mov r11, QWORD PTR [rbp-{value_offset}]\n    mov r10, QWORD PTR [rbp-{start_offset}]\n    lea {}, [r11+r10+8]\n    mov {}, QWORD PTR [rbp-{length_offset}]\n    call memcpy\n    mov r10, QWORD PTR [rbp-{list_offset}]\n    mov r11, QWORD PTR [rbp-{index_offset}]\n    mov rax, QWORD PTR [rbp-{part_offset}]\n    mov QWORD PTR [r10+r11*8+8], rax\n    mov r10, QWORD PTR [rbp-{start_offset}]\n    mov QWORD PTR [rbp-{next_offset}], r10\n    jmp {loop_label}\n{done}:\n    mov rax, QWORD PTR [rbp-{list_offset}]", self.arg0(), self.arg1(), self.arg2()).unwrap();
+                Ok(Scalar::ListStr)
+            }
             ("find" | "contains" | "starts_with" | "ends_with", [value, needle]) => {
                 if self.expr(value, scope)? != Scalar::Str {
                     return Err(format!("text.{name} expects str arguments"));
@@ -8517,6 +8553,7 @@ impl Codegen {
         );
         out.push_str("gak_text_search_alloc_msg: .ascii \"text search allocation failed\\n\"\ngak_text_search_alloc_msg_end:\n");
         out.push_str("gak_text_replace_pattern_msg: .ascii \"replacement pattern exceeds 1048576 bytes\\n\"\ngak_text_replace_pattern_msg_end:\n");
+        out.push_str("gak_text_split_empty_msg: .ascii \"text separator must not be empty\\n\"\ngak_text_split_empty_msg_end:\ngak_text_split_pattern_msg: .ascii \"text separator exceeds 1048576 bytes\\n\"\ngak_text_split_pattern_msg_end:\ngak_text_split_limit_msg: .ascii \"text split exceeds 100000 items\\n\"\ngak_text_split_limit_msg_end:\n");
         out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_base64_invalid_msg: .ascii \"invalid base64 data\\n\"\ngak_base64_invalid_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str("gak_slice_start_msg: .ascii \"slice start must not be negative\\n\"\ngak_slice_start_msg_end:\ngak_slice_end_msg: .ascii \"slice end must not be negative\\n\"\ngak_slice_end_msg_end:\ngak_slice_bounds_msg: .ascii \"slice out of range\\n\"\ngak_slice_bounds_msg_end:\n");
         out.push_str(".p2align 2\ngak_sha_iv:\n");
@@ -9674,6 +9711,9 @@ gak_cli_utf8_done:
             ("gak_text_index", "gak_text_index_msg"),
             ("gak_text_search_alloc", "gak_text_search_alloc_msg"),
             ("gak_text_replace_pattern", "gak_text_replace_pattern_msg"),
+            ("gak_text_split_empty", "gak_text_split_empty_msg"),
+            ("gak_text_split_pattern", "gak_text_split_pattern_msg"),
+            ("gak_text_split_limit", "gak_text_split_limit_msg"),
             ("gak_output_failure", "gak_output_failure_msg"),
             ("gak_result_limit", "gak_result_limit_msg"),
             ("gak_hex_invalid", "gak_hex_invalid_msg"),
