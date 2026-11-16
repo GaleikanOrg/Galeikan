@@ -10286,6 +10286,45 @@ fn native_binary_read_cstring_matches_vm_and_captures_errors() {
 }
 
 #[test]
+fn latin1_bytes_conversion_matches_all_execution_modes() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "bytes-latin1.gak",
+        "from std.bytes import from_hex, from_latin1, to_hex, to_latin1\nfrom std.result import message\nfrom std.text import repeat\nfn encode(text: str) -> Result<bytes> = from_latin1(text)\nlet raw = from_hex(\"00 7f 80 9f c0 ff\")\nprint to_hex(from_latin1(\"Aéÿ\\x00\"))\nprint to_hex(from_latin1(to_latin1(raw)))\nprint to_latin1(from_latin1(\"Aéÿ\\x00\")) == \"Aéÿ\\x00\"\nprint message(encode(\"Ā\"))\nprint message(encode(\"😀\"))\nprint len(from_latin1(repeat(\"x\", 1048576)))\nprint message(encode(repeat(\"x\", 1048576) + \"x\"))\n",
+    );
+    let expected = b"41e9ff00\n007f809fc0ff\ntrue\ncharacter not representable in Latin-1\ncharacter not representable in Latin-1\n1048576\nLimitExceeded: bytes result exceeds 1048576 bytes\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = Command::new(galeikan)
+        .arg("exec")
+        .arg(script.with_extension("gakb"))
+        .output()
+        .unwrap();
+    assert!(bundle.status.success(), "{}", String::from_utf8_lossy(&bundle.stderr));
+    assert_eq!(bundle.stdout, expected, "bundle");
+    let compiled = s.compile(&script);
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected, "native");
+}
+
+#[test]
 fn utf16_bytes_conversion_matches_all_execution_modes() {
     if !gcc_available() {
         return;

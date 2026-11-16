@@ -203,6 +203,41 @@ int64_t gak_native_utf16_convert(const uint8_t *box, int64_t mode, uint8_t *outp
     return (int64_t)written;
 }
 
+/* mode 0 encodes Unicode text as Latin-1; mode 1 decodes bytes to UTF-8. */
+int64_t gak_native_latin1_convert(const uint8_t *box, int64_t mode, uint8_t *output) {
+    uint64_t size = 0, written = 0;
+    memcpy(&size, box, sizeof size);
+    const uint8_t *data = box + 8;
+    if (mode == 0) {
+        if (!gak_utf8_valid(data, size)) return -3;
+        for (uint64_t i = 0; i < size;) {
+            uint8_t first = data[i++], byte;
+            if (first < 0x80) byte = first;
+            else if (first == 0xc2 || first == 0xc3) {
+                byte = (uint8_t)(0x80 | ((first & 1) << 6) | (data[i++] & 0x3f));
+            } else return -1;
+            if (written == 1048576) return -2;
+            if (output) output[written] = byte;
+            ++written;
+        }
+    } else {
+        for (uint64_t i = 0; i < size; ++i) {
+            uint8_t byte = data[i];
+            if (byte < 0x80) {
+                if (output) output[written] = byte;
+                ++written;
+            } else {
+                if (output) {
+                    output[written] = (uint8_t)(0xc0 | (byte >> 6));
+                    output[written + 1] = (uint8_t)(0x80 | (byte & 0x3f));
+                }
+                written += 2;
+            }
+        }
+    }
+    return (int64_t)written;
+}
+
 /* Width of one printable UTF-8 scalar. C0/C1 controls and invalid sequences
  * terminate a candidate string; other non-ASCII scalars are retained. */
 static uint64_t gak_utf8_printable_width(const uint8_t *data, uint64_t size,

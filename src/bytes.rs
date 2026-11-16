@@ -336,6 +336,27 @@ pub fn to_utf16(data: &[u8], big_endian: bool) -> Result<String, String> {
         .collect()
 }
 
+pub fn from_latin1(text: &str) -> Result<Vec<u8>, String> {
+    let mut result = Vec::with_capacity(text.len().min(MAX_BYTES_VALUE));
+    for scalar in text.chars() {
+        let code = u32::from(scalar);
+        if code > 255 {
+            return Err("character not representable in Latin-1".into());
+        }
+        if result.len() == MAX_BYTES_VALUE {
+            return Err(format!(
+                "LimitExceeded: bytes result exceeds {MAX_BYTES_VALUE} bytes"
+            ));
+        }
+        result.push(code as u8);
+    }
+    Ok(result)
+}
+
+pub fn to_latin1(data: &[u8]) -> String {
+    data.iter().map(|byte| char::from(*byte)).collect()
+}
+
 pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,

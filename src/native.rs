@@ -449,6 +449,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ),
     ("gak_base64_invalid", "invalid base64 data"),
     ("gak_utf16_invalid", "invalid UTF-16 data"),
+    ("gak_latin1_unrepresentable", "character not representable in Latin-1"),
     ("gak_repeat_negative", "repeat count must not be negative"),
     ("gak_repeat_count_limit", "repeat count exceeds 1048576"),
     ("gak_xor_empty_key", "xor key must not be empty"),
@@ -7072,6 +7073,19 @@ impl Codegen {
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
         match (name, args) {
+            ("from_latin1" | "to_latin1", [input]) => {
+                let encode = name == "from_latin1";
+                let expected = if encode { Scalar::Str } else { Scalar::Bytes };
+                if self.expr(input, scope)? != expected {
+                    return Err(format!("bytes.{name} expects {}", if encode { "str" } else { "bytes" }));
+                }
+                self.uses_text = true;
+                let mode = i32::from(!encode);
+                let input_slot = self.reserve_slot()?;
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    mov {}, {mode}\n    xor {}, {}\n    call gak_native_latin1_convert\n    cmp rax, -1\n    je gak_latin1_unrepresentable\n    cmp rax, -2\n    je gak_bytes_limit\n    cmp rax, -3\n    je gak_cstring_utf8\n    test rax, rax\n    js gak_latin1_unrepresentable\n    call {}\n    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, {mode}\n    lea {}, [rax+8]\n    call gak_native_latin1_convert\n    mov r10, QWORD PTR [rbp-{}]\n    cmp rax, QWORD PTR [r10]\n    jne gak_latin1_unrepresentable\n    mov rax, r10", input_slot * 8, self.arg0(), self.arg1(), self.arg2(), self.arg2(), if encode { "gak_alloc_bytes" } else { "gak_alloc_str" }, result_slot * 8, self.arg0(), input_slot * 8, self.arg1(), self.arg2(), result_slot * 8).unwrap();
+                Ok(if encode { Scalar::Bytes } else { Scalar::Str })
+            }
             ("from_utf16le" | "from_utf16be" | "to_utf16le" | "to_utf16be", [input]) => {
                 let encode = name.starts_with("from_");
                 let expected = if encode { Scalar::Str } else { Scalar::Bytes };
@@ -8615,7 +8629,7 @@ impl Codegen {
         out.push_str("gak_text_replace_pattern_msg: .ascii \"replacement pattern exceeds 1048576 bytes\\n\"\ngak_text_replace_pattern_msg_end:\n");
         out.push_str("gak_text_split_empty_msg: .ascii \"text separator must not be empty\\n\"\ngak_text_split_empty_msg_end:\ngak_text_split_pattern_msg: .ascii \"text separator exceeds 1048576 bytes\\n\"\ngak_text_split_pattern_msg_end:\ngak_text_split_limit_msg: .ascii \"text split exceeds 100000 items\\n\"\ngak_text_split_limit_msg_end:\n");
         out.push_str("gak_text_join_limit_msg: .ascii \"text join exceeds 100000 items\\n\"\ngak_text_join_limit_msg_end:\n");
-        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_base64_invalid_msg: .ascii \"invalid base64 data\\n\"\ngak_base64_invalid_msg_end:\ngak_utf16_invalid_msg: .ascii \"invalid UTF-16 data\\n\"\ngak_utf16_invalid_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
+        out.push_str("gak_hex_digits: .ascii \"0123456789abcdef\"\ngak_search_domain: .ascii \"galeikan.search.v1\\0\"\ngak_hex_invalid_msg: .ascii \"invalid hex data\\n\"\ngak_hex_invalid_msg_end:\ngak_hex_odd_msg: .ascii \"hex data needs an even number of digits\\n\"\ngak_hex_odd_msg_end:\ngak_hex_limit_msg: .ascii \"hex data exceeds 1048576 bytes\\n\"\ngak_hex_limit_msg_end:\ngak_bytes_limit_msg: .ascii \"LimitExceeded: bytes result exceeds 1048576 bytes\\n\"\ngak_bytes_limit_msg_end:\ngak_base64_invalid_msg: .ascii \"invalid base64 data\\n\"\ngak_base64_invalid_msg_end:\ngak_utf16_invalid_msg: .ascii \"invalid UTF-16 data\\n\"\ngak_utf16_invalid_msg_end:\ngak_latin1_unrepresentable_msg: .ascii \"character not representable in Latin-1\\n\"\ngak_latin1_unrepresentable_msg_end:\ngak_bytes_index_msg: .ascii \"byte index out of range\\n\"\ngak_bytes_index_msg_end:\n");
         out.push_str("gak_slice_start_msg: .ascii \"slice start must not be negative\\n\"\ngak_slice_start_msg_end:\ngak_slice_end_msg: .ascii \"slice end must not be negative\\n\"\ngak_slice_end_msg_end:\ngak_slice_bounds_msg: .ascii \"slice out of range\\n\"\ngak_slice_bounds_msg_end:\n");
         out.push_str(".p2align 2\ngak_sha_iv:\n");
         for value in SHA256_IV {
@@ -9805,6 +9819,7 @@ gak_cli_utf8_done:
             ("gak_bytes_limit", "gak_bytes_limit_msg"),
             ("gak_base64_invalid", "gak_base64_invalid_msg"),
             ("gak_utf16_invalid", "gak_utf16_invalid_msg"),
+            ("gak_latin1_unrepresentable", "gak_latin1_unrepresentable_msg"),
             ("gak_bytes_index", "gak_bytes_index_msg"),
             ("gak_slice_start", "gak_slice_start_msg"),
             ("gak_slice_end", "gak_slice_end_msg"),
