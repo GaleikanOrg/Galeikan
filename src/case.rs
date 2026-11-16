@@ -1,4 +1,5 @@
 use crate::bytes::hex_bytes;
+use crate::file_access;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -110,9 +111,15 @@ pub fn write_archive<'a>(
 }
 
 pub fn verify(path: &Path) -> Result<(usize, usize), String> {
+    let parent = path.parent().ok_or("case path has no parent directory")?;
+    let parent = if parent.as_os_str().is_empty() { Path::new(".") } else { parent };
+    let root = parent
+        .canonicalize()
+        .map_err(|e| format!("cannot inspect case directory {}: {e}", parent.display()))?;
     let mut bytes = Vec::new();
-    fs::File::open(path)
+    file_access::open_authorized(path, std::slice::from_ref(&root))
         .map_err(|e| format!("cannot read case {}: {e}", path.display()))?
+        .0
         .take((MAX_DOCUMENT + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("cannot read case {}: {e}", path.display()))?;
@@ -176,8 +183,9 @@ pub fn verify(path: &Path) -> Result<(usize, usize), String> {
             ));
         }
         let mut data = Vec::new();
-        fs::File::open(&blob_path)
+        file_access::open_authorized(&blob_path, std::slice::from_ref(&root))
             .map_err(|e| format!("cannot read case blob {}: {e}", blob_path.display()))?
+            .0
             .take((size as u64) + 1)
             .read_to_end(&mut data)
             .map_err(|e| format!("cannot read case blob {}: {e}", blob_path.display()))?;

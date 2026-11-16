@@ -122,6 +122,42 @@ fn project_manifest_and_lock_reject_fifos_without_waiting_for_a_writer() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn case_verifier_rejects_fifo_without_waiting_for_a_writer() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::{Duration, Instant};
+
+    let s = Sandbox::new();
+    let path = s.dir.join("research.gakcase");
+    let fifo = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo is NUL-terminated and names a path in the test sandbox.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("verify-case")
+        .arg(&path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            let output = child.wait_with_output().unwrap();
+            assert!(!output.status.success());
+            assert!(stderr(&output).contains("not a regular file"), "{}", stderr(&output));
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("verify-case blocked while opening a FIFO");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn register_and_flag_access_match_ast_vm_and_bundle() {
     let s = Sandbox::new();
