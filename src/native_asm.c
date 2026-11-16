@@ -18,6 +18,8 @@ typedef struct GakAsmInstruction {
     const GakSourceHead *source;
     uint64_t offset;
     void *decoded;
+    uint64_t address_kind;
+    uint64_t address;
 } GakAsmInstruction;
 
 typedef struct GakAsmDisassembly {
@@ -163,6 +165,53 @@ GakAsmInstruction *gak_native_asm_decode(const GakSourceHead *source,
     instruction->source = source;
     instruction->offset = (uint64_t)offset;
     instruction->decoded = decoded;
+    instruction->address_kind = 0;
+    instruction->address = 0;
+    instruction->next_owned = owned_instructions;
+    owned_instructions = instruction;
+    instruction_count++;
+    return instruction;
+}
+
+/* info comes from gak_native_formats_x86_entry_info. */
+GakAsmInstruction *gak_native_asm_entry(const uint64_t info[6]) {
+    gak_asm_error = NULL;
+    if (!info) { gak_asm_fail("invalid x86 entry window"); return NULL; }
+    const GakSourceHead *source = (const GakSourceHead *)(uintptr_t)info[0];
+    if (!source || !source->backing || source->end < source->start ||
+        source->end > *(const uint64_t *)source->backing ||
+        info[1] >= info[2] || info[2] > source->end - source->start ||
+        (info[3] != 32 && info[3] != 64) || (info[5] != 1 && info[5] != 2)) {
+        gak_asm_fail("invalid x86 entry window"); return NULL;
+    }
+    if (instruction_count >= 100000) {
+        gak_asm_fail("native Instruction count exceeds 100000"); return NULL;
+    }
+    const uint8_t *bytes = source->backing + sizeof(uint64_t) + source->start + info[1];
+    uint8_t error[256] = {0};
+    void *decoded = NULL;
+    if (galeikan_asm_decode(bytes, (size_t)(info[2] - info[1]), 0, info[4],
+                            (uint32_t)info[3], &decoded, error, sizeof error)) {
+        gak_asm_fail((const char *)error); return NULL;
+    }
+    GakAsmInstruction *instruction = malloc(sizeof *instruction);
+    if (!instruction) {
+        galeikan_asm_instruction_free(decoded);
+        gak_asm_fail("native allocation failed"); return NULL;
+    }
+    if (!exit_handler_registered) {
+        if (atexit(gak_asm_release_all)) {
+            free(instruction);
+            galeikan_asm_instruction_free(decoded);
+            gak_asm_fail("cannot register decoder cleanup"); return NULL;
+        }
+        exit_handler_registered = 1;
+    }
+    instruction->source = source;
+    instruction->offset = info[1];
+    instruction->decoded = decoded;
+    instruction->address_kind = info[5];
+    instruction->address = info[4];
     instruction->next_owned = owned_instructions;
     owned_instructions = instruction;
     instruction_count++;
@@ -271,6 +320,8 @@ GakAsmInstruction *gak_native_asm_at(const GakAsmDisassembly *disassembly,
     instruction->source = disassembly->source;
     instruction->offset = (uint64_t)offset;
     instruction->decoded = decoded;
+    instruction->address_kind = 0;
+    instruction->address = 0;
     instruction->next_owned = owned_instructions;
     owned_instructions = instruction;
     instruction_count++;

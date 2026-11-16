@@ -1279,6 +1279,88 @@ void *gak_native_formats_entry_view(const void *value, int64_t count) {
         : gak_elf_va(format, format->entry, (uint64_t)count);
 }
 
+/* out: Source, file start, file end, x86 bitness, entry address, address kind. */
+int gak_native_formats_x86_entry_info(const void *value, uint64_t out[6]) {
+    const GakFormat *format = value;
+    gak_formats_error = NULL;
+    if (!format || !out) {
+        gak_format_fail("invalid Format for asm.entry"); return 0;
+    }
+    if (!((format->kind == 1 && !format->big_endian &&
+           ((format->bits == 32 && format->machine == 0x014c) ||
+            (format->bits == 64 && format->machine == 0x8664))) ||
+          (format->kind == 2 && !format->big_endian &&
+           ((format->bits == 32 && format->machine == 3) ||
+            (format->bits == 64 && format->machine == 62))))) {
+        gak_format_fail("asm.entry supports only matching little-endian x86 PE/ELF images");
+        return 0;
+    }
+    GakFormatRange *first = format->kind == 1
+        ? gak_pe_rva(format, format->entry, 1)
+        : gak_elf_va(format, format->entry, 1);
+    if (!first) return 0;
+    uint64_t start = first->start;
+    format_memory -= sizeof(*first);
+    free(first);
+    const GakSourceHead *source = format->source;
+    const uint8_t *bytes = source->backing + 8 + source->start;
+    uint64_t remaining = 0;
+    int found = 0;
+    if (format->kind == 1) {
+        for (uint64_t index = 0; index < format->sections; index++) {
+            uint64_t at = format->section_table + index * 40u;
+            uint64_t virtual_size = gak_number(bytes, at + 8, 4, 0);
+            uint64_t va = gak_number(bytes, at + 12, 4, 0);
+            uint64_t raw_size = gak_number(bytes, at + 16, 4, 0);
+            uint64_t size = virtual_size > raw_size ? virtual_size : raw_size;
+            if (format->entry < va || format->entry - va >= size) continue;
+            if (!(gak_number(bytes, at + 36, 4, 0) & 0x20000000u)) {
+                gak_format_fail("PE entry section is not executable"); return 0;
+            }
+            remaining = raw_size - (format->entry - va);
+            found = 1;
+            break;
+        }
+        if (!found) { gak_format_fail("PE entry is not in an executable section"); return 0; }
+    } else {
+        unsigned width = format->bits == 32 ? 4 : 8;
+        for (uint64_t index = 0; index < format->program_count; index++) {
+            uint64_t at = format->program_table + index * format->program_stride;
+            if (gak_number(bytes, at, 4, 0) != 1) continue;
+            uint64_t va = gak_number(bytes, at + (width == 4 ? 8 : 16), width, 0);
+            uint64_t memory_size = gak_number(bytes, at + (width == 4 ? 20 : 40), width, 0);
+            if (format->entry < va || format->entry - va >= memory_size) continue;
+            uint64_t flags = gak_number(bytes, at + (width == 4 ? 24 : 4), 4, 0);
+            if (!(flags & 1)) {
+                gak_format_fail("ELF entry load segment is not executable"); return 0;
+            }
+            uint64_t raw_size = gak_number(bytes, at + (width == 4 ? 16 : 32), width, 0);
+            remaining = raw_size - (format->entry - va);
+            found = 1;
+            break;
+        }
+        if (!found) { gak_format_fail("ELF entry is not in an executable load segment"); return 0; }
+    }
+    uint64_t captured = source->end - source->start - start;
+    if (remaining > captured) remaining = captured;
+    if (remaining > 15) remaining = 15;
+    GakFormatRange *window = format->kind == 1
+        ? gak_pe_rva(format, format->entry, remaining)
+        : gak_elf_va(format, format->entry, remaining);
+    if (!window) return 0;
+    int valid = window->start == start && window->end == start + remaining;
+    format_memory -= sizeof(*window);
+    free(window);
+    if (!valid) { gak_format_fail("entry file range is not contiguous"); return 0; }
+    out[0] = (uint64_t)(uintptr_t)source;
+    out[1] = start;
+    out[2] = start + remaining;
+    out[3] = format->bits;
+    out[4] = format->entry;
+    out[5] = format->kind;
+    return 1;
+}
+
 void *gak_native_formats_overlay(const void *value) {
     const GakFormat *format = value;
     gak_formats_error = NULL;

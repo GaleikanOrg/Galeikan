@@ -5529,6 +5529,7 @@ fn native_asm_decode_matches_vm_and_installs_decoder_sidecar() {
     let native = Command::new(executable).output().unwrap();
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
     assert_eq!(native.stdout, vm.stdout);
+
 }
 
 #[test]
@@ -5569,6 +5570,102 @@ fn native_asm_instruction_bytes_and_source_match_vm() {
     let native = Command::new(executable).output().unwrap();
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
     assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
+fn native_asm_entry_matches_vm_for_executable_pe_and_elf() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let section = 0x80 + 4 + 20 + 0xf0;
+    let payload = section + 40;
+    let mut pe = vec![0_u8; payload + 12];
+    pe[0..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    pe[0x84..0x86].copy_from_slice(&0x8664_u16.to_le_bytes());
+    pe[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+    pe[0x94..0x96].copy_from_slice(&0xf0_u16.to_le_bytes());
+    pe[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+    pe[0xa8..0xac].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section..section + 5].copy_from_slice(b".text");
+    pe[section + 8..section + 12].copy_from_slice(&7_u32.to_le_bytes());
+    pe[section + 12..section + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+    pe[section + 16..section + 20].copy_from_slice(&7_u32.to_le_bytes());
+    pe[section + 20..section + 24].copy_from_slice(&(payload as u32).to_le_bytes());
+    pe[section + 36..section + 40].copy_from_slice(&0x6000_0020_u32.to_le_bytes());
+    pe[payload..payload + 5].copy_from_slice(b"\xe8\x02\0\0\0");
+    pe[payload + 5..payload + 7].copy_from_slice(b"\x90\x90");
+
+    let mut elf = vec![0_u8; 0x110];
+    elf[0..4].copy_from_slice(b"\x7fELF");
+    elf[4..7].copy_from_slice(&[2, 1, 1]);
+    elf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&0x401000_u64.to_le_bytes());
+    elf[32..40].copy_from_slice(&64_u64.to_le_bytes());
+    elf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    elf[56..58].copy_from_slice(&1_u16.to_le_bytes());
+    elf[64..68].copy_from_slice(&1_u32.to_le_bytes());
+    elf[68..72].copy_from_slice(&5_u32.to_le_bytes());
+    elf[72..80].copy_from_slice(&0x100_u64.to_le_bytes());
+    elf[80..88].copy_from_slice(&0x401000_u64.to_le_bytes());
+    elf[96..104].copy_from_slice(&7_u64.to_le_bytes());
+    elf[104..112].copy_from_slice(&7_u64.to_le_bytes());
+    elf[0x100..0x105].copy_from_slice(b"\xe8\x02\0\0\0");
+    elf[0x105..0x107].copy_from_slice(b"\x90\x90");
+
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let script = s.write(
+        "entry.gak",
+        &format!(
+            "import std.binary\nimport std.formats\nimport std.asm\nimport std.bytes\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_instruction = asm.entry(pe)\nlet elf_instruction = asm.entry(elf)\nprint asm.offset(pe_instruction)\nprint asm.address_u64(pe_instruction)\nprint asm.target_u64(pe_instruction)\nprint bytes.to_hex(asm.bytes(pe_instruction))\nprint asm.source(pe_instruction)\nprint pe_instruction\nprint asm.offset(elf_instruction)\nprint asm.address_u64(elf_instruction)\nprint asm.target_u64(elf_instruction)\nprint bytes.to_hex(asm.bytes(elf_instruction))\nprint asm.source(elf_instruction)\nprint elf_instruction\n",
+            hex(&pe), hex(&elf)
+        ),
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+
+    let mut pe_noexec = pe.clone();
+    pe_noexec[section + 36..section + 40].copy_from_slice(&0x4000_0040_u32.to_le_bytes());
+    let mut elf_noexec = elf.clone();
+    elf_noexec[68..72].copy_from_slice(&4_u32.to_le_bytes());
+    let mut elf_other_machine = elf.clone();
+    elf_other_machine[18..20].copy_from_slice(&183_u16.to_le_bytes());
+    for (name, bytes, expected) in [
+        ("pe-noexec.gak", pe_noexec, "PE entry section is not executable"),
+        ("elf-noexec.gak", elf_noexec, "ELF entry load segment is not executable"),
+        ("elf-other-machine.gak", elf_other_machine,
+         "asm.entry supports only matching little-endian x86 PE/ELF images"),
+    ] {
+        let invalid = s.write(name, &format!(
+            "import std.binary\nimport std.formats\nimport std.asm\nlet report = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nprint asm.entry(report)\n",
+            hex(&bytes)
+        ));
+        let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&invalid).args(["--engine", "vm"]).output().unwrap();
+        assert!(!vm.status.success());
+        assert!(String::from_utf8_lossy(&vm.stderr).contains(expected));
+        let built = s.compile(&invalid);
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(!native.status.success());
+        assert!(String::from_utf8_lossy(&native.stderr).contains(expected));
+    }
 }
 
 #[test]
