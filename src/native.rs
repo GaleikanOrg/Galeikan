@@ -7403,6 +7403,21 @@ impl Codegen {
                 }
                 Ok(Scalar::Int)
             }
+            ("repeat", [value, count]) => {
+                if self.expr(value, scope)? != Scalar::Str {
+                    return Err("text.repeat expects str and i64".into());
+                }
+                let value_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", value_slot * 8).unwrap();
+                if self.expr(count, scope)? != Scalar::Int {
+                    return Err("text.repeat expects str and i64".into());
+                }
+                let count_slot = self.reserve_slot()?;
+                writeln!(self.code, "    test rax, rax\n    js gak_repeat_negative\n    cmp rax, 1048576\n    ja gak_repeat_count_limit\n    mov QWORD PTR [rbp-{}], rax\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11]\n    imul r10, rax\n    jo gak_str_limit\n    cmp r10, 67108856\n    ja gak_str_limit\n    mov rax, r10\n    call gak_alloc_str", count_slot * 8, value_slot * 8).unwrap();
+                let result_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rax+8]\n    call gak_native_text_repeat\n    mov rax, QWORD PTR [rbp-{}]", result_slot * 8, self.arg0(), value_slot * 8, self.arg1(), count_slot * 8, self.arg2(), result_slot * 8).unwrap();
+                Ok(Scalar::Str)
+            }
             ("find" | "contains" | "starts_with" | "ends_with", [value, needle]) => {
                 if self.expr(value, scope)? != Scalar::Str {
                     return Err(format!("text.{name} expects str arguments"));

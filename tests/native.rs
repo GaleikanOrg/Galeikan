@@ -773,6 +773,42 @@ fn native_format_print_matches_ast_vm_and_bundle() {
 }
 
 #[test]
+fn text_repeat_matches_ast_vm_bundle_and_native() {
+    let s = Sandbox::new();
+    let source = format!(
+        "from std.text import repeat, length, byte_length\nfrom std.result import message\nfn negative() -> Result<str> = repeat(\"x\", -1)\nfn excessive() -> Result<str> = repeat(\"x\", 1048577)\nfn oversized() -> Result<str> = repeat(\"{}\", 1048576)\nlet repeated = repeat(\"λ😀\", 3)\nprint repeated\nprint length(repeated)\nprint byte_length(repeated)\nprint repeat(\"x\", 0) == \"\"\nprint repeat(\"\", 1048576) == \"\"\nprint length(repeat(\"ab\", 1024))\nprint message(negative())\nprint message(excessive())\nprint message(oversized())\n",
+        "x".repeat(65)
+    );
+    let script = s.write("repeat.gaks", &source);
+    let expected = "λ😀λ😀λ😀\n6\n18\ntrue\ntrue\n2048\nrepeat count must not be negative\nrepeat count exceeds 1048576\nstring memory exceeds 64 MiB\n";
+    let cli = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(cli)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let built = Command::new(cli).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundle = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let executed = Command::new(cli).arg("exec").arg(bundle).output().unwrap();
+    assert!(executed.status.success(), "{}", String::from_utf8_lossy(&executed.stderr));
+    assert_eq!(executed.stdout, expected.as_bytes());
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(executable).output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
 fn unicode_text_module_matches_ast_vm_bundle_and_native() {
     if !gcc_available() {
         return;

@@ -239,6 +239,14 @@ int64_t gak_native_text_length(const uint8_t *box) {
     return count;
 }
 
+void gak_native_text_repeat(const uint8_t *box, uint64_t count,
+                            uint8_t *output) {
+    uint64_t size = gak_text_size(box);
+    if (size == 0) return;
+    for (uint64_t index = 0; index < count; ++index)
+        memcpy(output + index * size, box + 8, (size_t)size);
+}
+
 static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
                             const uint8_t *needle, uint64_t needle_size) {
     if (needle_size == 0) return 0;

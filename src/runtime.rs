@@ -5045,6 +5045,18 @@ impl Runtime {
         match (name, args) {
             ("length", [value]) => Ok(Value::Int(value.as_str()?.chars().count() as i64)),
             ("byte_length", [value]) => Ok(Value::Int(value.as_str()?.len() as i64)),
+            ("repeat", [value, count]) => {
+                let value = value.as_str()?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "repeat count must not be negative")?;
+                if count > 1_048_576 {
+                    return Err("repeat count exceeds 1048576".into());
+                }
+                if value.len().checked_mul(count).is_none_or(|size| size > MAX_STRING_BYTES) {
+                    return Err("string memory exceeds 64 MiB".into());
+                }
+                Ok(Value::Str(value.repeat(count)))
+            }
             ("find", [value, needle]) => {
                 let value = value.as_str()?;
                 let needle = needle.as_str()?;
@@ -9026,6 +9038,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("bytes", "find") => (&[Bytes, Bytes], Int),
         ("bytes", "contains") => (&[Bytes, Bytes], Bool),
         ("text", "length" | "byte_length") => (&[Str], Int),
+        ("text", "repeat") => (&[Str, Int], Str),
         ("text", "find") => (&[Str, Str], Int),
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),
         ("text", "slice") => (&[Str, Int, Int], Str),
