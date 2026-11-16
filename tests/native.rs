@@ -3988,6 +3988,71 @@ fn native_bitwise_operations_match_vm_and_reject_invalid_shifts() {
 }
 
 #[test]
+fn generated_integer_expressions_match_ast_vm_and_native() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut source = String::new();
+    let mut expected = String::new();
+    for _ in 0..32 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let left = (state % 1001) as i64 - 500;
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let right = (state % 63 + 1) as i64;
+        let shift = (state % 8) as u32;
+        let cases = [
+            (
+                format!("(({left}) + {right}) * 3 - {right}"),
+                (left + right) * 3 - right,
+            ),
+            (format!("({left}) / {right}"), left / right),
+            (format!("({left}) % {right}"), left % right),
+            (
+                format!("(({left}) & {right}) | (({left}) ^ {right})"),
+                (left & right) | (left ^ right),
+            ),
+            (format!("({left}) >> {shift}"), left >> shift),
+            (format!("({left}) << {shift}"), left << shift),
+        ];
+        for (expression, value) in cases {
+            source.push_str(&format!("print {expression}\n"));
+            expected.push_str(&format!("{value}\n"));
+        }
+    }
+    let script = s.write("integer-parity.gak", &source);
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, expected.as_bytes(), "{engine}");
+    }
+    let compiled = s.compile(&script);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.stdout, expected.as_bytes());
+}
+
+#[test]
 fn native_class_methods_match_vm_across_modules_and_nested_fields() {
     if !gcc_available() {
         return;
