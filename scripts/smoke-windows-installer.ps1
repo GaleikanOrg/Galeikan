@@ -1,3 +1,5 @@
+param([string]$InstallerPath)
+
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -15,7 +17,11 @@ $expectedProductName = if ($releaseChannel -eq 'stable') {
 }
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsixName = "galeikan-language-$($extensionManifest.version).vsix"
-$installer = Join-Path $projectRoot "dist\Galeikan-$packageVersion$suffix-windows-x64-setup.exe"
+$installer = if ($InstallerPath) {
+    [System.IO.Path]::GetFullPath($InstallerPath)
+} else {
+    Join-Path $projectRoot "dist\Galeikan-$packageVersion$suffix-windows-x64-setup.exe"
+}
 $smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "dist\install-smoke-$PID"))
 $projectPrefix = $projectRoot.TrimEnd('\') + '\'
 if (-not $smokeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {

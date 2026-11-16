@@ -1,11 +1,14 @@
 param(
-    [switch]$SkipCargoBuild
+    [switch]$SkipCargoBuild,
+    [string]$OutputDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $distDir = Join-Path $projectRoot 'dist'
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+$installerDir = if ($OutputDirectory) { [System.IO.Path]::GetFullPath($OutputDirectory) } else { $distDir }
+New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
 $cargoManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'Cargo.toml') -Raw
 if ($cargoManifest -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') { throw 'Missing Galeikan package version' }
 $packageVersion = $Matches[1]
@@ -38,7 +41,7 @@ $pathHelperSource = Join-Path $projectRoot 'packaging\windows\path_helper.c'
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pathHelper)) { throw 'Galeikan PATH helper build failed' }
 
 $script = Join-Path $projectRoot 'packaging\windows\Galeikan.nsi'
-$output = Join-Path $distDir "Galeikan-$packageVersion$suffix-windows-x64-setup.exe"
+$output = Join-Path $installerDir "Galeikan-$packageVersion$suffix-windows-x64-setup.exe"
 $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 Push-Location (Split-Path -Parent $script)
 try {
