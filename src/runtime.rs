@@ -5095,6 +5095,33 @@ impl Runtime {
                 }
                 Ok(Value::List(Arc::new(parts), Some(ResultKind::Str)))
             }
+            ("join", [parts, separator]) => {
+                let parts = match parts {
+                    Value::List(parts, _) => parts,
+                    _ => return Err("text.join expects List<str> and str".into()),
+                };
+                let separator = separator.as_str()?;
+                if parts.len() > MAX_LOOP_ITEMS {
+                    return Err(format!("text join exceeds {MAX_LOOP_ITEMS} items"));
+                }
+                let mut size = separator.len().checked_mul(parts.len().saturating_sub(1))
+                    .ok_or("string memory exceeds 64 MiB")?;
+                for part in parts.iter() {
+                    size = size.checked_add(part.as_str()?.len())
+                        .ok_or("string memory exceeds 64 MiB")?;
+                    if size > MAX_STRING_BYTES {
+                        return Err("string memory exceeds 64 MiB".into());
+                    }
+                }
+                let mut joined = String::with_capacity(size);
+                for (index, part) in parts.iter().enumerate() {
+                    if index > 0 {
+                        joined.push_str(separator);
+                    }
+                    joined.push_str(part.as_str()?);
+                }
+                Ok(Value::Str(joined))
+            }
             ("find", [value, needle]) => {
                 let value = value.as_str()?;
                 let needle = needle.as_str()?;
@@ -9079,6 +9106,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("text", "repeat") => (&[Str, Int], Str),
         ("text", "replace") => (&[Str, Str, Str], Str),
         ("text", "split") => (&[Str, Str], Type::List(Some(ResultKind::Str))),
+        ("text", "join") => (&[Type::List(Some(ResultKind::Str)), Str], Str),
         ("text", "find") => (&[Str, Str], Int),
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),
         ("text", "slice") => (&[Str, Int, Int], Str),

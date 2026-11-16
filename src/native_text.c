@@ -360,6 +360,30 @@ finish:
     return result;
 }
 
+/* Returns the output length, -1 if it exceeds the string limit, or -2 if the
+ * list exceeds the item limit. Passing NULL output measures without copying. */
+int64_t gak_native_text_join(const uint8_t *list_box,
+                             const uint8_t *separator_box, uint8_t *output) {
+    uint64_t count = gak_text_size(list_box);
+    uint64_t separator_size = gak_text_size(separator_box);
+    if (count > 100000u) return -2;
+    const uint8_t *const *parts = (const uint8_t *const *)(list_box + 8);
+    uint64_t written = 0;
+    for (uint64_t index = 0; index < count; ++index) {
+        if (index) {
+            if (separator_size > 67108856u - written) return -1;
+            if (output) memcpy(output + written, separator_box + 8, (size_t)separator_size);
+            written += separator_size;
+        }
+        const uint8_t *part = parts[index];
+        uint64_t part_size = gak_text_size(part);
+        if (part_size > 67108856u - written) return -1;
+        if (output) memcpy(output + written, part + 8, (size_t)part_size);
+        written += part_size;
+    }
+    return (int64_t)written;
+}
+
 static int64_t gak_find_raw(const uint8_t *data, uint64_t size,
                             const uint8_t *needle, uint64_t needle_size) {
     if (needle_size == 0) return 0;
