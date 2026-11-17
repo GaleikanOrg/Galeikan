@@ -320,10 +320,11 @@ pub fn from_utf16(text: &str, big_endian: bool) -> Result<Vec<u8>, String> {
 }
 
 pub fn to_utf16(data: &[u8], big_endian: bool) -> Result<String, String> {
-    if data.len() % 2 != 0 {
+    let (chunks, remainder) = data.as_chunks::<2>();
+    if !remainder.is_empty() {
         return Err("invalid UTF-16 data".into());
     }
-    let units = data.chunks_exact(2).map(|chunk| {
+    let units = chunks.iter().map(|chunk| {
         let bytes = [chunk[0], chunk[1]];
         if big_endian {
             u16::from_be_bytes(bytes)

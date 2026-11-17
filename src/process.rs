@@ -15,7 +15,14 @@ const MAX_PID: u32 = u32::MAX;
 const MAX_PID: u32 = i32::MAX as u32;
 
 pub fn valid_pid(pid: u32) -> bool {
-    pid != 0 && pid <= MAX_PID
+    #[cfg(windows)]
+    {
+        pid != 0
+    }
+    #[cfg(not(windows))]
+    {
+        pid != 0 && pid <= MAX_PID
+    }
 }
 
 fn check_pid(pid: u32) -> Result<(), String> {
@@ -817,7 +824,7 @@ fn windows_dos_mappings() -> Vec<(String, String)> {
             mappings.push((device, format!("{}:", char::from(letter))));
         }
     }
-    mappings.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
+    mappings.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
     mappings
 }
 

@@ -411,7 +411,7 @@ impl Lexer<'_> {
                 self.bump();
             } else if ch == '_' {
                 let next = self.input[self.pos + 1..].chars().next();
-                if digits == 0 || !next.is_some_and(|c| c.is_ascii() && c.to_digit(radix).is_some()) {
+                if digits == 0 || !next.is_some_and(|c| c.is_ascii() && c.is_digit(radix)) {
                     return Err(format!("{line}:{col}: invalid digit separator in integer literal"));
                 }
                 self.bump();

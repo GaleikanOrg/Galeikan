@@ -910,7 +910,7 @@ mod tests {
         assert_eq!(&text[..size], b"nop");
         unsafe { galeikan_asm_instruction_free(handle) };
 
-        handle = 1_usize as *mut c_void;
+        handle = ptr::dangling_mut::<c_void>();
         let status = unsafe {
             galeikan_asm_decode(
                 ptr::null(),
@@ -1147,13 +1147,13 @@ mod tests {
         assert_eq!(unsafe { galeikan_asm_instruction_size(instruction) }, 1);
         unsafe { galeikan_asm_instruction_free(instruction) };
 
-        instruction = 1_usize as *mut c_void;
+        instruction = ptr::dangling_mut::<c_void>();
         assert_eq!(
             unsafe { galeikan_asm_disassembly_at(ptr::null(), 0, &mut instruction, &mut offset) },
             0
         );
         assert!(instruction.is_null());
-        disassembly = 1_usize as *mut c_void;
+        disassembly = ptr::dangling_mut::<c_void>();
         assert_eq!(
             unsafe {
                 galeikan_asm_reachable(

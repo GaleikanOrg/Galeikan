@@ -7996,7 +7996,7 @@ impl Runtime {
                     start.saturating_sub(end)
                 } as u64;
                 let stride = step.unsigned_abs();
-                let count = span / stride + u64::from(span % stride != 0);
+                let count = span.div_ceil(stride);
                 if count > MAX_LOOP_ITEMS as u64 {
                     return Err(format!("range exceeds {MAX_LOOP_ITEMS} items"));
                 }

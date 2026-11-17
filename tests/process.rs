@@ -219,7 +219,7 @@ fn native_process_metadata_is_reclaimed_after_temporary_maps_and_failed_paths() 
     let root = std::env::temp_dir().join(format!("galeikan-process-metadata-{}-{id}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let offsets = format!("[{}]", std::iter::once("-9223372036854775808")
-        .chain(std::iter::repeat("0").take(31)).collect::<Vec<_>>().join(", "));
+        .chain(std::iter::repeat_n("0", 31)).collect::<Vec<_>>().join(", "));
     let script = root.join("metadata.gaks");
     fs::write(&script, format!(
         "requires {{ process.inspect }}\nimport std.process\nfrom std.result import is_error\nfn invalid(maps: Regions, address: u64, offsets: List<i64>) -> Result<List<u64>> = process.pointer_path_u32(maps, address, offsets)\nlet maps = process.regions(process.self_pid())\nlet address = process.start_u64(process.at(maps, 0))\nlet offsets: List<i64> = {offsets}\nvar count = 0\nvar valid = true\nvar sampled = 0\nwhile count < 250000 {{\n    if not is_error(invalid(maps, address, offsets)) {{\n        valid = false\n        break\n    }}\n    count = count + 1\n}}\nprint valid\nprint count\nwhile sampled < 200 {{\n    let paths: List<str> = process.modules(process.self_pid())\n    sampled = sampled + 1\n}}\nprint sampled\n"
