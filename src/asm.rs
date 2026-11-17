@@ -425,6 +425,74 @@ pub fn block_dominators(blocks: &[Block], entry: usize, target: usize) -> Result
     Ok(result)
 }
 
+/// Return addresses in the natural loop closed by `latch -> header`, sorted by
+/// address. Only blocks reachable from `entry` through known edges are included.
+/// A missing back edge, non-dominating header, or unreachable latch returns [].
+pub fn block_natural_loop(
+    blocks: &[Block],
+    entry: usize,
+    header: usize,
+    latch: usize,
+) -> Result<Vec<u64>, String> {
+    if entry >= blocks.len() || header >= blocks.len() || latch >= blocks.len() {
+        return Err("block index out of range".into());
+    }
+    let header_address = blocks[header].start;
+    if !blocks[latch].successors.contains(&header_address)
+        || !block_dominators(blocks, entry, latch)?.contains(&header_address)
+    {
+        return Ok(Vec::new());
+    }
+    let by_start: HashMap<u64, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.start, index))
+        .collect();
+    let mut successors = vec![Vec::new(); blocks.len()];
+    let mut predecessors = vec![Vec::new(); blocks.len()];
+    for (index, block) in blocks.iter().enumerate() {
+        for address in &block.successors {
+            if let Some(&next) = by_start.get(address) {
+                successors[index].push(next);
+                predecessors[next].push(index);
+            }
+        }
+    }
+    let mut reachable = vec![false; blocks.len()];
+    let mut pending = VecDeque::from([entry]);
+    reachable[entry] = true;
+    while let Some(node) = pending.pop_front() {
+        for &next in &successors[node] {
+            if !reachable[next] {
+                reachable[next] = true;
+                pending.push_back(next);
+            }
+        }
+    }
+    let mut included = vec![false; blocks.len()];
+    included[header] = true;
+    included[latch] = true;
+    let mut pending = if latch == header { Vec::new() } else { vec![latch] };
+    while let Some(node) = pending.pop() {
+        for &previous in &predecessors[node] {
+            if reachable[previous] && !included[previous] {
+                included[previous] = true;
+                if previous != header {
+                    pending.push(previous);
+                }
+            }
+        }
+    }
+    let mut result = blocks
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| included[*index])
+        .map(|(_, block)| block.start)
+        .collect::<Vec<_>>();
+    result.sort_unstable();
+    Ok(result)
+}
+
 /// Direct branch and call sites that name `target`, in instruction order.
 pub fn xrefs(instructions: &[&Decoded], target: u64) -> Vec<u64> {
     instructions
@@ -485,7 +553,7 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_dominators, block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
+    use super::{block_dominators, block_natural_loop, block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
@@ -737,6 +805,51 @@ mod tests {
         assert_eq!(
             block_dominators(&graph, 0, 7).unwrap_err(),
             "block index out of range"
+        );
+    }
+
+    #[test]
+    fn natural_loop_excludes_unreachable_predecessors_and_irreducible_edges() {
+        let block = |start, successors: &[u64]| Block {
+            start,
+            end: start + 1,
+            first_index: 0,
+            instruction_count: 1,
+            successors: successors.to_vec(),
+            unresolved: false,
+        };
+        let graph = [
+            block(0x10, &[0x20]),
+            block(0x20, &[0x30, 0x60]),
+            block(0x30, &[0x40, 0x50]),
+            block(0x40, &[0x50]),
+            block(0x50, &[0x20]),
+            block(0x60, &[]),
+            block(0x70, &[0x50]),
+        ];
+        assert_eq!(
+            block_natural_loop(&graph, 0, 1, 4).unwrap(),
+            [0x20, 0x30, 0x40, 0x50]
+        );
+        assert!(block_natural_loop(&graph, 0, 1, 3).unwrap().is_empty());
+        assert!(block_natural_loop(&graph, 0, 1, 6).unwrap().is_empty());
+        assert_eq!(
+            block_natural_loop(&graph, 0, 1, 7).unwrap_err(),
+            "block index out of range"
+        );
+        let irreducible = [
+            block(0x10, &[0x20, 0x30]),
+            block(0x20, &[0x40]),
+            block(0x30, &[0x40]),
+            block(0x40, &[0x20]),
+        ];
+        assert!(block_natural_loop(&irreducible, 0, 1, 3).unwrap().is_empty());
+        let self_loop = [block(0x10, &[0x10])];
+        assert_eq!(block_natural_loop(&self_loop, 0, 0, 0).unwrap(), [0x10]);
+        let self_loop_with_entry = [block(0x10, &[0x20]), block(0x20, &[0x20])];
+        assert_eq!(
+            block_natural_loop(&self_loop_with_entry, 0, 1, 1).unwrap(),
+            [0x20]
         );
     }
 

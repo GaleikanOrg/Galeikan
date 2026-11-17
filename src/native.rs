@@ -6781,6 +6781,28 @@ impl Codegen {
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_{name}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), disassembly * 8, self.arg1(), from * 8, self.arg2()).unwrap();
             return Ok(Scalar::ListUInt);
         }
+        if name == "block_natural_loop" && args.len() == 4 {
+            if self.expr(&args[0], scope)? != Scalar::Disassembly {
+                return Err("asm.block_natural_loop expects Disassembly".into());
+            }
+            let disassembly = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", disassembly * 8).unwrap();
+            let mut indices = Vec::with_capacity(2);
+            for (argument, label) in [(1, "entry"), (2, "header")] {
+                if self.expr(&args[argument], scope)? != Scalar::Int {
+                    return Err(format!("asm.block_natural_loop {label} index must be i64"));
+                }
+                let slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                indices.push(slot);
+            }
+            if self.expr(&args[3], scope)? != Scalar::Int {
+                return Err("asm.block_natural_loop latch index must be i64".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_block_natural_loop\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), disassembly * 8, self.arg1(), indices[0] * 8, self.arg2(), indices[1] * 8, self.arg3()).unwrap();
+            return Ok(Scalar::ListUInt);
+        }
         if matches!(name, "call_targets" | "data_refs" | "xrefs" | "data_xrefs") {
             let expected = if matches!(name, "xrefs" | "data_xrefs") { 2 } else { 1 };
             if args.len() != expected || self.expr(&args[0], scope)? != Scalar::Disassembly {

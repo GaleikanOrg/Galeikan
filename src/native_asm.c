@@ -635,6 +635,33 @@ uint64_t *gak_native_asm_block_dominators(const GakAsmDisassembly *disassembly,
     return result;
 }
 
+uint64_t *gak_native_asm_block_natural_loop(const GakAsmDisassembly *disassembly,
+                                            int64_t entry, int64_t header, int64_t latch) {
+    gak_asm_error = NULL;
+    if (!disassembly || entry < 0 || header < 0 || latch < 0) {
+        gak_asm_fail("block index out of range");
+        return NULL;
+    }
+    size_t count = galeikan_asm_disassembly_block_natural_loop(disassembly->decoded,
+                                                                 (size_t)entry, (size_t)header,
+                                                                 (size_t)latch, NULL, 0);
+    if (count == SIZE_MAX) {
+        gak_asm_fail("block index out of range");
+        return NULL;
+    }
+    uint64_t *result = gak_asm_box_u64_list(count);
+    if (!result) return NULL;
+    if (galeikan_asm_disassembly_block_natural_loop(disassembly->decoded,
+                                                     (size_t)entry, (size_t)header,
+                                                     (size_t)latch, result + 1, count) != count) {
+        boxed_list_bytes -= (count + 1) * sizeof(uint64_t);
+        free(result);
+        gak_asm_fail("cannot read natural loop body");
+        return NULL;
+    }
+    return result;
+}
+
 uint64_t *gak_native_asm_references(const GakAsmDisassembly *disassembly,
                                      uint32_t kind, uint64_t target) {
     gak_asm_error = NULL;

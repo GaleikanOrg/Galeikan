@@ -6796,6 +6796,20 @@ impl Runtime {
                         .collect(),
                 )
             }
+            ("block_natural_loop", [Value::Disassembly(disassembly), entry, header, latch]) => {
+                let entry = usize::try_from(entry.as_int()?)
+                    .map_err(|_| "block index out of range")?;
+                let header = usize::try_from(header.as_int()?)
+                    .map_err(|_| "block index out of range")?;
+                let latch = usize::try_from(latch.as_int()?)
+                    .map_err(|_| "block index out of range")?;
+                make_list(
+                    asm::block_natural_loop(&disassembly.blocks, entry, header, latch)?
+                        .into_iter()
+                        .map(Value::UInt)
+                        .collect(),
+                )
+            }
             ("block_instruction", [Value::Disassembly(disassembly), block, within]) => {
                 let block =
                     usize::try_from(block.as_int()?).map_err(|_| "block index out of range")?;
@@ -9106,6 +9120,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         }
         if matches!(name, "block_path" | "block_dominators") {
             check_arguments(&qualified, args, &[Disassembly, Int, Int])?;
+            return Ok(Type::List(Some(ResultKind::UInt)));
+        }
+        if name == "block_natural_loop" {
+            check_arguments(&qualified, args, &[Disassembly, Int, Int, Int])?;
             return Ok(Type::List(Some(ResultKind::UInt)));
         }
         if name == "block_instruction" {

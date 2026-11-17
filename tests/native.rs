@@ -5910,6 +5910,9 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "let block_edges: List<u64> = asm.block_successors(lines, 0)\n",
             "let direct: List<u64> = asm.block_path(lines, 0, 2)\n",
             "let incoming: List<u64> = asm.xrefs(lines, 0x8000000000000005u64)\n",
+            "let loop_source = binary.snapshot(binary.from_hex(\"90 75 01 c3 eb fa\"))\n",
+            "let loop_lines: Disassembly = asm.reachable(loop_source, 0, 0x9000u64, 64, 4)\n",
+            "let loop_body: List<u64> = asm.block_natural_loop(loop_lines, 0, 0, 2)\n",
             "print asm.count(lines)\nprint asm.block_count(lines)\nprint asm.overlap_count(lines)\n",
             "print asm.block_start(lines, 0)\nprint asm.block_end(lines, 0)\n",
             "print asm.block_instruction_count(lines, 0)\nprint asm.block_unresolved(lines, 0)\n",
@@ -5927,6 +5930,8 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "print list.count(asm.data_xrefs(lines, 0u64))\n",
             "for instruction in lines {\n    print asm.mnemonic(instruction)\n}\n",
             "print lines\nimpact lines\n",
+            "print list.count(loop_body)\nprint loop_body[0]\nprint loop_body[1]\n",
+            "print list.count(asm.block_natural_loop(loop_lines, 0, 0, 1))\n",
         ),
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -5950,6 +5955,7 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
     let native = Command::new(executable).output().unwrap();
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
     assert_eq!(native.stdout, vm.stdout);
+    assert!(vm.stdout.ends_with(b"2\n36864\n36868\n0\n"));
 
     for (name, body, expected) in [
         (
@@ -5975,6 +5981,11 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
         (
             "reachable-dominators.gak",
             "print asm.block_dominators(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 0, 1)",
+            "block index out of range",
+        ),
+        (
+            "reachable-natural-loop.gak",
+            "print asm.block_natural_loop(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 0, 0, 1)",
             "block index out of range",
         ),
     ] {

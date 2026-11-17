@@ -748,6 +748,32 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_block_dominators(
     dominators.len()
 }
 
+/// Return the sorted known natural loop body. Invalid indices return
+/// `usize::MAX`; a non-loop edge returns zero.
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// writable for `capacity` `u64` values without overlapping the handle.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block_natural_loop(
+    handle: *const c_void,
+    entry: usize,
+    header: usize,
+    latch: usize,
+    output: *mut u64,
+    capacity: usize,
+) -> usize {
+    let Some(collection) = (unsafe { handle.cast::<DecodedCollection>().as_ref() }) else {
+        return usize::MAX;
+    };
+    let Ok(body) = asm::block_natural_loop(&collection.blocks, entry, header, latch) else {
+        return usize::MAX;
+    };
+    if !output.is_null() && capacity >= body.len() {
+        unsafe { ptr::copy_nonoverlapping(body.as_ptr(), output, body.len()) };
+    }
+    body.len()
+}
+
 /// Query direct call targets, data references, direct xrefs, or data xrefs.
 /// Returns the required count and copies only when capacity is sufficient.
 /// # Safety
