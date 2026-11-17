@@ -113,20 +113,28 @@ GakLabPlan *gak_native_lab_plan(const uint8_t *source, int64_t start,
     unsigned mode = 0;
     unsigned width = 0;
     int little = 0;
+    char integer_kind = 'u';
     if (gak_lab_mode(strategy, "bitflip")) mode = 1;
     else if (gak_lab_mode(strategy, "byte-boundary")) mode = 2;
     else if (gak_lab_mode(strategy, "truncate")) mode = 3;
     else if (gak_lab_mode(strategy, "insert-boundary")) mode = 4;
     else if (gak_lab_mode(strategy, "delete-byte")) mode = 5;
     else {
-        static const unsigned widths[] = {2, 4, 8};
-        for (unsigned index = 0; index < 3 && !mode; ++index) {
-            char name[] = "integer-boundary:u16le";
-            name[18] = (char)('0' + widths[index] * 8 / 10);
-            name[19] = (char)('0' + widths[index] * 8 % 10);
-            if (gak_lab_mode(strategy, name)) { mode = 6; width = widths[index]; little = 1; }
-            name[20] = 'b'; name[21] = 'e';
-            if (gak_lab_mode(strategy, name)) { mode = 6; width = widths[index]; little = 0; }
+        static const unsigned widths[] = {2, 3, 4, 8};
+        for (unsigned index = 0; index < 4 && !mode; ++index) {
+            for (unsigned signed_field = 0; signed_field < 2 && !mode; ++signed_field) {
+                char name[] = "integer-boundary:u16le";
+                name[17] = signed_field ? 'i' : 'u';
+                name[18] = (char)('0' + widths[index] * 8 / 10);
+                name[19] = (char)('0' + widths[index] * 8 % 10);
+                if (gak_lab_mode(strategy, name)) {
+                    mode = 6; width = widths[index]; little = 1; integer_kind = name[17];
+                }
+                name[20] = 'b'; name[21] = 'e';
+                if (gak_lab_mode(strategy, name)) {
+                    mode = 6; width = widths[index]; little = 0; integer_kind = name[17];
+                }
+            }
         }
     }
     if (!mode) return gak_lab_fail(NULL, &gak_lab_strategy_error);
@@ -173,8 +181,8 @@ GakLabPlan *gak_native_lab_plan(const uint8_t *source, int64_t start,
                 uint64_t boundary = gak_lab_boundaries(width, index);
                 uint64_t encoded = gak_lab_encoded(boundary, width, little);
                 if (memcmp(data + offset, &encoded, width) == 0) continue;
-                snprintf(label, sizeof(label), " integer-boundary u%u%s 0x%llx at %llu",
-                         width * 8, little ? "le" : "be", (unsigned long long)boundary,
+                snprintf(label, sizeof(label), " integer-boundary %c%u%s 0x%llx at %llu",
+                         integer_kind, width * 8, little ? "le" : "be", (unsigned long long)boundary,
                          (unsigned long long)offset);
                 pushed = gak_lab_push(plan, wanted, &materialized, source_size,
                                       1, offset, width, width, encoded, label);

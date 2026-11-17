@@ -7774,12 +7774,17 @@ impl Runtime {
         if count > MAX_MUTATION_CASES {
             return Err(format!("mutation count exceeds {MAX_MUTATION_CASES}"));
         }
-        let integer_width = match mode {
-            "integer-boundary:u16le" | "integer-boundary:u16be" => Some(2),
-            "integer-boundary:u32le" | "integer-boundary:u32be" => Some(4),
-            "integer-boundary:u64le" | "integer-boundary:u64be" => Some(8),
-            _ => None,
-        };
+        let integer_width = mode
+            .strip_prefix("integer-boundary:")
+            .and_then(|field| field.strip_suffix("le").or_else(|| field.strip_suffix("be")))
+            .and_then(|field| field.strip_prefix('u').or_else(|| field.strip_prefix('i')))
+            .and_then(|bits| match bits {
+                "16" => Some(2),
+                "24" => Some(3),
+                "32" => Some(4),
+                "64" => Some(8),
+                _ => None,
+            });
         if !matches!(
             mode,
             "bitflip" | "byte-boundary" | "truncate" | "insert-boundary" | "delete-byte"

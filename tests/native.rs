@@ -11577,6 +11577,57 @@ fn native_lab_mutations_match_interpreter_for_all_strategies() {
 }
 
 #[test]
+fn native_lab_mutates_signed_and_unsigned_24_bit_boundaries_like_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "lab-24-bit.gaks",
+        r#"from std.binary import from_hex, snapshot, extract, size
+from std.bytes import to_hex
+from std.lab import mutate
+from std.list import count
+from std.result import is_error
+fn short_span(source: Source) -> Result<List<Source>> = mutate(source, 1, 2, "integer-boundary:u24le", 1)
+fn unknown_width(source: Source) -> Result<List<Source>> = mutate(source, 1, 3, "integer-boundary:u40le", 1)
+let source = snapshot(from_hex("aa 00 00 00 bb"))
+let le = mutate(source, 1, 3, "integer-boundary:u24le", 5)
+let be = mutate(source, 1, 3, "integer-boundary:u24be", 5)
+let signed = mutate(source, 1, 3, "integer-boundary:i24be", 5)
+let signed16 = mutate(source, 1, 2, "integer-boundary:i16be", 1)
+print count(le)
+print count(signed)
+print to_hex(extract(le[0], 0, size(le[0])))
+print to_hex(extract(le[3], 0, size(le[3])))
+print to_hex(extract(be[2], 0, size(be[2])))
+print to_hex(extract(signed[3], 0, size(signed[3])))
+print to_hex(extract(signed16[0], 0, size(signed16[0])))
+print is_error(short_span(source))
+print is_error(unknown_width(source))
+"#,
+    );
+    let expected = b"4\n4\naa010000bb\naaffffffbb\naa800000bb\naaffffffbb\naa000100bb\ntrue\ntrue\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected);
+}
+
+#[test]
 fn bytes_iteration_matches_all_execution_modes_and_enforces_limit() {
     let s = Sandbox::new();
     let script = s.write(
