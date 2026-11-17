@@ -2,11 +2,132 @@
 
 #[allow(dead_code)]
 mod asm;
+#[allow(dead_code)]
+mod net;
 
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
+use std::time::Duration;
+
+struct HttpFetchResult {
+    bytes: Vec<u8>,
+    label: String,
+    origin: String,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_authority(
+    url: *const u8,
+    length: usize,
+    output: *mut u8,
+    capacity: usize,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if url.is_null() || length > 4096 || output.is_null() || capacity == 0 {
+        return write_error(error, error_capacity, "invalid HTTP URL input");
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let raw = unsafe { std::slice::from_raw_parts(url, length) };
+        let raw = std::str::from_utf8(raw).map_err(|_| "invalid HTTP URL encoding".to_string())?;
+        net::http_url(raw).map(|(_, authority)| authority)
+    }));
+    match result {
+        Ok(Ok(authority)) if authority.len() < capacity => {
+            unsafe {
+                ptr::copy_nonoverlapping(authority.as_ptr(), output, authority.len());
+                *output.add(authority.len()) = 0;
+            }
+            0
+        }
+        Ok(Ok(_)) => write_error(error, error_capacity, "HTTP authority exceeds native limit"),
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "HTTP URL parsing failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_fetch(
+    url: *const u8,
+    length: usize,
+    max_bytes: i64,
+    timeout_ms: i64,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if out.is_null() || url.is_null() || length > 4096 {
+        return write_error(error, error_capacity, "invalid HTTP fetch input");
+    }
+    unsafe { *out = ptr::null_mut() };
+    if max_bytes < 0 {
+        return write_error(error, error_capacity, "max_bytes out of range");
+    }
+    if max_bytes > 16_777_216 {
+        return write_error(error, error_capacity, "max_bytes must be at most 16777216");
+    }
+    if !(1..=30_000).contains(&timeout_ms) {
+        return write_error(error, error_capacity, "timeout_ms must be between 1 and 30000");
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let raw = unsafe { std::slice::from_raw_parts(url, length) };
+        let raw = std::str::from_utf8(raw).map_err(|_| "invalid HTTP URL encoding".to_string())?;
+        let (url, _) = net::http_url(raw)?;
+        let response = net::fetch(
+            url,
+            max_bytes as usize,
+            Duration::from_millis(timeout_ms as u64),
+        )?;
+        let origin = match response.peer {
+            Some(peer) => format!("HTTP {} {} (peer {peer})", response.status, response.url),
+            None => format!("HTTP {} {}", response.status, response.url),
+        };
+        Ok::<_, String>(HttpFetchResult {
+            bytes: response.bytes,
+            label: response.url,
+            origin,
+        })
+    }));
+    match result {
+        Ok(Ok(response)) => {
+            unsafe { *out = Box::into_raw(Box::new(response)).cast() };
+            0
+        }
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "HTTP fetch failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_fetch_copy(
+    handle: *const c_void,
+    kind: u32,
+    output: *mut u8,
+    capacity: usize,
+) -> usize {
+    let Some(result) = (unsafe { handle.cast::<HttpFetchResult>().as_ref() }) else {
+        return usize::MAX;
+    };
+    let data = match kind {
+        1 => result.bytes.as_slice(),
+        2 => result.label.as_bytes(),
+        3 => result.origin.as_bytes(),
+        _ => return usize::MAX,
+    };
+    if !output.is_null() && capacity >= data.len() {
+        unsafe { ptr::copy_nonoverlapping(data.as_ptr(), output, data.len()) };
+    }
+    data.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_fetch_free(handle: *mut c_void) {
+    if !handle.is_null() {
+        unsafe { drop(Box::from_raw(handle.cast::<HttpFetchResult>())) };
+    }
+}
 
 struct DecodedCollection {
     instructions: Vec<(usize, asm::Decoded)>,
@@ -577,6 +698,32 @@ pub unsafe extern "C" fn galeikan_asm_instruction_successor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_authority_ffi_canonicalizes_and_rejects_unsafe_urls() {
+        let mut authority = [0_u8; 512];
+        let mut error = [0_u8; 256];
+        let url = b"http://127.0.0.1:8080/sample";
+        assert_eq!(unsafe {
+            galeikan_http_authority(
+                url.as_ptr(), url.len(), authority.as_mut_ptr(), authority.len(),
+                error.as_mut_ptr(), error.len(),
+            )
+        }, 0);
+        assert_eq!(&authority[..15], b"127.0.0.1:8080\0");
+        for rejected in [
+            "http://user:password@127.0.0.1/sample",
+            "http://127.0.0.1/sample#fragment",
+            "ftp://127.0.0.1/sample",
+        ] {
+            assert_eq!(unsafe {
+                galeikan_http_authority(
+                    rejected.as_ptr(), rejected.len(), authority.as_mut_ptr(), authority.len(),
+                    error.as_mut_ptr(), error.len(),
+                )
+            }, -1, "{rejected}");
+        }
+    }
 
     #[test]
     fn decoder_ffi_owns_results_and_preserves_errors() {

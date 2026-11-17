@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1537,6 +1537,81 @@ fn native_tcp_exchange_matches_vm_and_requires_target_grant() {
     assert!(!native_limited.status.success());
     assert!(String::from_utf8_lossy(&native_limited.stderr)
         .contains("LimitExceeded: TCP response exceeds 2 bytes"));
+    assert_eq!(native_limited.stderr, vm_limited.stderr);
+}
+
+#[test]
+fn native_http_fetch_matches_vm_with_grants_and_response_limits() {
+    if !gcc_available() {
+        return;
+    }
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    if TcpStream::connect(probe.local_addr().unwrap()).is_err() {
+        eprintln!("loopback TCP is unavailable; HTTP integration test skipped");
+        return;
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap().to_string();
+    let s = Sandbox::new();
+    let script = s.write(
+        "http-fetch.gak",
+        &format!(
+            "requires {{ net.connect }}\nfrom std.net import fetch\nfrom std.binary import size, sha256, deep\nfrom std.cli import int as argument_int\nlet source = fetch(\"http://{endpoint}/sample?tag=1\", argument_int(0), 10000)\nprint size(source)\nprint sha256(source)\nimpact deep(source, 0, \"u16le\")\n"
+        ),
+    );
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let denied = Command::new(&executable).args(["--", "4"]).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("network access not allowed"));
+
+    listener.set_nonblocking(true).unwrap();
+    let server = thread::spawn(move || {
+        for _ in 0..4 {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "test HTTP listener timed out");
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("test HTTP listener failed: {error}"),
+                }
+            };
+            stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            assert!(request.starts_with(b"GET /sample?tag=1 HTTP/1.1\r\n"));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nGAK\0").unwrap();
+        }
+    });
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run").arg(&script)
+        .args(["--engine", "vm", "--allow-connect", &endpoint, "--", "4"])
+        .output().unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let native = Command::new(&executable)
+        .args(["--allow-connect", &endpoint, "--", "4"])
+        .output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+    let vm_limited = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run").arg(&script)
+        .args(["--engine", "vm", "--allow-connect", &endpoint, "--", "2"])
+        .output().unwrap();
+    let native_limited = Command::new(&executable)
+        .args(["--allow-connect", &endpoint, "--", "2"])
+        .output().unwrap();
+    server.join().unwrap();
+    assert!(!vm_limited.status.success());
+    assert!(!native_limited.status.success());
     assert_eq!(native_limited.stderr, vm_limited.stderr);
 }
 

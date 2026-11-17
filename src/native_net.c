@@ -83,6 +83,15 @@ extern uint8_t *gak_file_error;
 extern int gak_native_net_allowed(const char *authority);
 extern uint8_t *gak_native_metadata_box(const char *text, size_t length);
 extern void gak_native_metadata_release(uint8_t *box);
+extern int32_t galeikan_http_authority(const uint8_t *url, size_t length,
+                                       uint8_t *output, size_t capacity,
+                                       uint8_t *error, size_t error_capacity);
+extern int32_t galeikan_http_fetch(const uint8_t *url, size_t length,
+                                   int64_t max_bytes, int64_t timeout_ms,
+                                   void **out, uint8_t *error, size_t error_capacity);
+extern size_t galeikan_http_fetch_copy(const void *handle, uint32_t kind,
+                                       uint8_t *output, size_t capacity);
+extern void galeikan_http_fetch_free(void *handle);
 
 static void gak_net_fail(const char *format, ...) {
     char message[4096];
@@ -468,6 +477,71 @@ static GakNetSource *gak_net_source(uint8_t *backing, size_t received,
         free(result);
         free(backing);
         gak_net_fail("native allocation failed");
+        return NULL;
+    }
+    return result;
+}
+
+static uint8_t *gak_http_result_box(const void *handle, uint32_t kind,
+                                    size_t limit, int metadata) {
+    size_t length = galeikan_http_fetch_copy(handle, kind, NULL, 0);
+    if (length == SIZE_MAX || length > limit || length > SIZE_MAX - 8) return NULL;
+    uint8_t *temporary = malloc(length + 8);
+    if (!temporary) return NULL;
+    if (galeikan_http_fetch_copy(handle, kind, temporary + 8, length) != length) {
+        free(temporary);
+        return NULL;
+    }
+    if (!metadata) {
+        uint64_t wide = (uint64_t)length;
+        memcpy(temporary, &wide, 8);
+        return temporary;
+    }
+    uint8_t *box = gak_native_metadata_box((const char *)temporary + 8, length);
+    free(temporary);
+    return box;
+}
+
+GakNetSource *gak_native_net_fetch(const uint8_t *url_box, int64_t max_bytes,
+                                   int64_t timeout_ms) {
+    gak_file_error = NULL;
+    if (!url_box || gak_net_length(url_box) > 4096) {
+        gak_net_fail("invalid HTTP URL input");
+        return NULL;
+    }
+    size_t url_length = (size_t)gak_net_length(url_box);
+    uint8_t error[1024] = {0};
+    uint8_t authority[512] = {0};
+    if (galeikan_http_authority(url_box + 8, url_length, authority,
+                                sizeof authority, error, sizeof error)) {
+        gak_net_fail("%s", error);
+        return NULL;
+    }
+    if (!gak_native_net_allowed((const char *)authority)) {
+        gak_net_fail("network access not allowed: %s", authority);
+        return NULL;
+    }
+    void *handle = NULL;
+    if (galeikan_http_fetch(url_box + 8, url_length, max_bytes, timeout_ms,
+                            &handle, error, sizeof error)) {
+        gak_net_fail("%s", error);
+        return NULL;
+    }
+    GakNetSource *result = calloc(1, sizeof *result);
+    if (result) {
+        result->backing = gak_http_result_box(handle, 1, GAK_NET_RESPONSE_LIMIT, 0);
+        result->label = gak_http_result_box(handle, 2, 65536, 1);
+        result->origin = gak_http_result_box(handle, 3, 65536, 1);
+    }
+    galeikan_http_fetch_free(handle);
+    if (!result || !result->backing || !result->label || !result->origin) {
+        if (result) {
+            free(result->backing);
+            gak_native_metadata_release(result->label);
+            gak_native_metadata_release(result->origin);
+            free(result);
+        }
+        if (!gak_file_error) gak_net_fail("native HTTP result exceeds memory limits");
         return NULL;
     }
     return result;

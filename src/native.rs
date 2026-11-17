@@ -1346,8 +1346,8 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .values()
             .any(|import| matches!(import, NativeImport::Asm))
     });
-    let asm_library = if uses_asm {
-        Some(find_asm_library()?)
+    let runtime_library = if uses_asm || uses_net {
+        Some(find_native_runtime_library()?)
     } else {
         None
     };
@@ -1527,7 +1527,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             compiler.arg("-lws2_32");
         }
     }
-    if let Some(library) = &asm_library {
+    if let Some(library) = &runtime_library {
         compiler.arg("-x").arg("none").arg(gcc_path(library));
         if !cfg!(windows) {
             compiler.arg("-Wl,-rpath,$ORIGIN");
@@ -1535,7 +1535,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     }
     run_gcc(&mut compiler)?;
     verify_native_hardening(&candidate)?;
-    if let Some(library) = &asm_library {
+    if let Some(library) = &runtime_library {
         let destination = output
             .parent()
             .ok_or("native output has no parent")?
@@ -1570,7 +1570,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     }
 }
 
-fn find_asm_library() -> Result<PathBuf, String> {
+fn find_native_runtime_library() -> Result<PathBuf, String> {
     let filename = if cfg!(windows) {
         "galeikan_asm.dll"
     } else {
@@ -1593,7 +1593,7 @@ fn find_asm_library() -> Result<PathBuf, String> {
     candidates
         .into_iter()
         .find(|path| path.is_file())
-        .ok_or_else(|| format!("missing native decoder library {filename}; reinstall Galeikan or build the library with cargo build --release --lib"))
+        .ok_or_else(|| format!("missing native runtime library {filename}; reinstall Galeikan or build the library with cargo build --release --lib"))
 }
 
 fn run_gcc(compiler: &mut Command) -> Result<(), String> {
@@ -4860,6 +4860,21 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if name == "fetch" && args.len() == 3 {
+            let mut slots = [0; 3];
+            for (index, argument) in args.iter().enumerate() {
+                let kind = self.expr(argument, scope)?;
+                if kind != if index == 0 { Scalar::Str } else { Scalar::Int } {
+                    return Err(format!("net.fetch argument {} has the wrong type", index + 1));
+                }
+                slots[index] = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slots[index] * 8).unwrap();
+            }
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_net_fetch", self.arg0(), slots[0] * 8, self.arg1(), slots[1] * 8, self.arg2(), slots[2] * 8).unwrap();
+            self.process_source_result()?;
+            self.uses_net = true;
+            return Ok(Scalar::Source);
+        }
         if !matches!(name, "exchange" | "datagram") || args.len() != 5 {
             return Err(format!(
                 "unknown native net function or wrong arguments: {name}"
