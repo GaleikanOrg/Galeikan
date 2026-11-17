@@ -15,6 +15,23 @@ struct HttpFetchResult {
     bytes: Vec<u8>,
     label: String,
     origin: String,
+    status: u16,
+    request_sha256: String,
+    headers: Vec<(String, String)>,
+}
+
+#[repr(C)]
+pub struct GaleikanHttpRequest {
+    method: *const u8,
+    method_length: usize,
+    url: *const u8,
+    url_length: usize,
+    headers: *const *const u8,
+    header_count: usize,
+    body: *const u8,
+    body_length: usize,
+    max_bytes: i64,
+    timeout_ms: i64,
 }
 
 #[no_mangle]
@@ -88,6 +105,9 @@ pub unsafe extern "C" fn galeikan_http_fetch(
             bytes: response.bytes,
             label: response.url,
             origin,
+            status: response.status,
+            request_sha256: String::new(),
+            headers: response.headers,
         })
     }));
     match result {
@@ -114,6 +134,7 @@ pub unsafe extern "C" fn galeikan_http_fetch_copy(
         1 => result.bytes.as_slice(),
         2 => result.label.as_bytes(),
         3 => result.origin.as_bytes(),
+        4 => result.request_sha256.as_bytes(),
         _ => return usize::MAX,
     };
     if !output.is_null() && capacity >= data.len() {
@@ -127,6 +148,144 @@ pub unsafe extern "C" fn galeikan_http_fetch_free(handle: *mut c_void) {
     if !handle.is_null() {
         unsafe { drop(Box::from_raw(handle.cast::<HttpFetchResult>())) };
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_request(
+    input: *const GaleikanHttpRequest,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if input.is_null() || out.is_null() {
+        return write_error(error, error_capacity, "invalid HTTP request input");
+    }
+    unsafe { *out = ptr::null_mut() };
+    let input = unsafe { &*input };
+    if input.method.is_null() || input.method_length > 16
+        || input.url.is_null() || input.url_length > 4096
+        || (input.header_count != 0 && input.headers.is_null())
+        || (input.body_length != 0 && input.body.is_null())
+    {
+        return write_error(error, error_capacity, "invalid HTTP request input");
+    }
+    if input.header_count > 32 {
+        return write_error(error, error_capacity, "HTTP request headers exceed 32 fields or 8192 bytes");
+    }
+    if input.body_length > 1_048_576 {
+        return write_error(error, error_capacity, "HTTP request body exceeds 1048576 bytes");
+    }
+    if input.max_bytes < 0 {
+        return write_error(error, error_capacity, "max_bytes out of range");
+    }
+    if input.max_bytes > 16_777_216 {
+        return write_error(error, error_capacity, "max_bytes must be at most 16777216");
+    }
+    if !(1..=30_000).contains(&input.timeout_ms) {
+        return write_error(error, error_capacity, "timeout_ms must be between 1 and 30000");
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<HttpFetchResult, String> {
+        let method = unsafe { std::slice::from_raw_parts(input.method, input.method_length) };
+        let method = std::str::from_utf8(method).map_err(|_| "invalid HTTP method encoding")?;
+        let url = unsafe { std::slice::from_raw_parts(input.url, input.url_length) };
+        let url = std::str::from_utf8(url).map_err(|_| "invalid HTTP URL encoding")?;
+        let (url, _) = net::http_url(url)?;
+        let headers = if input.header_count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(input.headers, input.header_count) }
+        };
+        let mut header_strings = Vec::with_capacity(headers.len());
+        let mut header_bytes = 0usize;
+        for &box_pointer in headers {
+            if box_pointer.is_null() {
+                return Err("invalid HTTP request header".into());
+            }
+            let length = unsafe { ptr::read_unaligned(box_pointer.cast::<u64>()) } as usize;
+            header_bytes = header_bytes.saturating_add(length);
+            if header_bytes > 8192 {
+                return Err("HTTP request headers exceed 32 fields or 8192 bytes".into());
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(box_pointer.add(8), length) };
+            let value = std::str::from_utf8(bytes)
+                .map_err(|_| "invalid HTTP request header encoding")?;
+            header_strings.push(value.to_owned());
+        }
+        let body = if input.body_length == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(input.body, input.body_length) }
+        };
+        let response = net::request(
+            url,
+            method,
+            &header_strings,
+            body,
+            input.max_bytes as usize,
+            Duration::from_millis(input.timeout_ms as u64),
+        )?;
+        let origin = match response.peer {
+            Some(peer) => format!("HTTP {method} {} {} (peer {peer})", response.status, response.url),
+            None => format!("HTTP {method} {} {}", response.status, response.url),
+        };
+        let request_sha256 = Sha256::digest(body)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok(HttpFetchResult {
+            bytes: response.bytes,
+            label: response.url,
+            origin,
+            status: response.status,
+            request_sha256,
+            headers: response.headers,
+        })
+    }));
+    match result {
+        Ok(Ok(response)) => {
+            unsafe { *out = Box::into_raw(Box::new(response)).cast() };
+            0
+        }
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "HTTP request failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_response_number(handle: *const c_void, kind: u32) -> usize {
+    let Some(response) = (unsafe { handle.cast::<HttpFetchResult>().as_ref() }) else {
+        return usize::MAX;
+    };
+    match kind {
+        1 => usize::from(response.status),
+        2 => response.headers.len(),
+        _ => usize::MAX,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_http_response_header_copy(
+    handle: *const c_void,
+    index: usize,
+    kind: u32,
+    output: *mut u8,
+    capacity: usize,
+) -> usize {
+    let Some(response) = (unsafe { handle.cast::<HttpFetchResult>().as_ref() }) else {
+        return usize::MAX;
+    };
+    let Some((name, value)) = response.headers.get(index) else {
+        return usize::MAX;
+    };
+    let bytes = match kind {
+        1 => name.as_bytes(),
+        2 => value.as_bytes(),
+        _ => return usize::MAX,
+    };
+    if !output.is_null() && capacity >= bytes.len() {
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), output, bytes.len()) };
+    }
+    bytes.len()
 }
 
 struct DecodedCollection {

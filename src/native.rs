@@ -536,6 +536,7 @@ enum Scalar {
     Str,
     Bytes,
     Source,
+    HttpResponse,
     Instruction,
     Disassembly,
     Format,
@@ -554,6 +555,7 @@ enum Scalar {
     ListStr,
     ListBytes,
     ListSource,
+    ListHttpResponse,
     ListFormat,
     ListSection,
     ListObservation,
@@ -574,6 +576,7 @@ enum ResultValue {
     Str,
     Bytes,
     Source,
+    HttpResponse,
     Format,
     Section,
     Observation,
@@ -589,6 +592,7 @@ enum ResultValue {
     ListStr,
     ListBytes,
     ListSource,
+    ListHttpResponse,
     ListFormat,
     ListSection,
     ListObservation,
@@ -610,6 +614,7 @@ impl ResultValue {
             Scalar::Str => Some(Self::Str),
             Scalar::Bytes => Some(Self::Bytes),
             Scalar::Source => Some(Self::Source),
+            Scalar::HttpResponse => Some(Self::HttpResponse),
             Scalar::Format => Some(Self::Format),
             Scalar::Section => Some(Self::Section),
             Scalar::Observation => Some(Self::Observation),
@@ -625,6 +630,7 @@ impl ResultValue {
             Scalar::ListStr => Some(Self::ListStr),
             Scalar::ListBytes => Some(Self::ListBytes),
             Scalar::ListSource => Some(Self::ListSource),
+            Scalar::ListHttpResponse => Some(Self::ListHttpResponse),
             Scalar::ListFormat => Some(Self::ListFormat),
             Scalar::ListSection => Some(Self::ListSection),
             Scalar::ListObservation => Some(Self::ListObservation),
@@ -647,6 +653,7 @@ impl ResultValue {
             Self::Str => Scalar::Str,
             Self::Bytes => Scalar::Bytes,
             Self::Source => Scalar::Source,
+            Self::HttpResponse => Scalar::HttpResponse,
             Self::Format => Scalar::Format,
             Self::Section => Scalar::Section,
             Self::Observation => Scalar::Observation,
@@ -662,6 +669,7 @@ impl ResultValue {
             Self::ListStr => Scalar::ListStr,
             Self::ListBytes => Scalar::ListBytes,
             Self::ListSource => Scalar::ListSource,
+            Self::ListHttpResponse => Scalar::ListHttpResponse,
             Self::ListFormat => Scalar::ListFormat,
             Self::ListSection => Scalar::ListSection,
             Self::ListObservation => Scalar::ListObservation,
@@ -685,6 +693,7 @@ impl Scalar {
             Self::Str => Ok(Self::ListStr),
             Self::Bytes => Ok(Self::ListBytes),
             Self::Source => Ok(Self::ListSource),
+            Self::HttpResponse => Ok(Self::ListHttpResponse),
             Self::Format => Ok(Self::ListFormat),
             Self::Section => Ok(Self::ListSection),
             Self::Observation => Ok(Self::ListObservation),
@@ -706,6 +715,7 @@ impl Scalar {
             Self::ListStr => Some(Self::Str),
             Self::ListBytes => Some(Self::Bytes),
             Self::ListSource => Some(Self::Source),
+            Self::ListHttpResponse => Some(Self::HttpResponse),
             Self::ListFormat => Some(Self::Format),
             Self::ListSection => Some(Self::Section),
             Self::ListObservation => Some(Self::Observation),
@@ -1735,6 +1745,7 @@ fn scalar_type(annotation: &str) -> Result<Scalar, String> {
         "str" => Ok(Scalar::Str),
         "bytes" => Ok(Scalar::Bytes),
         "Source" => Ok(Scalar::Source),
+        "HttpResponse" => Ok(Scalar::HttpResponse),
         "Instruction" => Ok(Scalar::Instruction),
         "Disassembly" => Ok(Scalar::Disassembly),
         "Format" => Ok(Scalar::Format),
@@ -2349,9 +2360,10 @@ impl Codegen {
             Scalar::Finding => self.print_finding(true)?,
             Scalar::Instruction => self.print_impact_instruction()?,
             Scalar::Disassembly => self.print_impact_disassembly()?,
+            Scalar::HttpResponse => self.print_impact_http_response()?,
             _ => {
                 return Err(
-                    "impact expects Observation, Format, Section, Diff, Finding, Instruction, or Disassembly in native programs".into(),
+                    "impact expects Observation, Format, Section, Diff, Finding, Instruction, Disassembly, or HttpResponse in native programs".into(),
                 )
             }
         }
@@ -2402,6 +2414,24 @@ impl Codegen {
         self.print_asm_disassembly_number(disassembly_slot, 1, 0)?;
         self.write_const(", blocks: ")?;
         self.print_asm_disassembly_number(disassembly_slot, 2, 0)?;
+        self.write_const(" }")
+    }
+
+    fn print_impact_http_response(&mut self) -> Result<(), String> {
+        let response = self.reserve_slot()?;
+        let source = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax+8]\n    mov QWORD PTR [rbp-{}], r10", response * 8, source * 8).unwrap();
+        self.write_const("impact { http_status: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]", response * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const(", request_sha256: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]", response * 8).unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(", ")?;
+        self.print_impact_source_fields(source, 0, "source", "origin", "sha256", Some("body_size"))?;
+        self.write_const(", headers: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]", response * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
         self.write_const(" }")
     }
 
@@ -2967,6 +2997,7 @@ impl Codegen {
             }
             Scalar::Bytes => self.print_bytes(depth + 1)?,
             Scalar::Source => self.print_source(depth + 1)?,
+            Scalar::HttpResponse => self.print_http_response(depth + 1)?,
             Scalar::Instruction => {
                 writeln!(self.code, "    mov {}, rax\n    call gak_native_asm_display", self.arg0()).unwrap();
                 let ready = self.label();
@@ -3319,6 +3350,27 @@ impl Codegen {
         writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]\n    sub rax, QWORD PTR [r10+16]", source_slot * 8).unwrap();
         self.print_value(Scalar::UInt, depth)?;
         self.write_const(" bytes)")
+    }
+
+    fn print_http_response(&mut self, depth: usize) -> Result<(), String> {
+        let response = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", response * 8).unwrap();
+        self.write_const("http_response(status: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+24]", response * 8).unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const(", request_sha256: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]", response * 8).unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const(", body_sha256: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+8]\n    mov rax, QWORD PTR [r10+40]", response * 8).unwrap();
+        self.print_value(Scalar::Str, depth)?;
+        self.write_const(", ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+8]\n    mov rax, QWORD PTR [r10+24]\n    sub rax, QWORD PTR [r10+16]", response * 8).unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const(" bytes, ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]", response * 8).unwrap();
+        self.print_value(Scalar::UInt, depth)?;
+        self.write_const(" headers)")
     }
 
     fn print_format(&mut self, depth: usize) -> Result<(), String> {
@@ -4860,6 +4912,64 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
+        if name == "request" && args.len() == 6 {
+            let mut slots = Vec::with_capacity(6);
+            for (index, argument) in args.iter().enumerate() {
+                let kind = self.expr(argument, scope)?;
+                let valid = match index {
+                    0 | 1 => kind == Scalar::Str,
+                    2 => matches!(kind, Scalar::ListStr | Scalar::ListEmpty),
+                    3 => matches!(kind, Scalar::Str | Scalar::Bytes),
+                    _ => kind == Scalar::Int,
+                };
+                if !valid {
+                    return Err(format!("net.request argument {} has the wrong type", index + 1));
+                }
+                let slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
+                slots.push(slot);
+            }
+            let array = (0..6).map(|_| self.reserve_slot()).collect::<Result<Vec<_>, _>>()?;
+            for (index, slot) in slots.iter().enumerate() {
+                writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rbp-{}], r10", slot * 8, array[5 - index] * 8).unwrap();
+            }
+            let response = self.reserve_slot()?;
+            writeln!(self.code, "    lea {}, [rbp-{}]\n    call gak_native_net_request", self.arg0(), array[5] * 8).unwrap();
+            self.process_checked_result();
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    call gak_native_net_response_payload", response * 8, self.arg0()).unwrap();
+            self.process_source_result()?;
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_net_response_set_body\n    mov rax, QWORD PTR [rbp-{}]", self.arg0(), response * 8, self.arg1(), response * 8).unwrap();
+            self.uses_net = true;
+            return Ok(Scalar::HttpResponse);
+        }
+        if name == "status" && args.len() == 1 {
+            if self.expr(&args[0], scope)? != Scalar::HttpResponse {
+                return Err("net.status expects HttpResponse".into());
+            }
+            self.code.push_str("    mov rax, QWORD PTR [rax+24]\n");
+            return Ok(Scalar::Int);
+        }
+        if name == "body" && args.len() == 1 {
+            if self.expr(&args[0], scope)? != Scalar::HttpResponse {
+                return Err("net.body expects HttpResponse".into());
+            }
+            self.code.push_str("    mov rax, QWORD PTR [rax+8]\n");
+            return Ok(Scalar::Source);
+        }
+        if name == "headers" && args.len() == 2 {
+            if self.expr(&args[0], scope)? != Scalar::HttpResponse {
+                return Err("net.headers expects HttpResponse".into());
+            }
+            let response = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", response * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Str {
+                return Err("net.headers name must be str".into());
+            }
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_net_response_headers", self.arg0(), response * 8, self.arg1()).unwrap();
+            self.process_checked_result();
+            self.uses_net = true;
+            return Ok(Scalar::ListStr);
+        }
         if name == "fetch" && args.len() == 3 {
             let mut slots = [0; 3];
             for (index, argument) in args.iter().enumerate() {

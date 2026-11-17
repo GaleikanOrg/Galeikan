@@ -1580,6 +1580,7 @@ fn native_http_fetch_matches_vm_with_grants_and_response_limits() {
                     Err(error) => panic!("test HTTP listener failed: {error}"),
                 }
             };
+            stream.set_nonblocking(false).unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
             let mut request = Vec::new();
             let mut chunk = [0u8; 1024];
@@ -1613,6 +1614,80 @@ fn native_http_fetch_matches_vm_with_grants_and_response_limits() {
     assert!(!vm_limited.status.success());
     assert!(!native_limited.status.success());
     assert_eq!(native_limited.stderr, vm_limited.stderr);
+}
+
+#[test]
+fn native_http_request_matches_vm_response_and_header_access() {
+    if !gcc_available() {
+        return;
+    }
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    if TcpStream::connect(probe.local_addr().unwrap()).is_err() {
+        eprintln!("loopback TCP is unavailable; HTTP integration test skipped");
+        return;
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap().to_string();
+    let s = Sandbox::new();
+    let script = s.write("http-request.gak", &format!(
+        "requires {{ net.connect }}\nfrom std.net import request, status, body, headers\nfrom std.binary import size, sha256\nlet reply: HttpResponse = request(\"POST\", \"http://{endpoint}/submit\", [\"X-Trace: test\"], \"PING\", 4, 2000)\nprint reply\nprint status(reply)\nprint headers(reply, \"X-Trace\")\nprint size(body(reply))\nprint sha256(body(reply))\nimpact reply\n"
+    ));
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let denied = Command::new(&executable).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("network access not allowed"));
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let mut stream = accept_bounded(&listener);
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") || !request.ends_with(b"PING") {
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            assert!(request.starts_with(b"POST /submit HTTP/1.1\r\n"));
+            assert!(String::from_utf8_lossy(&request).to_ascii_lowercase().contains("x-trace: test\r\n"));
+            stream.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 4\r\nX-Trace: alpha\r\nConnection: close\r\n\r\nGAK\0").unwrap();
+        }
+    });
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run").arg(&script)
+        .args(["--engine", "vm", "--allow-connect", &endpoint])
+        .output().unwrap();
+    let native = Command::new(&executable)
+        .args(["--allow-connect", &endpoint]).output().unwrap();
+    server.join().unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
+fn native_http_request_rejects_get_body_like_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write("invalid-http-request.gak",
+        "requires { net.connect }\nfrom std.net import request\nprint request(\"GET\", \"http://127.0.0.1:9/\", [], \"PING\", 4, 2000)\n");
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run").arg(&script)
+        .args(["--engine", "vm", "--allow-connect", "127.0.0.1:9"])
+        .output().unwrap();
+    let native = Command::new(executable)
+        .args(["--allow-connect", "127.0.0.1:9"])
+        .output().unwrap();
+    assert!(!vm.status.success());
+    assert!(!native.status.success());
+    assert!(String::from_utf8_lossy(&vm.stderr).contains("GET and HEAD requests must have an empty body"));
+    assert_eq!(native.stderr, vm.stderr);
 }
 
 #[test]

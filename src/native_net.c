@@ -48,6 +48,39 @@ typedef struct {
     uint8_t *origin;
 } GakNetSource;
 
+typedef struct GakHttpResponse {
+    struct GakHttpResponse *next_owned;
+    void *body_source;
+    GakNetSource *payload;
+    uint64_t status;
+    uint8_t *request_sha256;
+    uint64_t header_count;
+    uint8_t **header_names;
+    uint8_t **header_values;
+} GakHttpResponse;
+
+typedef struct {
+    const uint8_t *method;
+    size_t method_length;
+    const uint8_t *url;
+    size_t url_length;
+    const uint8_t *const *headers;
+    size_t header_count;
+    const uint8_t *body;
+    size_t body_length;
+    int64_t max_bytes;
+    int64_t timeout_ms;
+} GakHttpRequest;
+
+static GakHttpResponse *owned_http_responses;
+static size_t owned_http_count;
+typedef struct GakHttpHeaderList {
+    struct GakHttpHeaderList *next;
+    uint64_t values[];
+} GakHttpHeaderList;
+static GakHttpHeaderList *owned_http_header_lists;
+static size_t owned_http_header_list_bytes;
+
 typedef struct {
     struct sockaddr_storage address;
     socklen_t length;
@@ -92,6 +125,12 @@ extern int32_t galeikan_http_fetch(const uint8_t *url, size_t length,
 extern size_t galeikan_http_fetch_copy(const void *handle, uint32_t kind,
                                        uint8_t *output, size_t capacity);
 extern void galeikan_http_fetch_free(void *handle);
+extern int32_t galeikan_http_request(const GakHttpRequest *input, void **out,
+                                     uint8_t *error, size_t error_capacity);
+extern size_t galeikan_http_response_number(const void *handle, uint32_t kind);
+extern size_t galeikan_http_response_header_copy(const void *handle, size_t index,
+                                                 uint32_t kind, uint8_t *output,
+                                                 size_t capacity);
 
 static void gak_net_fail(const char *format, ...) {
     char message[4096];
@@ -545,6 +584,219 @@ GakNetSource *gak_native_net_fetch(const uint8_t *url_box, int64_t max_bytes,
         return NULL;
     }
     return result;
+}
+
+static uint8_t *gak_http_header_box(const void *handle, size_t index, uint32_t kind) {
+    size_t length = galeikan_http_response_header_copy(handle, index, kind, NULL, 0);
+    if (length == SIZE_MAX || length > 32768) return NULL;
+    uint8_t *temporary = malloc(length ? length : 1);
+    if (!temporary) return NULL;
+    if (galeikan_http_response_header_copy(handle, index, kind, temporary, length) != length) {
+        free(temporary);
+        return NULL;
+    }
+    uint8_t *box = gak_native_metadata_box((const char *)temporary, length);
+    free(temporary);
+    return box;
+}
+
+static void gak_http_release_response(GakHttpResponse *response) {
+    if (!response) return;
+    if (response->payload) {
+        free(response->payload->backing);
+        gak_native_metadata_release(response->payload->label);
+        gak_native_metadata_release(response->payload->origin);
+        free(response->payload);
+    }
+    gak_native_metadata_release(response->request_sha256);
+    for (size_t index = 0; index < response->header_count; index++) {
+        if (response->header_names) gak_native_metadata_release(response->header_names[index]);
+        if (response->header_values) gak_native_metadata_release(response->header_values[index]);
+    }
+    free(response->header_names);
+    free(response->header_values);
+    free(response);
+}
+
+static void gak_http_release_all(void) {
+    while (owned_http_header_lists) {
+        GakHttpHeaderList *next = owned_http_header_lists->next;
+        free(owned_http_header_lists);
+        owned_http_header_lists = next;
+    }
+    while (owned_http_responses) {
+        GakHttpResponse *next = owned_http_responses->next_owned;
+        gak_http_release_response(owned_http_responses);
+        owned_http_responses = next;
+    }
+}
+
+GakHttpResponse *gak_native_net_request(const uint64_t args[6]) {
+    gak_file_error = NULL;
+    if (!args || !args[0] || !args[1] || !args[2] || !args[3]) {
+        gak_net_fail("invalid HTTP request input");
+        return NULL;
+    }
+    const uint8_t *method = (const uint8_t *)(uintptr_t)args[0];
+    const uint8_t *url = (const uint8_t *)(uintptr_t)args[1];
+    const uint64_t *headers = (const uint64_t *)(uintptr_t)args[2];
+    const uint8_t *body = (const uint8_t *)(uintptr_t)args[3];
+    uint64_t url_length = gak_net_length(url);
+    if (url_length > 4096 || owned_http_count >= 1024) {
+        gak_net_fail("invalid HTTP request input");
+        return NULL;
+    }
+    if (headers[0] > 32) {
+        gak_net_fail("HTTP request headers exceed 32 fields or 8192 bytes");
+        return NULL;
+    }
+    if (gak_net_length(body) > GAK_NET_REQUEST_LIMIT) {
+        gak_net_fail("HTTP request body exceeds 1048576 bytes");
+        return NULL;
+    }
+    uint8_t error[1024] = {0};
+    uint8_t authority[512] = {0};
+    if (galeikan_http_authority(url + 8, (size_t)url_length, authority,
+                                sizeof authority, error, sizeof error)) {
+        gak_net_fail("%s", error);
+        return NULL;
+    }
+    if (!gak_native_net_allowed((const char *)authority)) {
+        gak_net_fail("network access not allowed: %s", authority);
+        return NULL;
+    }
+    GakHttpRequest request = {
+        method + 8, (size_t)gak_net_length(method),
+        url + 8, (size_t)url_length,
+        (const uint8_t *const *)(headers + 1), (size_t)headers[0],
+        body + 8, (size_t)gak_net_length(body),
+        (int64_t)args[4], (int64_t)args[5]
+    };
+    void *handle = NULL;
+    if (galeikan_http_request(&request, &handle, error, sizeof error)) {
+        gak_net_fail("%s", error);
+        return NULL;
+    }
+    size_t status = galeikan_http_response_number(handle, 1);
+    size_t count = galeikan_http_response_number(handle, 2);
+    if (status == SIZE_MAX || count > 64) {
+        galeikan_http_fetch_free(handle);
+        gak_net_fail("invalid HTTP response");
+        return NULL;
+    }
+    GakHttpResponse *result = calloc(1, sizeof *result);
+    if (!result) {
+        galeikan_http_fetch_free(handle);
+        gak_net_fail("native allocation failed");
+        return NULL;
+    }
+    result->status = (uint64_t)status;
+    result->header_count = (uint64_t)count;
+    result->header_names = calloc(count ? count : 1, sizeof(uint8_t *));
+    result->header_values = calloc(count ? count : 1, sizeof(uint8_t *));
+    result->request_sha256 = gak_http_result_box(handle, 4, 64, 1);
+    result->payload = calloc(1, sizeof(GakNetSource));
+    if (result->payload) {
+        result->payload->backing = gak_http_result_box(handle, 1, GAK_NET_RESPONSE_LIMIT, 0);
+        result->payload->label = gak_http_result_box(handle, 2, 65536, 1);
+        result->payload->origin = gak_http_result_box(handle, 3, 65536, 1);
+    }
+    for (size_t index = 0; index < count && result->header_names && result->header_values; index++) {
+        result->header_names[index] = gak_http_header_box(handle, index, 1);
+        result->header_values[index] = gak_http_header_box(handle, index, 2);
+    }
+    galeikan_http_fetch_free(handle);
+    int valid = result->header_names && result->header_values && result->request_sha256 &&
+                result->payload && result->payload->backing && result->payload->label &&
+                result->payload->origin;
+    for (size_t index = 0; index < count; index++)
+        valid = valid && result->header_names && result->header_values &&
+                result->header_names[index] && result->header_values[index];
+    if (!valid || (owned_http_count == 0 && atexit(gak_http_release_all))) {
+        gak_http_release_response(result);
+        if (!gak_file_error) gak_net_fail("native HTTP response exceeds memory limits");
+        return NULL;
+    }
+    result->next_owned = owned_http_responses;
+    owned_http_responses = result;
+    owned_http_count++;
+    return result;
+}
+
+GakNetSource *gak_native_net_response_payload(GakHttpResponse *response) {
+    gak_file_error = NULL;
+    if (!response || !response->payload) {
+        gak_net_fail("invalid HttpResponse body");
+        return NULL;
+    }
+    GakNetSource *payload = response->payload;
+    response->payload = NULL;
+    return payload;
+}
+
+void gak_native_net_response_set_body(GakHttpResponse *response, void *source) {
+    if (response) response->body_source = source;
+}
+
+static unsigned char gak_ascii_lower(unsigned char ch) {
+    return ch >= 'A' && ch <= 'Z' ? (unsigned char)(ch + ('a' - 'A')) : ch;
+}
+
+uint64_t *gak_native_net_response_headers(const GakHttpResponse *response,
+                                           const uint8_t *name) {
+    gak_file_error = NULL;
+    if (!response || !name) {
+        gak_net_fail("invalid HTTP header name");
+        return NULL;
+    }
+    uint64_t length = gak_net_length(name);
+    if (!length || length > 32768) {
+        gak_net_fail("invalid HTTP header name");
+        return NULL;
+    }
+    for (size_t index = 0; index < length; index++) {
+        unsigned char ch = name[index + 8];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') ||
+              (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch)))) {
+            gak_net_fail("invalid HTTP header name");
+            return NULL;
+        }
+    }
+    uint64_t matches = 0;
+    for (size_t index = 0; index < response->header_count; index++) {
+        uint8_t *field = response->header_names[index];
+        if (gak_net_length(field) != length) continue;
+        size_t at = 0;
+        for (; at < length; at++)
+            if (gak_ascii_lower(name[at + 8]) != gak_ascii_lower(field[at + 8])) break;
+        if (at == length) matches++;
+    }
+    size_t allocation = sizeof(GakHttpHeaderList) + (matches + 1) * sizeof(uint64_t);
+    if (allocation > 16777216u - owned_http_header_list_bytes) {
+        gak_net_fail("LimitExceeded: HTTP header lists exceed 16777216 bytes");
+        return NULL;
+    }
+    GakHttpHeaderList *list = malloc(allocation);
+    if (!list) {
+        gak_net_fail("native allocation failed");
+        return NULL;
+    }
+    uint64_t *values = list->values;
+    values[0] = matches;
+    size_t cursor = 1;
+    for (size_t index = 0; index < response->header_count; index++) {
+        uint8_t *field = response->header_names[index];
+        if (gak_net_length(field) != length) continue;
+        size_t at = 0;
+        for (; at < length; at++)
+            if (gak_ascii_lower(name[at + 8]) != gak_ascii_lower(field[at + 8])) break;
+        if (at == length) values[cursor++] = (uint64_t)(uintptr_t)response->header_values[index];
+    }
+    list->next = owned_http_header_lists;
+    owned_http_header_lists = list;
+    owned_http_header_list_bytes += allocation;
+    return values;
 }
 
 GakNetSource *gak_native_net_exchange(const uint8_t *host_box, int64_t port,
