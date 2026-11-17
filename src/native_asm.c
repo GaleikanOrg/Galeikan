@@ -581,6 +581,33 @@ uint64_t *gak_native_asm_block_successors(const GakAsmDisassembly *disassembly,
     return result;
 }
 
+uint64_t *gak_native_asm_block_path(const GakAsmDisassembly *disassembly,
+                                    int64_t from, int64_t to) {
+    gak_asm_error = NULL;
+    if (!disassembly || from < 0 || to < 0) {
+        gak_asm_fail("block index out of range");
+        return NULL;
+    }
+    size_t count = galeikan_asm_disassembly_block_path(disassembly->decoded,
+                                                        (size_t)from, (size_t)to,
+                                                        NULL, 0);
+    if (count == SIZE_MAX) {
+        gak_asm_fail("block index out of range");
+        return NULL;
+    }
+    uint64_t *result = gak_asm_box_u64_list(count);
+    if (!result) return NULL;
+    if (galeikan_asm_disassembly_block_path(disassembly->decoded,
+                                            (size_t)from, (size_t)to,
+                                            result + 1, count) != count) {
+        boxed_list_bytes -= (count + 1) * sizeof(uint64_t);
+        free(result);
+        gak_asm_fail("cannot read block path");
+        return NULL;
+    }
+    return result;
+}
+
 uint64_t *gak_native_asm_references(const GakAsmDisassembly *disassembly,
                                      uint32_t kind, uint64_t target) {
     gak_asm_error = NULL;

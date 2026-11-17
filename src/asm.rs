@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use iced_x86::{
     Decoder, DecoderOptions, FlowControl, Formatter, InstructionInfoFactory,
@@ -290,6 +290,45 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
     Ok(result)
 }
 
+/// Return the shortest path of known block starts, ignoring edges outside the
+/// decoded graph. Successor order determines ties between equal-length paths.
+pub fn block_path(blocks: &[Block], from: usize, to: usize) -> Result<Vec<u64>, String> {
+    if from >= blocks.len() || to >= blocks.len() {
+        return Err("block index out of range".into());
+    }
+    let by_start: HashMap<u64, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.start, index))
+        .collect();
+    let mut previous = vec![None; blocks.len()];
+    let mut visited = vec![false; blocks.len()];
+    let mut queue = VecDeque::from([from]);
+    visited[from] = true;
+    while let Some(index) = queue.pop_front() {
+        if index == to {
+            let mut path = Vec::new();
+            let mut cursor = Some(index);
+            while let Some(at) = cursor {
+                path.push(blocks[at].start);
+                cursor = previous[at];
+            }
+            path.reverse();
+            return Ok(path);
+        }
+        for successor in &blocks[index].successors {
+            if let Some(&next) = by_start.get(successor) {
+                if !visited[next] {
+                    visited[next] = true;
+                    previous[next] = Some(index);
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+    Ok(Vec::new())
+}
+
 /// Direct branch and call sites that name `target`, in instruction order.
 pub fn xrefs(instructions: &[&Decoded], target: u64) -> Vec<u64> {
     instructions
@@ -350,7 +389,7 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs};
+    use super::{block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
@@ -538,6 +577,31 @@ mod tests {
         let graph = blocks(&decoded).unwrap();
         assert!(graph[0].unresolved);
         assert_eq!(graph[0].successors, [0x3081]);
+    }
+
+    #[test]
+    fn block_path_uses_shortest_known_edges_and_checks_indices() {
+        let block = |start, successors: &[u64]| Block {
+            start,
+            end: start + 1,
+            first_index: 0,
+            instruction_count: 1,
+            successors: successors.to_vec(),
+            unresolved: false,
+        };
+        let graph = [
+            block(0x10, &[0x20, 0x30, 0x999]),
+            block(0x20, &[0x40]),
+            block(0x30, &[0x30, 0x50]),
+            block(0x40, &[]),
+            block(0x50, &[0x40]),
+        ];
+        assert_eq!(block_path(&graph, 0, 3).unwrap(), [0x10, 0x20, 0x40]);
+        assert_eq!(block_path(&graph, 0, 4).unwrap(), [0x10, 0x30, 0x50]);
+        assert!(block_path(&graph, 1, 4).unwrap().is_empty());
+        assert_eq!(block_path(&graph, 3, 3).unwrap(), [0x40]);
+        assert_eq!(block_path(&graph, 5, 0).unwrap_err(), "block index out of range");
+        assert_eq!(block_path(&graph, 0, 5).unwrap_err(), "block index out of range");
     }
 
     #[test]

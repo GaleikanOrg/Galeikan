@@ -6779,6 +6779,18 @@ impl Runtime {
             ("block_count", [Value::Disassembly(disassembly)]) => {
                 Ok(Value::Int(disassembly.blocks.len() as i64))
             }
+            ("block_path", [Value::Disassembly(disassembly), from, to]) => {
+                let from = usize::try_from(from.as_int()?)
+                    .map_err(|_| "block index out of range")?;
+                let to = usize::try_from(to.as_int()?)
+                    .map_err(|_| "block index out of range")?;
+                make_list(
+                    asm::block_path(&disassembly.blocks, from, to)?
+                        .into_iter()
+                        .map(Value::UInt)
+                        .collect(),
+                )
+            }
             ("block_instruction", [Value::Disassembly(disassembly), block, within]) => {
                 let block =
                     usize::try_from(block.as_int()?).map_err(|_| "block index out of range")?;
@@ -9086,6 +9098,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         if name == "block_count" {
             check_arguments(&qualified, args, &[Disassembly])?;
             return Ok(Int);
+        }
+        if name == "block_path" {
+            check_arguments(&qualified, args, &[Disassembly, Int, Int])?;
+            return Ok(Type::List(Some(ResultKind::UInt)));
         }
         if name == "block_instruction" {
             check_arguments(&qualified, args, &[Disassembly, Int, Int])?;

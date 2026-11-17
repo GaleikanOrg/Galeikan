@@ -5908,6 +5908,7 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "let lines: Disassembly = asm.reachable(source, 0, 0x8000000000000000u64, 64, 4)\n",
             "let edges: List<u64> = asm.successors(asm.at(lines, 0))\n",
             "let block_edges: List<u64> = asm.block_successors(lines, 0)\n",
+            "let direct: List<u64> = asm.block_path(lines, 0, 2)\n",
             "let incoming: List<u64> = asm.xrefs(lines, 0x8000000000000005u64)\n",
             "print asm.count(lines)\nprint asm.block_count(lines)\nprint asm.overlap_count(lines)\n",
             "print asm.block_start(lines, 0)\nprint asm.block_end(lines, 0)\n",
@@ -5915,6 +5916,9 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "print asm.mnemonic(asm.at(lines, 0))\nprint asm.address_u64(asm.at(lines, 3))\n",
             "print asm.overlap_at(lines, 0)\nprint list.count(edges)\nprint edges[0]\nprint edges[1]\n",
             "print block_edges[1]\nprint list.count(incoming)\nprint incoming[0]\n",
+            "print list.count(direct)\nprint direct[0]\nprint direct[1]\n",
+            "print list.count(asm.block_path(lines, 1, 2))\n",
+            "print asm.block_path(lines, 2, 2)[0]\n",
             "print list.count(asm.call_targets(lines))\nprint list.count(asm.data_refs(lines))\n",
             "print list.count(asm.data_xrefs(lines, 0u64))\n",
             "for instruction in lines {\n    print asm.mnemonic(instruction)\n}\n",
@@ -5928,6 +5932,14 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
         .output()
         .unwrap();
     assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    let ast = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "ast"])
+        .output()
+        .unwrap();
+    assert!(ast.status.success(), "{}", String::from_utf8_lossy(&ast.stderr));
+    assert_eq!(ast.stdout, vm.stdout);
     let built = s.compile(&script);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
@@ -5950,6 +5962,11 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "reachable-at.gak",
             "print asm.at(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 1)",
             "instruction index out of range",
+        ),
+        (
+            "reachable-path.gak",
+            "print asm.block_path(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 0, 1)",
+            "block index out of range",
         ),
     ] {
         let script = s.write(name, &format!("import std.binary\nimport std.asm\n{body}\n"));

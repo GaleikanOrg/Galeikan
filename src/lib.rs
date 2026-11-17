@@ -698,6 +698,31 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_block_successor(
     optional_address(address, output)
 }
 
+/// Return the shortest known CFG path as block start addresses. An invalid
+/// block index returns `usize::MAX`; an unreachable target returns zero.
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// writable for `capacity` `u64` values without overlapping the handle.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block_path(
+    handle: *const c_void,
+    from: usize,
+    to: usize,
+    output: *mut u64,
+    capacity: usize,
+) -> usize {
+    let Some(collection) = (unsafe { handle.cast::<DecodedCollection>().as_ref() }) else {
+        return usize::MAX;
+    };
+    let Ok(path) = asm::block_path(&collection.blocks, from, to) else {
+        return usize::MAX;
+    };
+    if !output.is_null() && capacity >= path.len() {
+        unsafe { ptr::copy_nonoverlapping(path.as_ptr(), output, path.len()) };
+    }
+    path.len()
+}
+
 /// Query direct call targets, data references, direct xrefs, or data xrefs.
 /// Returns the required count and copies only when capacity is sufficient.
 /// # Safety

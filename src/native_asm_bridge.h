@@ -39,6 +39,9 @@ int32_t galeikan_asm_disassembly_block_successor(const void *handle,
                                                  size_t block_index,
                                                  size_t successor_index,
                                                  uint64_t *output);
+size_t galeikan_asm_disassembly_block_path(const void *handle, size_t from,
+                                           size_t to, uint64_t *output,
+                                           size_t capacity);
 /* kind: 1=call targets, 2=data refs, 3=xrefs, 4=data xrefs. */
 size_t galeikan_asm_disassembly_references(const void *handle, uint32_t kind,
                                             uint64_t target, uint64_t *output,
