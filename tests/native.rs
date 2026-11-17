@@ -9884,6 +9884,61 @@ print message(invalid())
 }
 
 #[test]
+fn twenty_four_bit_fields_pack_and_decode_across_engines() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "fields24.gaks",
+        r#"from std.bytes import pack, to_hex
+from std.binary import from_hex, snapshot, view, deep, value, signed_value, width
+from std.result import is_error, message
+fn unsigned_overflow() -> Result<bytes> = pack(16777216, "u24le")
+fn signed_underflow() -> Result<bytes> = pack(-8388609, "i24be")
+fn truncated() -> Result<Observation> = deep(snapshot(from_hex("12 34")), 0, "u24be")
+let little = snapshot(pack(1193046, "u24le"))
+let nested = view(snapshot(from_hex("aa 12 34 56 bb")), 1, 3)
+let negative = snapshot(pack(-8388608, "i24be"))
+let maximum = snapshot(pack(16777215, "u24be"))
+print to_hex(pack(1193046, "u24le"))
+print to_hex(pack(1193046, "u24be"))
+print to_hex(pack(-2, "i24le"))
+print to_hex(pack(-2, "i24be"))
+print value(deep(little, 0, "u24le"))
+print value(deep(nested, 0, "u24be"))
+print value(deep(negative, 0, "i24be"))
+print signed_value(deep(maximum, 0, "u24be"))
+print width(deep(nested, 0, "u24be"))
+print is_error(unsigned_overflow())
+print message(unsigned_overflow())
+print is_error(signed_underflow())
+print message(signed_underflow())
+print is_error(truncated())
+print message(truncated())
+"#,
+    );
+    let expected = b"563412\n123456\nfeffff\nfffffe\n1193046\n1193046\n-8388608\n-1\n3\ntrue\npack value out of range for u24le\ntrue\npack value out of range for i24be\ntrue\nout of bounds\n";
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected);
+}
+
+#[test]
 fn native_sleb128_fields_match_vm_for_signed_values_audits_and_malformed_input() {
     if !gcc_available() {
         return;

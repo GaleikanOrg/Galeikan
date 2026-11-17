@@ -361,7 +361,7 @@ pub fn to_latin1(data: &[u8]) -> String {
 pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,
-        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
+        "i8" | "i16le" | "i16be" | "i24le" | "i24be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
     ) {
         return pack_signed(value, encoding);
     }
@@ -372,7 +372,7 @@ pub fn pack(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
 pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
     if matches!(
         encoding,
-        "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
+        "i8" | "i16le" | "i16be" | "i24le" | "i24be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
     ) {
         let signed = i64::try_from(unsigned)
             .map_err(|_| format!("pack value out of range for {encoding}"))?;
@@ -388,6 +388,9 @@ pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
             .map_err(|_| "pack value out of range for u16be")?
             .to_be_bytes()
             .to_vec(),
+        "u24le" if unsigned <= 0xff_ffff => unsigned.to_le_bytes()[..3].to_vec(),
+        "u24be" if unsigned <= 0xff_ffff => unsigned.to_be_bytes()[5..].to_vec(),
+        "u24le" | "u24be" => return Err(format!("pack value out of range for {encoding}")),
         "u32le" => u32::try_from(unsigned)
             .map_err(|_| "pack value out of range for u32le")?
             .to_le_bytes()
@@ -413,7 +416,7 @@ pub fn pack_unsigned(unsigned: u64, encoding: &str) -> Result<Vec<u8>, String> {
                 }
             }
         }
-        _ => return Err("pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128".into()),
+        _ => return Err("pack encoding must be u8, i8, u16le/be, i16le/be, u24le/be, i24le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128".into()),
     };
     Ok(out)
 }
@@ -432,6 +435,9 @@ fn pack_signed(value: i64, encoding: &str) -> Result<Vec<u8>, String> {
             .map_err(|_| "pack value out of range for i16be")?
             .to_be_bytes()
             .to_vec(),
+        "i24le" if (-8_388_608..=8_388_607).contains(&value) => value.to_le_bytes()[..3].to_vec(),
+        "i24be" if (-8_388_608..=8_388_607).contains(&value) => value.to_be_bytes()[5..].to_vec(),
+        "i24le" | "i24be" => return Err(format!("pack value out of range for {encoding}")),
         "i32le" => i32::try_from(value)
             .map_err(|_| "pack value out of range for i32le")?
             .to_le_bytes()
@@ -597,6 +603,8 @@ mod tests {
         assert_eq!(pack(0xab, "u8").unwrap(), [0xab]);
         assert_eq!(pack(0x1234, "u16le").unwrap(), [0x34, 0x12]);
         assert_eq!(pack(0x1234, "u16be").unwrap(), [0x12, 0x34]);
+        assert_eq!(pack(0x123456, "u24le").unwrap(), [0x56, 0x34, 0x12]);
+        assert_eq!(pack(0x123456, "u24be").unwrap(), [0x12, 0x34, 0x56]);
         assert_eq!(pack(0x12345678, "u32le").unwrap(), [0x78, 0x56, 0x34, 0x12]);
         assert_eq!(pack(0x12345678, "u32be").unwrap(), [0x12, 0x34, 0x56, 0x78]);
         assert_eq!(
@@ -610,6 +618,9 @@ mod tests {
         assert_eq!(pack(-128, "i8").unwrap(), [0x80]);
         assert_eq!(pack(-2, "i16le").unwrap(), [0xfe, 0xff]);
         assert_eq!(pack(-2, "i16be").unwrap(), [0xff, 0xfe]);
+        assert_eq!(pack(-2, "i24le").unwrap(), [0xfe, 0xff, 0xff]);
+        assert_eq!(pack(-2, "i24be").unwrap(), [0xff, 0xff, 0xfe]);
+        assert_eq!(pack(-8_388_608, "i24be").unwrap(), [0x80, 0, 0]);
         assert_eq!(pack(-2, "i32le").unwrap(), [0xfe, 0xff, 0xff, 0xff]);
         assert_eq!(pack(-2, "i32be").unwrap(), [0xff, 0xff, 0xff, 0xfe]);
         assert_eq!(pack(-2, "i64le").unwrap()[0], 0xfe);
@@ -626,6 +637,9 @@ mod tests {
             .contains("out of range"));
         assert!(pack(256, "u8").unwrap_err().contains("out of range"));
         assert!(pack(65536, "u16le").unwrap_err().contains("out of range"));
+        assert!(pack(16_777_216, "u24le").unwrap_err().contains("out of range"));
+        assert!(pack(-8_388_609, "i24be").unwrap_err().contains("out of range"));
+        assert!(pack(8_388_608, "i24le").unwrap_err().contains("out of range"));
         assert!(pack(4294967296, "u32be")
             .unwrap_err()
             .contains("out of range"));

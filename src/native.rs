@@ -458,16 +458,20 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_pack_negative", "pack expects a nonnegative value"),
     (
         "gak_pack_encoding",
-        "pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128",
+        "pack encoding must be u8, i8, u16le/be, i16le/be, u24le/be, i24le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128",
     ),
     ("gak_pack_range_u8", "pack value out of range for u8"),
     ("gak_pack_range_u16le", "pack value out of range for u16le"),
     ("gak_pack_range_u16be", "pack value out of range for u16be"),
+    ("gak_pack_range_u24le", "pack value out of range for u24le"),
+    ("gak_pack_range_u24be", "pack value out of range for u24be"),
     ("gak_pack_range_u32le", "pack value out of range for u32le"),
     ("gak_pack_range_u32be", "pack value out of range for u32be"),
     ("gak_pack_range_i8", "pack value out of range for i8"),
     ("gak_pack_range_i16le", "pack value out of range for i16le"),
     ("gak_pack_range_i16be", "pack value out of range for i16be"),
+    ("gak_pack_range_i24le", "pack value out of range for i24le"),
+    ("gak_pack_range_i24be", "pack value out of range for i24be"),
     ("gak_pack_range_i32le", "pack value out of range for i32le"),
     ("gak_pack_range_i32be", "pack value out of range for i32be"),
     ("gak_pack_range_i64le", "pack value out of range for i64le"),
@@ -7273,6 +7277,8 @@ impl Codegen {
                     ("u8", 1_usize, false),
                     ("u16le", 2, false),
                     ("u16be", 2, true),
+                    ("u24le", 3, false),
+                    ("u24be", 3, true),
                     ("u32le", 4, false),
                     ("u32be", 4, true),
                     ("u64le", 8, false),
@@ -7280,6 +7286,8 @@ impl Codegen {
                     ("i8", 1, false),
                     ("i16le", 2, false),
                     ("i16be", 2, true),
+                    ("i24le", 3, false),
+                    ("i24be", 3, true),
                     ("i32le", 4, false),
                     ("i32be", 4, true),
                     ("i64le", 8, false),
@@ -7313,6 +7321,7 @@ impl Codegen {
                     writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", slot * 8).unwrap();
                     let signed8 = self.label();
                     let signed16 = self.label();
+                    let signed24 = self.label();
                     let signed32 = self.label();
                     let signed64 = self.label();
                     let signed_leb = self.label();
@@ -7321,6 +7330,8 @@ impl Codegen {
                         ("i8", &signed8),
                         ("i16le", &signed16),
                         ("i16be", &signed16),
+                        ("i24le", &signed24),
+                        ("i24be", &signed24),
                         ("i32le", &signed32),
                         ("i32be", &signed32),
                         ("i64le", &signed64),
@@ -7335,6 +7346,8 @@ impl Codegen {
                             ("u8", &signed8),
                             ("u16le", &signed16),
                             ("u16be", &signed16),
+                            ("u24le", &signed24),
+                            ("u24be", &signed24),
                             ("u32le", &signed32),
                             ("u32be", &signed32),
                             ("u64le", &signed64),
@@ -7352,7 +7365,7 @@ impl Codegen {
                     } else {
                         writeln!(self.code, "    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    test rax, rax\n    js gak_observation_value_range\n    jmp {done}", slot * 8).unwrap();
                     }
-                    writeln!(self.code, "{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    jmp {done}\n{signed_leb}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, QWORD PTR [r10+16]\n    cmp rcx, 10\n    je {done}\n    imul ecx, 7\n    mov r11d, 64\n    sub r11d, ecx\n    mov ecx, r11d\n    shl rax, cl\n    sar rax, cl\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
+                    writeln!(self.code, "{signed8}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 56\n    sar rax, 56\n    jmp {done}\n{signed16}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 48\n    sar rax, 48\n    jmp {done}\n{signed24}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 40\n    sar rax, 40\n    jmp {done}\n{signed32}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    shl rax, 32\n    sar rax, 32\n    jmp {done}\n{signed64}:\n    mov rax, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rax+32]\n    jmp {done}\n{signed_leb}:\n    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]\n    mov rcx, QWORD PTR [r10+16]\n    cmp rcx, 10\n    je {done}\n    imul ecx, 7\n    mov r11d, 64\n    sub r11d, ecx\n    mov ecx, r11d\n    shl rax, cl\n    sar rax, cl\n{done}:", slot * 8, slot * 8, slot * 8, slot * 8, slot * 8, slot * 8).unwrap();
                     return Ok(Scalar::Int);
                 }
                 match name {
@@ -8039,6 +8052,20 @@ impl Codegen {
                         "rol r10w, 8\n    mov WORD PTR [rax+8], r10w",
                     ),
                     (
+                        "u24le",
+                        3,
+                        Some(0xff_ffff),
+                        None,
+                        "mov BYTE PTR [rax+8], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+9], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+10], r10b",
+                    ),
+                    (
+                        "u24be",
+                        3,
+                        Some(0xff_ffff),
+                        None,
+                        "mov BYTE PTR [rax+10], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+9], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+8], r10b",
+                    ),
+                    (
                         "u32le",
                         4,
                         Some(u32::MAX as u64),
@@ -8080,6 +8107,20 @@ impl Codegen {
                         None,
                         Some((-32768, 32767)),
                         "rol r10w, 8\n    mov WORD PTR [rax+8], r10w",
+                    ),
+                    (
+                        "i24le",
+                        3,
+                        None,
+                        Some((-8_388_608, 8_388_607)),
+                        "mov BYTE PTR [rax+8], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+9], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+10], r10b",
+                    ),
+                    (
+                        "i24be",
+                        3,
+                        None,
+                        Some((-8_388_608, 8_388_607)),
+                        "mov BYTE PTR [rax+10], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+9], r10b\n    shr r10, 8\n    mov BYTE PTR [rax+8], r10b",
                     ),
                     (
                         "i32le",
@@ -9457,9 +9498,9 @@ impl Codegen {
         out.push_str("gak_source_depth_msg: .ascii \"LimitExceeded: Source derivation depth exceeds 64\\n\"\ngak_source_depth_msg_end:\ngak_source_limit_msg: .ascii \"native Source memory exceeds 64 MiB\\n\"\ngak_source_limit_msg_end:\ngak_source_backing_limit_msg: .ascii \"native Source backing memory exceeds 512 MiB\\n\"\ngak_source_backing_limit_msg_end:\n");
         out.push_str("gak_repeat_negative_msg: .ascii \"repeat count must not be negative\\n\"\ngak_repeat_negative_msg_end:\ngak_repeat_count_limit_msg: .ascii \"repeat count exceeds 1048576\\n\"\ngak_repeat_count_limit_msg_end:\ngak_xor_empty_key_msg: .ascii \"xor key must not be empty\\n\"\ngak_xor_empty_key_msg_end:\ngak_bitwise_empty_key_msg: .ascii \"bitwise key must not be empty\\n\"\ngak_bitwise_empty_key_msg_end:\n");
         out.push_str("gak_rotate_count_msg: .ascii \"rotate count must be in 0..7\\n\"\ngak_rotate_count_msg_end:\n");
-        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128\\n\"\ngak_pack_encoding_msg_end:\n");
+        out.push_str("gak_pack_negative_msg: .ascii \"pack expects a nonnegative value\\n\"\ngak_pack_negative_msg_end:\ngak_pack_encoding_msg: .ascii \"pack encoding must be u8, i8, u16le/be, i16le/be, u24le/be, i24le/be, u32le/be, i32le/be, u64le/be, i64le/be, uleb128, or sleb128\\n\"\ngak_pack_encoding_msg_end:\n");
         for format in [
-            "u8", "u16le", "u16be", "u32le", "u32be", "i8", "i16le", "i16be", "i32le", "i32be",
+            "u8", "u16le", "u16be", "u24le", "u24be", "u32le", "u32be", "i8", "i16le", "i16be", "i24le", "i24be", "i32le", "i32be",
             "i64le", "i64be", "sleb128",
         ] {
             writeln!(out, "gak_pack_range_{format}_msg: .ascii \"pack value out of range for {format}\\n\"\ngak_pack_range_{format}_msg_end:").unwrap();
@@ -10653,11 +10694,15 @@ gak_cli_utf8_done:
             ("gak_pack_range_u8", "gak_pack_range_u8_msg"),
             ("gak_pack_range_u16le", "gak_pack_range_u16le_msg"),
             ("gak_pack_range_u16be", "gak_pack_range_u16be_msg"),
+            ("gak_pack_range_u24le", "gak_pack_range_u24le_msg"),
+            ("gak_pack_range_u24be", "gak_pack_range_u24be_msg"),
             ("gak_pack_range_u32le", "gak_pack_range_u32le_msg"),
             ("gak_pack_range_u32be", "gak_pack_range_u32be_msg"),
             ("gak_pack_range_i8", "gak_pack_range_i8_msg"),
             ("gak_pack_range_i16le", "gak_pack_range_i16le_msg"),
             ("gak_pack_range_i16be", "gak_pack_range_i16be_msg"),
+            ("gak_pack_range_i24le", "gak_pack_range_i24le_msg"),
+            ("gak_pack_range_i24be", "gak_pack_range_i24be_msg"),
             ("gak_pack_range_i32le", "gak_pack_range_i32le_msg"),
             ("gak_pack_range_i32be", "gak_pack_range_i32be_msg"),
             ("gak_pack_range_i64le", "gak_pack_range_i64le_msg"),

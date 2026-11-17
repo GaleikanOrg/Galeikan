@@ -448,7 +448,7 @@ impl Observation {
     fn is_signed(&self) -> bool {
         matches!(
             self.decoder,
-            "i8" | "i16le" | "i16be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
+            "i8" | "i16le" | "i16be" | "i24le" | "i24be" | "i32le" | "i32be" | "i64le" | "i64be" | "sleb128"
         )
     }
 
@@ -5333,6 +5333,8 @@ impl Runtime {
                     "u8" => (1, "u8"),
                     "u16le" => (2, "u16le"),
                     "u16be" => (2, "u16be"),
+                    "u24le" => (3, "u24le"),
+                    "u24be" => (3, "u24be"),
                     "u32le" => (4, "u32le"),
                     "u32be" => (4, "u32be"),
                     "u64le" => (8, "u64le"),
@@ -5340,6 +5342,8 @@ impl Runtime {
                     "i8" => (1, "i8"),
                     "i16le" => (2, "i16le"),
                     "i16be" => (2, "i16be"),
+                    "i24le" => (3, "i24le"),
+                    "i24be" => (3, "i24be"),
                     "i32le" => (4, "i32le"),
                     "i32be" => (4, "i32be"),
                     "i64le" => (8, "i64le"),
@@ -5545,6 +5549,7 @@ impl Runtime {
                 let width = match observation.decoder {
                     "u8" | "i8" => 1,
                     "u16le" | "u16be" | "i16le" | "i16be" => 2,
+                    "u24le" | "u24be" | "i24le" | "i24be" => 3,
                     "u32le" | "u32be" | "i32le" | "i32be" => 4,
                     "u64le" | "u64be" | "i64le" | "i64be" => 8,
                     "sleb128" => observation.width,
