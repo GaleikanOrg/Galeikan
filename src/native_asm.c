@@ -427,6 +427,15 @@ const GakSourceHead *gak_native_asm_disassembly_source(const GakAsmDisassembly *
     return disassembly->display_source;
 }
 
+const GakSourceHead *gak_native_asm_instruction_source(const GakAsmInstruction *instruction) {
+    gak_asm_error = NULL;
+    if (!instruction || !instruction->source) {
+        gak_asm_fail("invalid Instruction Source");
+        return NULL;
+    }
+    return instruction->source;
+}
+
 uint64_t gak_native_asm_linear_end(const GakAsmDisassembly *disassembly) {
     gak_asm_error = NULL;
     if (!disassembly) {

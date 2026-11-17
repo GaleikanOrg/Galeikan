@@ -2343,12 +2343,15 @@ impl Codegen {
         let kind = self.expr(expr, scope)?;
         match kind {
             Scalar::Observation => self.print_impact_observation()?,
+            Scalar::Format => self.print_impact_format()?,
+            Scalar::Section => self.print_impact_section()?,
             Scalar::Diff => self.print_impact_diff()?,
             Scalar::Finding => self.print_finding(true)?,
+            Scalar::Instruction => self.print_impact_instruction()?,
             Scalar::Disassembly => self.print_impact_disassembly()?,
             _ => {
                 return Err(
-                    "impact expects Observation, Diff, Finding, or Disassembly in native programs".into(),
+                    "impact expects Observation, Format, Section, Diff, Finding, Instruction, or Disassembly in native programs".into(),
                 )
             }
         }
@@ -2400,6 +2403,95 @@ impl Codegen {
         self.write_const(", blocks: ")?;
         self.print_asm_disassembly_number(disassembly_slot, 2, 0)?;
         self.write_const(" }")
+    }
+
+    fn print_impact_format(&mut self) -> Result<(), String> {
+        let format_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10", format_slot * 8, source_slot * 8).unwrap();
+        self.write_const("impact { ")?;
+        self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+        self.write_const(", ")?;
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_summary\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), format_slot * 8).unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const(" }")
+    }
+
+    fn print_impact_section(&mut self) -> Result<(), String> {
+        let section_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov r10, QWORD PTR [rax]\n    mov QWORD PTR [rbp-{}], r10", section_slot * 8, source_slot * 8).unwrap();
+        self.write_const("impact { section: \"")?;
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    call gak_native_formats_section_display_name\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), section_slot * 8).unwrap();
+        self.print_value(Scalar::Str, 0)?;
+        self.write_const("\", ")?;
+        self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+        self.write_const(", file: [")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]", section_slot * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const("..")?;
+        let no_overflow = self.label();
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+16]\n    add rax, QWORD PTR [r10+24]\n    jnc {no_overflow}\n    mov rax, -1\n{no_overflow}:", section_slot * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const("), address: 0x")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+32]", section_slot * 8).unwrap();
+        self.print_hex_u64()?;
+        self.write_const(", virtual_size: ")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+40]", section_slot * 8).unwrap();
+        self.print_value(Scalar::UInt, 0)?;
+        self.write_const(", flags: 0x")?;
+        writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+48]", section_slot * 8).unwrap();
+        self.print_hex_u64()?;
+        for (offset, prefix) in [(56, ", writable: "), (64, ", executable: ")] {
+            self.write_const(prefix)?;
+            writeln!(self.code, "    mov r10, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [r10+{offset}]", section_slot * 8).unwrap();
+            self.print_value(Scalar::Bool, 0)?;
+        }
+        self.write_const(" }")
+    }
+
+    fn print_impact_instruction(&mut self) -> Result<(), String> {
+        let instruction_slot = self.reserve_slot()?;
+        let source_slot = self.reserve_slot()?;
+        let size_slot = self.reserve_slot()?;
+        let ready = self.label();
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax\n    mov {}, rax\n    call gak_native_asm_instruction_source\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:\n    mov QWORD PTR [rbp-{}], rax", instruction_slot * 8, self.arg0(), source_slot * 8).unwrap();
+        let size_ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, 1\n    call gak_native_asm_number\n    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {size_ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{size_ready}:\n    mov QWORD PTR [rbp-{}], rax", self.arg0(), instruction_slot * 8, self.arg1(), size_slot * 8).unwrap();
+        self.build_instruction_source_view(instruction_slot, source_slot, size_slot)?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
+        self.write_const("impact { ")?;
+        self.print_impact_source_fields(source_slot, 0, "source", "origin", "sha256", None)?;
+        self.write_const(", range: [")?;
+        self.print_asm_instruction_number(instruction_slot, 2, false)?;
+        self.write_const("..")?;
+        self.print_asm_instruction_number(instruction_slot, 3, false)?;
+        self.write_const("), address: 0x")?;
+        self.print_asm_instruction_number(instruction_slot, 4, true)?;
+        self.write_const(", instruction: \"")?;
+        self.print_asm_instruction_text(instruction_slot, 1)?;
+        self.write_const("\", flow: ")?;
+        self.print_asm_instruction_text(instruction_slot, 3)?;
+        self.write_const(" }")
+    }
+
+    fn print_asm_instruction_number(&mut self, instruction_slot: usize, kind: u32, hex: bool) -> Result<(), String> {
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, {kind}\n    call gak_native_asm_number\n    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), instruction_slot * 8, self.arg1()).unwrap();
+        if hex { self.print_hex_u64() } else { self.print_value(Scalar::UInt, 0) }
+    }
+
+    fn print_asm_instruction_text(&mut self, instruction_slot: usize, kind: u32) -> Result<(), String> {
+        let ready = self.label();
+        writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, {kind}\n    call gak_native_asm_text\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), instruction_slot * 8, self.arg1()).unwrap();
+        self.print_value(Scalar::Str, 0)
+    }
+
+    fn build_instruction_source_view(&mut self, instruction_slot: usize, source_slot: usize, size_slot: usize) -> Result<(), String> {
+        writeln!(self.code, "    mov rdx, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+16]\n    add r10, QWORD PTR [rdx+16]\n    mov r11, r10\n    add r11, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11+88]\n    mov QWORD PTR [rax+88], r11\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+32]\n    mov QWORD PTR [rax+96], r10\n    mov r10, QWORD PTR [r11+40]\n    mov QWORD PTR [rax+104], r10", source_slot * 8, instruction_slot * 8, size_slot * 8, source_slot * 8, instruction_slot * 8).unwrap();
+        Ok(())
     }
 
     fn print_finding(&mut self, impact: bool) -> Result<(), String> {
@@ -6436,7 +6528,7 @@ impl Codegen {
             let size_ready = self.label();
             writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {size_ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{size_ready}:\n    mov QWORD PTR [rbp-{}], rax", size_slot * 8).unwrap();
             if name == "source" {
-                writeln!(self.code, "    mov rdx, QWORD PTR [rbp-{}]\n    mov r8, QWORD PTR [rdx+32]\n    cmp r8, 64\n    jae gak_source_depth\n    inc r8\n    mov r10, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r10+16]\n    add r10, QWORD PTR [rdx+16]\n    mov r11, r10\n    add r11, QWORD PTR [rbp-{}]\n    mov rax, QWORD PTR [rdx]\n    call gak_alloc_source\n    mov r11, QWORD PTR [rbp-{}]\n    mov r11, QWORD PTR [r11+88]\n    mov QWORD PTR [rax+88], r11\n    mov r11, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [r11+32]\n    mov QWORD PTR [rax+96], r10\n    mov r10, QWORD PTR [r11+40]\n    mov QWORD PTR [rax+104], r10", source_slot * 8, instruction_slot * 8, size_slot * 8, source_slot * 8, instruction_slot * 8).unwrap();
+                self.build_instruction_source_view(instruction_slot, source_slot, size_slot)?;
                 return Ok(Scalar::Source);
             }
             writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    add rdx, QWORD PTR [r10+16]\n    mov rax, QWORD PTR [r10]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_bytes_extract", instruction_slot * 8, source_slot * 8, size_slot * 8).unwrap();

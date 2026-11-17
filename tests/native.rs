@@ -604,7 +604,7 @@ fn native_format_print_matches_ast_vm_and_bundle() {
     fs::write(s.0.join("header.elf"), elf).unwrap();
     let script = s.write(
         "format-print.gak",
-        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe\nlet report: Format = probe(analyze(\"header.elf\", 64))\nprint report\n",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe\nlet report: Format = probe(analyze(\"header.elf\", 64))\nimpact report\nprint report\n",
     );
     let binary = env!("CARGO_BIN_EXE_galeikan");
     let mut expected = None;
@@ -5548,6 +5548,7 @@ fn native_asm_instruction_bytes_and_source_match_vm() {
             "let lines = asm.reachable(source, 0, 0x1000u64, 64, 4)\n",
             "let second = asm.at(lines, 1)\n",
             "print bytes.to_hex(asm.bytes(branch))\n",
+            "impact branch\n",
             "print binary.size(view)\n",
             "print binary.sha256(view)\n",
             "print view\n",
@@ -5555,6 +5556,7 @@ fn native_asm_instruction_bytes_and_source_match_vm() {
             "print bytes.to_hex(asm.bytes(second))\n",
             "print binary.sha256(asm.source(second))\n",
             "print asm.source(second)\n",
+            "impact second\n",
         ),
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
@@ -5569,7 +5571,10 @@ fn native_asm_instruction_bytes_and_source_match_vm() {
     let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
     let native = Command::new(executable).output().unwrap();
     assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
-    assert_eq!(native.stdout, vm.stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&vm.stdout),
+    );
 }
 
 #[test]
@@ -5642,7 +5647,7 @@ fn native_asm_entry_matches_vm_for_executable_pe_and_elf() {
     let display_script = s.write(
         "disassembly-display.gak",
         &format!(
-            "import std.binary\nimport std.formats\nimport std.asm\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_linear = asm.linear(pe, 3)\nlet elf_linear = asm.linear(elf, 3)\nlet pe_reachable = asm.reachable_entry(pe, 3)\nlet elf_reachable = asm.reachable_entry(elf, 3)\nprint pe_linear\nimpact pe_linear\nprint elf_linear\nimpact elf_linear\nprint pe_reachable\nimpact pe_reachable\nprint elf_reachable\nimpact elf_reachable\n",
+            "import std.binary\nimport std.formats\nimport std.asm\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_linear = asm.linear(pe, 3)\nlet elf_linear = asm.linear(elf, 3)\nlet pe_reachable = asm.reachable_entry(pe, 3)\nlet elf_reachable = asm.reachable_entry(elf, 3)\nprint pe_linear\nimpact pe_linear\nprint elf_linear\nimpact elf_linear\nprint pe_reachable\nimpact pe_reachable\nprint elf_reachable\nimpact elf_reachable\nimpact asm.entry(pe)\nimpact asm.entry(elf)\n",
             hex(&pe), hex(&elf)
         ),
     );
@@ -8505,7 +8510,7 @@ fn native_format_sections_match_vm_and_keep_data_provenance() {
     let data_index = if cfg!(windows) { 0 } else { 1 };
     let script = s.write(
         "format-sections.gak",
-        &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size as binary_size, value_u64\nfrom std.formats import probe, section, section_at_offset, section_at_address, field, name, offset, size, virtual_size, address, address_u64, flags, flags_u64, writable, executable, data\nfrom std.result import is_error\nfrom std.cli import arg\nlet report: Format = probe(analyze(arg(0), 67108864))\nlet first: Section = section(report, 0)\nlet chosen: Section = section(report, {data_index})\nfn invalid_section() -> Result<Section> = section(report, 999999)\nfn invalid_offset() -> Result<Section> = section_at_offset(report, -1)\nfn invalid_address() -> Result<Section> = section_at_address(report, 0xffffffffffffffffu64)\nprint name(first)\nprint offset(first)\nprint size(first)\nprint virtual_size(first)\nprint address(first)\nprint address_u64(first)\nprint flags(first)\nprint flags_u64(first)\nprint writable(first)\nprint executable(first)\nprint is_error(invalid_section())\nprint name(chosen)\nprint name(section_at_offset(report, offset(chosen)))\nprint name(section_at_address(report, value_u64(field(report, \"entry\"))))\nprint is_error(invalid_offset())\nprint is_error(invalid_address())\nprint binary_size(data(chosen))\nprint sha256(data(chosen))\n"),
+        &format!("requires {{ file.read }}\nfrom std.binary import analyze, sha256, size as binary_size, value_u64\nfrom std.formats import probe, section, section_at_offset, section_at_address, field, name, offset, size, virtual_size, address, address_u64, flags, flags_u64, writable, executable, data\nfrom std.result import is_error\nfrom std.cli import arg\nlet report: Format = probe(analyze(arg(0), 67108864))\nlet first: Section = section(report, 0)\nlet chosen: Section = section(report, {data_index})\nfn invalid_section() -> Result<Section> = section(report, 999999)\nfn invalid_offset() -> Result<Section> = section_at_offset(report, -1)\nfn invalid_address() -> Result<Section> = section_at_address(report, 0xffffffffffffffffu64)\nimpact report\nimpact first\nimpact chosen\nprint name(first)\nprint offset(first)\nprint size(first)\nprint virtual_size(first)\nprint address(first)\nprint address_u64(first)\nprint flags(first)\nprint flags_u64(first)\nprint writable(first)\nprint executable(first)\nprint is_error(invalid_section())\nprint name(chosen)\nprint name(section_at_offset(report, offset(chosen)))\nprint name(section_at_address(report, value_u64(field(report, \"entry\"))))\nprint is_error(invalid_offset())\nprint is_error(invalid_address())\nprint binary_size(data(chosen))\nprint sha256(data(chosen))\n"),
     );
     let input = if cfg!(windows) {
         PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()))
