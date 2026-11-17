@@ -2674,7 +2674,7 @@ fn native_python_homogeneous_lists_roundtrip_like_vm() {
     }
     let s = Sandbox::new();
     s.write("helper.py", "def numbers(values):\n    return [value + 1 for value in values]\ndef unsigned(values):\n    return values[::-1]\ndef flags(values):\n    return [not value for value in values]\ndef words(values):\n    return [value.upper() for value in values]\ndef chunks(values):\n    return [value[::-1] for value in values]\ndef empty(values):\n    return values\n");
-    let script = s.write("main.gak", "requires { python.exec }\nimport py.helper\nfrom std.bytes import from_hex, to_hex\nfrom std.list import count\nlet empty_input: List<i64> = []\nlet ints: List<i64> = helper.numbers([1, -2, 3])\nlet uints: List<u64> = helper.unsigned([1u64, 18446744073709551615u64])\nlet bools: List<bool> = helper.flags([true, false])\nlet words: List<str> = helper.words([\"a\", \"weiß\"])\nlet chunks: List<bytes> = helper.chunks([from_hex(\"00 ff\"), from_hex(\"41 42\")])\nlet empty_result: List<i64> = helper.empty(empty_input)\nprint ints\nprint uints\nprint bools\nprint words\nprint to_hex(chunks[0])\nprint to_hex(chunks[1])\nprint count(empty_result)\n");
+    let script = s.write("main.gak", "requires { python.exec }\nimport py.helper\nfrom std.bytes import from_hex, to_hex\nfrom std.list import count\nlet empty_input: List<i64> = []\nlet ints: List<i64> = helper.numbers([1, -2, 3])\nlet uints: List<u64> = helper.unsigned([1u64, 18446744073709551615u64])\nlet bools: List<bool> = helper.flags([true, false])\nlet words: List<str> = helper.words([\"a\", \"weiß\"])\nlet chunks: List<bytes> = helper.chunks([from_hex(\"00 ff\"), from_hex(\"41 42\")])\nlet empty_result: List<i64> = helper.empty(empty_input)\nlet empty_literal: List<i64> = helper.empty([])\nprint ints\nprint uints\nprint bools\nprint words\nprint to_hex(chunks[0])\nprint to_hex(chunks[1])\nprint count(empty_result)\nprint count(empty_literal)\n");
     let built = s.compile(&script);
     assert!(
         built.status.success(),
@@ -2708,7 +2708,7 @@ fn native_python_homogeneous_lists_roundtrip_like_vm() {
         String::from_utf8_lossy(&vm.stderr)
     );
     assert_eq!(native.stdout, vm.stdout);
-    assert!(native.stdout.ends_with(b"ff00\n4241\n0\n"));
+    assert!(native.stdout.ends_with(b"ff00\n4241\n0\n0\n"));
 }
 
 #[test]

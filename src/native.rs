@@ -2150,6 +2150,8 @@ impl Codegen {
             Scalar::ListBool => Ok(8),
             Scalar::ListStr => Ok(9),
             Scalar::ListBytes => Ok(10),
+            // An empty list carries no element type; any list wire tag encodes [] identically.
+            Scalar::ListEmpty => Ok(6),
             _ => Err("native Python calls support scalar values and homogeneous lists of i64, u64, bool, str, or bytes".into()),
         }
     }
