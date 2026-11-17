@@ -34,6 +34,9 @@ pub struct GaleikanHttpRequest {
     timeout_ms: i64,
 }
 
+/// # Safety
+/// `url` must be readable for `length` bytes. `output` and `error`, when used,
+/// must be writable for their stated capacities and must not overlap `url`.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_authority(
     url: *const u8,
@@ -65,6 +68,9 @@ pub unsafe extern "C" fn galeikan_http_authority(
     }
 }
 
+/// # Safety
+/// `url` must be readable for `length` bytes; `out` must be writable, and
+/// `error` must be writable for `error_capacity` bytes when non-null.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_fetch(
     url: *const u8,
@@ -120,6 +126,9 @@ pub unsafe extern "C" fn galeikan_http_fetch(
     }
 }
 
+/// # Safety
+/// `handle` must be a live HTTP result handle returned by this library.
+/// `output`, when non-null, must be writable for `capacity` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_fetch_copy(
     handle: *const c_void,
@@ -143,6 +152,9 @@ pub unsafe extern "C" fn galeikan_http_fetch_copy(
     data.len()
 }
 
+/// # Safety
+/// A non-null `handle` must be a live HTTP result handle and must be freed
+/// exactly once. It cannot be used after this call.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_fetch_free(handle: *mut c_void) {
     if !handle.is_null() {
@@ -150,6 +162,10 @@ pub unsafe extern "C" fn galeikan_http_fetch_free(handle: *mut c_void) {
     }
 }
 
+/// # Safety
+/// `input` and its non-null pointer fields must remain readable for their
+/// stated lengths throughout the call. Each header points to a valid boxed
+/// string. `out` and the optional error buffer must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_request(
     input: *const GaleikanHttpRequest,
@@ -251,6 +267,8 @@ pub unsafe extern "C" fn galeikan_http_request(
     }
 }
 
+/// # Safety
+/// `handle` must be a live HTTP result handle returned by this library.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_response_number(handle: *const c_void, kind: u32) -> usize {
     let Some(response) = (unsafe { handle.cast::<HttpFetchResult>().as_ref() }) else {
@@ -263,6 +281,9 @@ pub unsafe extern "C" fn galeikan_http_response_number(handle: *const c_void, ki
     }
 }
 
+/// # Safety
+/// `handle` must be a live HTTP result handle. A non-null `output` must be
+/// writable for `capacity` bytes and must not overlap the stored header.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_http_response_header_copy(
     handle: *const c_void,
@@ -325,6 +346,9 @@ fn write_error(error: *mut u8, capacity: usize, message: &str) -> i32 {
 
 /// Decode one x86 instruction. The returned handle must be released with
 /// `galeikan_asm_instruction_free`; no Rust allocation crosses the C allocator.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `out` and the
+/// optional error buffer must be writable for their stated sizes.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_decode(
     bytes: *const u8,
@@ -365,6 +389,9 @@ pub unsafe extern "C" fn galeikan_asm_decode(
 
 /// Decode reachable instructions in ascending source-offset order. The handle
 /// owns its instructions and must be released with `galeikan_asm_disassembly_free`.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `out` and the
+/// optional error buffer must be writable for their stated sizes.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_reachable(
     bytes: *const u8,
@@ -424,6 +451,9 @@ pub unsafe extern "C" fn galeikan_asm_reachable(
 
 /// Decode a fixed number of consecutive instructions from a bounded entry region.
 /// The returned handle uses the same accessors and ownership as reachable disassembly.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `out` and the
+/// optional error buffer must be writable for their stated sizes.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_linear(
     bytes: *const u8,
@@ -489,6 +519,9 @@ pub unsafe extern "C" fn galeikan_asm_linear(
     }
 }
 
+/// # Safety
+/// A non-null `handle` must be a live disassembly handle returned by this
+/// library and must be freed exactly once.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_free(handle: *mut c_void) {
     if !handle.is_null() {
@@ -497,12 +530,17 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_free(handle: *mut c_void) {
     }
 }
 
+/// # Safety
+/// A non-null `handle` must be a live disassembly handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_count(handle: *const c_void) -> usize {
     unsafe { handle.cast::<DecodedCollection>().as_ref() }
         .map_or(0, |value| value.instructions.len())
 }
 
+/// # Safety
+/// `handle` must be a live disassembly handle. Non-null `start` and `end`
+/// must be writable output slots.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_bounds(
     handle: *const c_void,
@@ -537,6 +575,9 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_bounds(
 
 /// Clone one instruction into an independently owned handle. On success the
 /// caller frees `out` with `galeikan_asm_instruction_free`.
+/// # Safety
+/// `handle` must be a live disassembly handle; `out` and `offset` must be
+/// writable output slots.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_at(
     handle: *const c_void,
@@ -563,6 +604,8 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_at(
     1
 }
 
+/// # Safety
+/// A non-null `handle` must be a live disassembly handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_count(handle: *const c_void) -> usize {
     unsafe { handle.cast::<DecodedCollection>().as_ref() }.map_or(0, |value| {
@@ -570,6 +613,9 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_count(handle: *const c
     })
 }
 
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// a writable `i32` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_at(
     handle: *const c_void,
@@ -588,12 +634,17 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_overlap_at(
     }
 }
 
+/// # Safety
+/// A non-null `handle` must be a live disassembly handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_block_count(handle: *const c_void) -> usize {
     unsafe { handle.cast::<DecodedCollection>().as_ref() }.map_or(0, |value| value.blocks.len())
 }
 
 /// Copies one block's scalar metadata. Successor addresses are queried below.
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// a writable `GaleikanAsmBlock` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_block(
     handle: *const c_void,
@@ -631,6 +682,9 @@ pub struct GaleikanAsmBlock {
     pub unresolved: i32,
 }
 
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// a writable `u64` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_block_successor(
     handle: *const c_void,
@@ -646,6 +700,9 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_block_successor(
 
 /// Query direct call targets, data references, direct xrefs, or data xrefs.
 /// Returns the required count and copies only when capacity is sufficient.
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// writable for `capacity` `u64` values without overlapping the handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_disassembly_references(
     handle: *const c_void,
@@ -676,6 +733,9 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_references(
     addresses.len()
 }
 
+/// # Safety
+/// A non-null `handle` must be a live instruction handle returned by this
+/// library and must be freed exactly once.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_free(handle: *mut c_void) {
     if !handle.is_null() {
@@ -684,17 +744,24 @@ pub unsafe extern "C" fn galeikan_asm_instruction_free(handle: *mut c_void) {
     }
 }
 
+/// # Safety
+/// A non-null `handle` must be a live instruction handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_size(handle: *const c_void) -> usize {
     unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.size)
 }
 
+/// # Safety
+/// A non-null `handle` must be a live instruction handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_ip(handle: *const c_void) -> u64 {
     unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.ip)
 }
 
 /// Hash a readable source span. `output` must point to 32 writable bytes.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `output` must
+/// point to 32 writable bytes without overlapping the input span.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_sha256(
     bytes: *const u8,
@@ -727,6 +794,9 @@ fn optional_address(value: Option<u64>, output: *mut u64) -> i32 {
     }
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// a writable `u64` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_target(
     handle: *const c_void,
@@ -736,6 +806,9 @@ pub unsafe extern "C" fn galeikan_asm_instruction_target(
     optional_address(target, output)
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// a writable `u64` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_data_target(
     handle: *const c_void,
@@ -746,6 +819,8 @@ pub unsafe extern "C" fn galeikan_asm_instruction_data_target(
     optional_address(target, output)
 }
 
+/// # Safety
+/// A non-null `handle` must be a live instruction handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_register_usage_complete(
     handle: *const c_void,
@@ -763,6 +838,9 @@ fn copy_text(value: &str, output: *mut u8, capacity: usize) -> usize {
     bytes.len()
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// writable for `capacity` bytes without overlapping the handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_text(
     handle: *const c_void,
@@ -773,6 +851,9 @@ pub unsafe extern "C" fn galeikan_asm_instruction_text(
         .map_or(0, |value| copy_text(&value.text, output, capacity))
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// writable for `capacity` bytes without overlapping the handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_mnemonic(
     handle: *const c_void,
@@ -783,6 +864,9 @@ pub unsafe extern "C" fn galeikan_asm_instruction_mnemonic(
         .map_or(0, |value| copy_text(&value.mnemonic, output, capacity))
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// writable for `capacity` bytes without overlapping the handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_flow(
     handle: *const c_void,
@@ -795,11 +879,16 @@ pub unsafe extern "C" fn galeikan_asm_instruction_flow(
 
 macro_rules! string_list_accessors {
     ($count:ident, $get:ident, $field:ident) => {
+        /// # Safety
+        /// A non-null `handle` must be a live instruction handle.
         #[no_mangle]
         pub unsafe extern "C" fn $count(handle: *const c_void) -> usize {
             unsafe { handle.cast::<asm::Decoded>().as_ref() }.map_or(0, |value| value.$field.len())
         }
 
+        /// # Safety
+        /// `handle` must be a live instruction handle. A non-null `output`
+        /// must be writable for `capacity` bytes without overlapping it.
         #[no_mangle]
         pub unsafe extern "C" fn $get(
             handle: *const c_void,
@@ -835,6 +924,8 @@ string_list_accessors!(
     flags_modified
 );
 
+/// # Safety
+/// A non-null `handle` must be a live instruction handle.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_successors_count(handle: *const c_void) -> usize {
     unsafe { handle.cast::<asm::Decoded>().as_ref() }
@@ -842,6 +933,9 @@ pub unsafe extern "C" fn galeikan_asm_instruction_successors_count(handle: *cons
         .map_or(0, |successors| successors.len())
 }
 
+/// # Safety
+/// `handle` must be a live instruction handle. A non-null `output` must be
+/// a writable `u64` slot.
 #[no_mangle]
 pub unsafe extern "C" fn galeikan_asm_instruction_successor(
     handle: *const c_void,
