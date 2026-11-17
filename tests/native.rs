@@ -5919,6 +5919,10 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
             "print list.count(direct)\nprint direct[0]\nprint direct[1]\n",
             "print list.count(asm.block_path(lines, 1, 2))\n",
             "print asm.block_path(lines, 2, 2)[0]\n",
+            "print asm.block_dominators(lines, 0, 1)[0]\n",
+            "print asm.block_dominators(lines, 0, 1)[1]\n",
+            "print list.count(asm.block_dominators(lines, 1, 2))\n",
+            "print asm.block_dominators(lines, 2, 2)[0]\n",
             "print list.count(asm.call_targets(lines))\nprint list.count(asm.data_refs(lines))\n",
             "print list.count(asm.data_xrefs(lines, 0u64))\n",
             "for instruction in lines {\n    print asm.mnemonic(instruction)\n}\n",
@@ -5966,6 +5970,11 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
         (
             "reachable-path.gak",
             "print asm.block_path(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 0, 1)",
+            "block index out of range",
+        ),
+        (
+            "reachable-dominators.gak",
+            "print asm.block_dominators(asm.reachable(binary.snapshot(binary.from_hex(\"90\")), 0, 0u64, 64, 1), 0, 1)",
             "block index out of range",
         ),
     ] {

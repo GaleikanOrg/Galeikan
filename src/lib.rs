@@ -723,6 +723,31 @@ pub unsafe extern "C" fn galeikan_asm_disassembly_block_path(
     path.len()
 }
 
+/// Return known CFG dominators from entry to target. Invalid indices return
+/// `usize::MAX`; an unreachable target returns zero.
+/// # Safety
+/// `handle` must be a live disassembly handle. A non-null `output` must be
+/// writable for `capacity` `u64` values without overlapping the handle.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_disassembly_block_dominators(
+    handle: *const c_void,
+    entry: usize,
+    target: usize,
+    output: *mut u64,
+    capacity: usize,
+) -> usize {
+    let Some(collection) = (unsafe { handle.cast::<DecodedCollection>().as_ref() }) else {
+        return usize::MAX;
+    };
+    let Ok(dominators) = asm::block_dominators(&collection.blocks, entry, target) else {
+        return usize::MAX;
+    };
+    if !output.is_null() && capacity >= dominators.len() {
+        unsafe { ptr::copy_nonoverlapping(dominators.as_ptr(), output, dominators.len()) };
+    }
+    dominators.len()
+}
+
 /// Query direct call targets, data references, direct xrefs, or data xrefs.
 /// Returns the required count and copies only when capacity is sufficient.
 /// # Safety

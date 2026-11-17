@@ -6763,22 +6763,22 @@ impl Codegen {
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_block_successors\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), lines_slot * 8, self.arg1()).unwrap();
             return Ok(Scalar::ListUInt);
         }
-        if name == "block_path" && args.len() == 3 {
+        if matches!(name, "block_path" | "block_dominators") && args.len() == 3 {
             if self.expr(&args[0], scope)? != Scalar::Disassembly {
-                return Err("asm.block_path expects Disassembly".into());
+                return Err(format!("asm.{name} expects Disassembly"));
             }
             let disassembly = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", disassembly * 8).unwrap();
             if self.expr(&args[1], scope)? != Scalar::Int {
-                return Err("asm.block_path from index must be i64".into());
+                return Err(format!("asm.{name} first index must be i64"));
             }
             let from = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", from * 8).unwrap();
             if self.expr(&args[2], scope)? != Scalar::Int {
-                return Err("asm.block_path to index must be i64".into());
+                return Err(format!("asm.{name} second index must be i64"));
             }
             let ready = self.label();
-            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_block_path\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), disassembly * 8, self.arg1(), from * 8, self.arg2()).unwrap();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_{name}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), disassembly * 8, self.arg1(), from * 8, self.arg2()).unwrap();
             return Ok(Scalar::ListUInt);
         }
         if matches!(name, "call_targets" | "data_refs" | "xrefs" | "data_xrefs") {

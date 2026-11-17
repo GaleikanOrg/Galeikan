@@ -329,6 +329,102 @@ pub fn block_path(blocks: &[Block], from: usize, to: usize) -> Result<Vec<u64>, 
     Ok(Vec::new())
 }
 
+/// Return the known dominators of `target`, ordered from `entry` to `target`.
+/// Edges leaving the decoded graph are ignored; unreachable targets return [].
+pub fn block_dominators(blocks: &[Block], entry: usize, target: usize) -> Result<Vec<u64>, String> {
+    if entry >= blocks.len() || target >= blocks.len() {
+        return Err("block index out of range".into());
+    }
+    let by_start: HashMap<u64, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.start, index))
+        .collect();
+    let mut successors = vec![Vec::new(); blocks.len()];
+    let mut predecessors = vec![Vec::new(); blocks.len()];
+    for (index, block) in blocks.iter().enumerate() {
+        for address in &block.successors {
+            if let Some(&next) = by_start.get(address) {
+                if !successors[index].contains(&next) {
+                    successors[index].push(next);
+                    predecessors[next].push(index);
+                }
+            }
+        }
+    }
+
+    // Iterative DFS avoids overflowing the host stack on large disassemblies.
+    let mut seen = vec![false; blocks.len()];
+    let mut postorder = Vec::new();
+    let mut stack = vec![(entry, 0)];
+    seen[entry] = true;
+    while let Some((node, next_edge)) = stack.last_mut() {
+        if *next_edge == successors[*node].len() {
+            postorder.push(*node);
+            stack.pop();
+        } else {
+            let next = successors[*node][*next_edge];
+            *next_edge += 1;
+            if !seen[next] {
+                seen[next] = true;
+                stack.push((next, 0));
+            }
+        }
+    }
+    if !seen[target] {
+        return Ok(Vec::new());
+    }
+    postorder.reverse();
+    let mut order = vec![usize::MAX; blocks.len()];
+    for (position, &node) in postorder.iter().enumerate() {
+        order[node] = position;
+    }
+    let mut idom = vec![None; blocks.len()];
+    idom[entry] = Some(entry);
+    loop {
+        let mut changed = false;
+        for &node in postorder.iter().skip(1) {
+            let mut incoming = predecessors[node]
+                .iter()
+                .copied()
+                .filter(|&previous| idom[previous].is_some());
+            let Some(mut candidate) = incoming.next() else {
+                continue;
+            };
+            for previous in incoming {
+                let (mut left, mut right) = (candidate, previous);
+                while left != right {
+                    while order[left] > order[right] {
+                        left = idom[left].expect("reachable dominator");
+                    }
+                    while order[right] > order[left] {
+                        right = idom[right].expect("reachable dominator");
+                    }
+                }
+                candidate = left;
+            }
+            if idom[node] != Some(candidate) {
+                idom[node] = Some(candidate);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut result = Vec::new();
+    let mut node = target;
+    loop {
+        result.push(blocks[node].start);
+        if node == entry {
+            break;
+        }
+        node = idom[node].expect("reachable dominator");
+    }
+    result.reverse();
+    Ok(result)
+}
+
 /// Direct branch and call sites that name `target`, in instruction order.
 pub fn xrefs(instructions: &[&Decoded], target: u64) -> Vec<u64> {
     instructions
@@ -389,7 +485,7 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
+    use super::{block_dominators, block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
@@ -602,6 +698,46 @@ mod tests {
         assert_eq!(block_path(&graph, 3, 3).unwrap(), [0x40]);
         assert_eq!(block_path(&graph, 5, 0).unwrap_err(), "block index out of range");
         assert_eq!(block_path(&graph, 0, 5).unwrap_err(), "block index out of range");
+    }
+
+    #[test]
+    fn block_dominators_handle_diamonds_loops_and_unreachable_blocks() {
+        let block = |start, successors: &[u64]| Block {
+            start,
+            end: start + 1,
+            first_index: 0,
+            instruction_count: 1,
+            successors: successors.to_vec(),
+            unresolved: false,
+        };
+        let graph = [
+            block(0x10, &[0x20, 0x30, 0x999]),
+            block(0x20, &[0x40]),
+            block(0x30, &[0x40]),
+            block(0x40, &[0x50]),
+            block(0x50, &[0x40, 0x60]),
+            block(0x60, &[]),
+            block(0x70, &[]),
+        ];
+        assert_eq!(block_dominators(&graph, 0, 3).unwrap(), [0x10, 0x40]);
+        assert_eq!(
+            block_dominators(&graph, 0, 5).unwrap(),
+            [0x10, 0x40, 0x50, 0x60]
+        );
+        assert_eq!(
+            block_dominators(&graph, 1, 5).unwrap(),
+            [0x20, 0x40, 0x50, 0x60]
+        );
+        assert!(block_dominators(&graph, 0, 6).unwrap().is_empty());
+        assert_eq!(block_dominators(&graph, 6, 6).unwrap(), [0x70]);
+        assert_eq!(
+            block_dominators(&graph, 7, 0).unwrap_err(),
+            "block index out of range"
+        );
+        assert_eq!(
+            block_dominators(&graph, 0, 7).unwrap_err(),
+            "block index out of range"
+        );
     }
 
     #[test]

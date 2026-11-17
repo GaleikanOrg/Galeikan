@@ -6779,13 +6779,18 @@ impl Runtime {
             ("block_count", [Value::Disassembly(disassembly)]) => {
                 Ok(Value::Int(disassembly.blocks.len() as i64))
             }
-            ("block_path", [Value::Disassembly(disassembly), from, to]) => {
+            ("block_path" | "block_dominators", [Value::Disassembly(disassembly), from, to]) => {
                 let from = usize::try_from(from.as_int()?)
                     .map_err(|_| "block index out of range")?;
                 let to = usize::try_from(to.as_int()?)
                     .map_err(|_| "block index out of range")?;
-                make_list(
+                let addresses = if name == "block_path" {
                     asm::block_path(&disassembly.blocks, from, to)?
+                } else {
+                    asm::block_dominators(&disassembly.blocks, from, to)?
+                };
+                make_list(
+                    addresses
                         .into_iter()
                         .map(Value::UInt)
                         .collect(),
@@ -9099,7 +9104,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             check_arguments(&qualified, args, &[Disassembly])?;
             return Ok(Int);
         }
-        if name == "block_path" {
+        if matches!(name, "block_path" | "block_dominators") {
             check_arguments(&qualified, args, &[Disassembly, Int, Int])?;
             return Ok(Type::List(Some(ResultKind::UInt)));
         }
