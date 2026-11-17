@@ -6000,6 +6000,48 @@ fn native_asm_reachable_matches_vm_blocks_and_bounds() {
 }
 
 #[test]
+fn native_instruction_and_disassembly_lists_match_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "analysis.gaks",
+        concat!(
+            "import std.binary\nimport std.asm\n",
+            "from std.list import count\nfrom std.result import ok, recover, is_error\n",
+            "fn instructions(lines: Disassembly) -> Result<List<Instruction>> = ok([asm.at(lines, 0), asm.at(lines, 1)])\n",
+            "fn preserve(items: List<Disassembly>) -> Result<List<Disassembly>> = ok(items)\n",
+            "let source = binary.snapshot(binary.from_hex(\"90 c3\"))\n",
+            "let decoded: Disassembly = asm.reachable(source, 0, 0u64, 64, 2)\n",
+            "let stored: List<Instruction> = recover(instructions(decoded), [])\n",
+            "let series: List<Disassembly> = recover(preserve([decoded]), [])\n",
+            "print count(stored)\nprint asm.mnemonic(stored[1])\n",
+            "print asm.block_count(series[0])\nprint is_error(instructions(decoded))\n",
+            "for item in stored {\n    print asm.mnemonic(item)\n}\n",
+        ),
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let expected = b"2\nret\n1\nfalse\nnop\nret\n";
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan)
+            .arg("run")
+            .arg(&script)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, expected, "{engine}");
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected);
+}
+
+#[test]
 fn native_asm_register_flags_and_block_instruction_match_vm() {
     if !gcc_available() {
         return;
