@@ -243,9 +243,10 @@ GakAsmInstruction *gak_native_asm_entry(const uint64_t info[6]) {
     return instruction;
 }
 
-GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
-                                             int64_t offset, uint64_t base_ip,
-                                             int64_t bitness, int64_t max_instructions) {
+static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *source,
+                                                        int64_t offset, uint64_t base_ip,
+                                                        int64_t bitness, int64_t max_instructions,
+                                                        int function_only) {
     gak_asm_error = NULL;
     if (!source || !source->backing || source->end < source->start ||
         source->end > *(const uint64_t *)source->backing) {
@@ -272,9 +273,14 @@ GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
     const uint8_t *bytes = source->backing + sizeof(uint64_t) + source->start;
     uint8_t error[256] = {0};
     void *decoded = NULL;
-    if (galeikan_asm_reachable(bytes, (size_t)length, (size_t)offset, base_ip,
-                               (uint32_t)bitness, (size_t)max_instructions,
-                               &decoded, error, sizeof error)) {
+    int failed = function_only
+        ? galeikan_asm_function_reachable(bytes, (size_t)length, (size_t)offset, base_ip,
+                                          (uint32_t)bitness, (size_t)max_instructions,
+                                          &decoded, error, sizeof error)
+        : galeikan_asm_reachable(bytes, (size_t)length, (size_t)offset, base_ip,
+                                 (uint32_t)bitness, (size_t)max_instructions,
+                                 &decoded, error, sizeof error);
+    if (failed) {
         gak_asm_fail((const char *)error);
         return NULL;
     }
@@ -318,9 +324,21 @@ GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
     return disassembly;
 }
 
+GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
+                                             int64_t offset, uint64_t base_ip,
+                                             int64_t bitness, int64_t max_instructions) {
+    return gak_native_asm_reachable_mode(source, offset, base_ip, bitness, max_instructions, 0);
+}
+
+GakAsmDisassembly *gak_native_asm_function_reachable(const GakSourceHead *source,
+                                                      int64_t offset, uint64_t base_ip,
+                                                      int64_t bitness, int64_t max_instructions) {
+    return gak_native_asm_reachable_mode(source, offset, base_ip, bitness, max_instructions, 1);
+}
+
 #ifdef GALEIKAN_ASM_FORMATS
 static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7],
-                                                            int64_t count, int linear) {
+                                                            int64_t count, int mode) {
     gak_asm_error = NULL;
     if (!info) { gak_asm_fail("invalid x86 entry region"); return NULL; }
     const GakSourceHead *source = (const GakSourceHead *)(uintptr_t)info[0];
@@ -337,9 +355,12 @@ static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7
     size_t length = (size_t)(info[2] - info[1]);
     uint8_t error[256] = {0};
     void *decoded = NULL;
-    int failed = linear
+    int failed = mode == 1
         ? galeikan_asm_linear(bytes, length, info[4], (uint32_t)info[3],
                               (size_t)count, &decoded, error, sizeof error)
+        : mode == 2
+        ? galeikan_asm_function_reachable(bytes, length, 0, info[4], (uint32_t)info[3],
+                                          (size_t)count, &decoded, error, sizeof error)
         : galeikan_asm_reachable(bytes, length, 0, info[4], (uint32_t)info[3],
                                  (size_t)count, &decoded, error, sizeof error);
     if (failed) { gak_asm_fail((const char *)error); return NULL; }
@@ -406,6 +427,10 @@ GakAsmDisassembly *gak_native_asm_linear_entry(const uint64_t info[7], int64_t c
 
 GakAsmDisassembly *gak_native_asm_reachable_entry(const uint64_t info[7], int64_t count) {
     return gak_native_asm_entry_disassembly(info, count, 0);
+}
+
+GakAsmDisassembly *gak_native_asm_function_entry(const uint64_t info[7], int64_t count) {
+    return gak_native_asm_entry_disassembly(info, count, 2);
 }
 #endif
 

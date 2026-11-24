@@ -252,6 +252,35 @@ fn direct_xrefs_calls_and_overlaps_match_ast_vm_and_bundle() {
 }
 
 #[test]
+fn function_reachable_keeps_direct_calls_out_of_the_local_walk() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "function-walk.gak",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\n",
+    );
+    let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("build")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", stderr(&built));
+    for (command, target, engine) in [
+        ("run", script.clone(), "ast"),
+        ("run", script.clone(), "vm"),
+        ("exec", script.with_extension("gakb"), "vm"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_galeikan"));
+        process.arg(command).arg(target);
+        if command == "run" {
+            process.args(["--engine", engine]);
+        }
+        let output = process.output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "3\n5\n4101\nret\n");
+    }
+}
+
+#[test]
 fn self_process_references_read_bounded_memory_in_ast_vm_and_bundle() {
     let s = Sandbox::new();
     let script = s.write(

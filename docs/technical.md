@@ -176,6 +176,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 | Functions | Current purpose |
 | --- | --- |
 | `entry`, `linear`, `reachable_entry`, `decode`, `decode_u64`, `reachable` | Decode the declared executable entry, a bounded linear range, or reachable x86 instructions. |
+| `function_entry`, `function_reachable` | Walk reachable x86 instructions from a parsed executable entry or a `Source` offset without descending into direct call targets. The walk follows fallthrough and direct branches. |
 | `count`, `at`, `next`, `size`, `offset`, `address`, `address_u64`, `target`, `target_u64`, `data_target_u64` | Navigate a `Disassembly` or `Instruction` and inspect positions, size, branch target, or data reference. |
 | `text`, `mnemonic`, `flow`, `source`, `bytes` | Read formatted instruction text, mnemonic, control-flow class, origin source, or instruction bytes. |
 | `register_usage_complete`, `register_reads`, `register_writes`, `flags_read`, `flags_modified` | Inspect register/flag use including implicit and conditional access where available. |
@@ -183,6 +184,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 | `block_count`, `block_instruction`, `block_start`, `block_end`, `block_instruction_count`, `block_successors`, `block_unresolved` | Traverse bounded basic blocks and their outgoing edges. |
 
 The decoder provides static instruction observations. Indirect control flow can remain unresolved; a reachable walk is not complete program execution.
+`function_reachable(source, offset, base_ip, bitness, max_instructions)` and `function_entry(format, max_instructions)` are intraprocedural approximations. A direct call target is excluded, but a jump to another function (including a tail call) can still be followed. Results remain bounded by the supplied instruction limit and source/entry range.
 
 ### `std.process`
 

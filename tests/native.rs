@@ -10,6 +10,32 @@ use std::time::{Duration, Instant};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn native_function_reachable_matches_vm() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "function-walk.gaks",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\n",
+    );
+    let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+        .arg("run")
+        .arg(&script)
+        .args(["--engine", "vm"])
+        .output()
+        .unwrap();
+    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
+    assert_eq!(vm.stdout, b"3\n5\n4101\nret\n");
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, vm.stdout);
+}
+
+#[test]
 fn file_write_saves_patched_source_and_bytes_with_explicit_grant() {
     let s = Sandbox::new();
     let script = s.write(
@@ -5836,7 +5862,7 @@ fn native_asm_entry_matches_vm_for_executable_pe_and_elf() {
     let script = s.write(
         "entry.gak",
         &format!(
-            "import std.binary\nimport std.formats\nimport std.asm\nimport std.bytes\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_instruction = asm.entry(pe)\nlet elf_instruction = asm.entry(elf)\nlet pe_linear = asm.linear(pe, 3)\nlet elf_linear = asm.linear(elf, 3)\nlet pe_reachable = asm.reachable_entry(pe, 3)\nlet elf_reachable = asm.reachable_entry(elf, 3)\nprint asm.offset(pe_instruction)\nprint asm.address_u64(pe_instruction)\nprint asm.target_u64(pe_instruction)\nprint bytes.to_hex(asm.bytes(pe_instruction))\nprint asm.source(pe_instruction)\nprint pe_instruction\nprint asm.offset(elf_instruction)\nprint asm.address_u64(elf_instruction)\nprint asm.target_u64(elf_instruction)\nprint bytes.to_hex(asm.bytes(elf_instruction))\nprint asm.source(elf_instruction)\nprint elf_instruction\nprint asm.count(pe_linear)\nprint asm.count(elf_linear)\nprint asm.count(pe_reachable)\nprint asm.count(elf_reachable)\nprint asm.block_count(pe_linear)\nprint asm.offset(asm.at(pe_linear, 1))\nprint asm.source(asm.at(pe_reachable, 0))\nprint asm.source(asm.at(elf_reachable, 0))\nfor instruction in pe_linear {{\n    print asm.mnemonic(instruction)\n}}\n",
+            "import std.binary\nimport std.formats\nimport std.asm\nimport std.bytes\nlet pe = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet elf = formats.probe(binary.snapshot(binary.from_hex(\"{}\")))\nlet pe_instruction = asm.entry(pe)\nlet elf_instruction = asm.entry(elf)\nlet pe_linear = asm.linear(pe, 3)\nlet elf_linear = asm.linear(elf, 3)\nlet pe_reachable = asm.reachable_entry(pe, 3)\nlet elf_reachable = asm.reachable_entry(elf, 3)\nlet pe_function = asm.function_entry(pe, 3)\nlet elf_function = asm.function_entry(elf, 3)\nprint asm.count(pe_function)\nprint asm.count(elf_function)\nprint asm.offset(pe_instruction)\nprint asm.address_u64(pe_instruction)\nprint asm.target_u64(pe_instruction)\nprint bytes.to_hex(asm.bytes(pe_instruction))\nprint asm.source(pe_instruction)\nprint pe_instruction\nprint asm.offset(elf_instruction)\nprint asm.address_u64(elf_instruction)\nprint asm.target_u64(elf_instruction)\nprint bytes.to_hex(asm.bytes(elf_instruction))\nprint asm.source(elf_instruction)\nprint elf_instruction\nprint asm.count(pe_linear)\nprint asm.count(elf_linear)\nprint asm.count(pe_reachable)\nprint asm.count(elf_reachable)\nprint asm.block_count(pe_linear)\nprint asm.offset(asm.at(pe_linear, 1))\nprint asm.source(asm.at(pe_reachable, 0))\nprint asm.source(asm.at(elf_reachable, 0))\nfor instruction in pe_linear {{\n    print asm.mnemonic(instruction)\n}}\n",
             hex(&pe), hex(&elf)
         ),
     );

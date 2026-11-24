@@ -196,6 +196,27 @@ pub fn reachable(
     bitness: u32,
     max_instructions: usize,
 ) -> Result<Vec<(usize, Decoded)>, String> {
+    reachable_with_calls(bytes, start_offset, base_ip, bitness, max_instructions, true)
+}
+
+pub fn function_reachable(
+    bytes: &[u8],
+    start_offset: usize,
+    base_ip: u64,
+    bitness: u32,
+    max_instructions: usize,
+) -> Result<Vec<(usize, Decoded)>, String> {
+    reachable_with_calls(bytes, start_offset, base_ip, bitness, max_instructions, false)
+}
+
+fn reachable_with_calls(
+    bytes: &[u8],
+    start_offset: usize,
+    base_ip: u64,
+    bitness: u32,
+    max_instructions: usize,
+    follow_calls: bool,
+) -> Result<Vec<(usize, Decoded)>, String> {
     if start_offset >= bytes.len() {
         return Err("reachable entry offset out of bounds".into());
     }
@@ -219,7 +240,15 @@ pub fn reachable(
                 pending.push_back(candidate);
             }
         };
-        for target in instruction.successors()? {
+        let successors = if !follow_calls && instruction.flow == "call" {
+            vec![instruction
+                .ip
+                .checked_add(instruction.size as u64)
+                .ok_or("instruction address overflow")?]
+        } else {
+            instruction.successors()?
+        };
+        for target in successors {
             if let Some(relative) = target.checked_sub(base_ip) {
                 if let Ok(relative) = usize::try_from(relative) {
                     enqueue(relative);
@@ -553,7 +582,7 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_dominators, block_natural_loop, block_path, blocks, call_targets, data_refs, data_xrefs, decode, overlaps, reachable, xrefs, Block};
+    use super::{block_dominators, block_natural_loop, block_path, blocks, call_targets, data_refs, data_xrefs, decode, function_reachable, overlaps, reachable, xrefs, Block};
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
@@ -650,6 +679,18 @@ mod tests {
         assert!(reachable(b"\x75\x03\x90\xc3\x90\xc3", 0, 0x1000, 64, 3)
             .unwrap_err()
             .contains("exceeds max"));
+    }
+
+    #[test]
+    fn function_reachable_stops_at_calls_but_follows_fallthrough_and_branches() {
+        let bytes = b"\xe8\x02\x00\x00\x00\x90\xc3\x90\xc3";
+        let local = function_reachable(bytes, 0, 0x1000, 64, 5).unwrap();
+        assert_eq!(local.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(), [0, 5, 6]);
+        assert_eq!(reachable(bytes, 0, 0x1000, 64, 5).unwrap().len(), 5);
+        let branch = function_reachable(b"\x75\x03\x90\xc3\x90\xc3", 0, 0x1000, 64, 4).unwrap();
+        assert_eq!(branch.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(), [0, 2, 3, 5]);
+        let call_next = function_reachable(b"\xe8\x00\x00\x00\x00\xc3", 0, 0x1000, 64, 2).unwrap();
+        assert_eq!(call_next.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(), [0, 5]);
     }
 
     #[test]

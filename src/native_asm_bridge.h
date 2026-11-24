@@ -15,6 +15,10 @@ int32_t galeikan_asm_reachable(const uint8_t *bytes, size_t length,
                                size_t start_offset, uint64_t base_ip,
                                uint32_t bitness, size_t max_instructions,
                                void **out, uint8_t *error, size_t error_capacity);
+int32_t galeikan_asm_function_reachable(const uint8_t *bytes, size_t length,
+                                        size_t start_offset, uint64_t base_ip,
+                                        uint32_t bitness, size_t max_instructions,
+                                        void **out, uint8_t *error, size_t error_capacity);
 int32_t galeikan_asm_linear(const uint8_t *bytes, size_t length,
                             uint64_t base_ip, uint32_t bitness, size_t count,
                             void **out, uint8_t *error, size_t error_capacity);

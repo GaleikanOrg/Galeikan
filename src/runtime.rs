@@ -6558,7 +6558,7 @@ impl Runtime {
                     instructions,
                 )?)))
             }
-            ("reachable_entry", [Value::Format(source, report), count]) => {
+            ("reachable_entry" | "function_entry", [Value::Format(source, report), count]) => {
                 let count = usize::try_from(count.as_int()?).map_err(|_| {
                     format!("instruction count must be between 1 and {MAX_DISASSEMBLY}")
                 })?;
@@ -6569,8 +6569,11 @@ impl Runtime {
                 }
                 let (start, end, bitness) = report.x86_entry_region(source.bytes().len())?;
                 let is_pe = report.name.starts_with("PE");
-                let found =
-                    asm::reachable(&source.bytes()[start..end], 0, report.entry, bitness, count)?;
+                let found = if name == "function_entry" {
+                    asm::function_reachable(&source.bytes()[start..end], 0, report.entry, bitness, count)?
+                } else {
+                    asm::reachable(&source.bytes()[start..end], 0, report.entry, bitness, count)?
+                };
                 let mut instructions = Vec::with_capacity(found.len());
                 for (relative, decoded) in found {
                     let offset = start + relative;
@@ -6640,7 +6643,7 @@ impl Runtime {
                     decoded,
                 })))
             }
-            ("reachable", [source, offset, base_ip, bitness, count]) => {
+            ("reachable" | "function_reachable", [source, offset, base_ip, bitness, count]) => {
                 let source = source.as_source()?;
                 let offset = usize::try_from(offset.as_int()?)
                     .map_err(|_| "reachable entry offset must be nonnegative")?;
@@ -6655,7 +6658,11 @@ impl Runtime {
                         "instruction count must be between 1 and {MAX_DISASSEMBLY}"
                     ));
                 }
-                let found = asm::reachable(source.bytes(), offset, base_ip, bitness, count)?;
+                let found = if name == "function_reachable" {
+                    asm::function_reachable(source.bytes(), offset, base_ip, bitness, count)?
+                } else {
+                    asm::reachable(source.bytes(), offset, base_ip, bitness, count)?
+                };
                 let mut instructions = Vec::with_capacity(found.len());
                 for (instruction_offset, decoded) in found {
                     let view = Source::view(
@@ -9127,7 +9134,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         };
     }
     if module == "asm" {
-        if matches!(name, "linear" | "reachable_entry") {
+        if matches!(name, "linear" | "reachable_entry" | "function_entry") {
             check_arguments(&qualified, args, &[Format, Int])?;
             return Ok(Disassembly);
         }
@@ -9148,7 +9155,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             check_arguments(&qualified, args, &[Source, Int, UInt, Int])?;
             return Ok(Instruction);
         }
-        if name == "reachable" {
+        if matches!(name, "reachable" | "function_reachable") {
             check_arguments(&qualified, args, &[Source, Int, UInt, Int, Int])?;
             return Ok(Disassembly);
         }

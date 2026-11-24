@@ -6618,7 +6618,7 @@ impl Codegen {
         args: &[Expr],
         scope: &HashMap<String, Binding>,
     ) -> Result<Scalar, String> {
-        if matches!(name, "linear" | "reachable_entry") {
+        if matches!(name, "linear" | "reachable_entry" | "function_entry") {
             if args.len() != 2 || self.expr(&args[0], scope)? != Scalar::Format {
                 return Err(format!("asm.{name} expects Format and i64 count"));
             }
@@ -6636,10 +6636,10 @@ impl Codegen {
             }
             let mapped = self.label();
             let decoded = self.label();
-            let helper = if name == "linear" {
-                "gak_native_asm_linear_entry"
-            } else {
-                "gak_native_asm_reachable_entry"
+            let helper = match name {
+                "linear" => "gak_native_asm_linear_entry",
+                "function_entry" => "gak_native_asm_function_entry",
+                _ => "gak_native_asm_reachable_entry",
             };
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    lea {}, [rbp-{}]\n    call gak_native_formats_x86_entry_region_info\n    test eax, eax\n    jnz {mapped}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{mapped}:\n    lea {}, [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    call {helper}\n    test rax, rax\n    jnz {decoded}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{decoded}:", self.arg0(), report_slot * 8, self.arg1(), info_slot * 8, self.arg0(), info_slot * 8, self.arg1(), count_slot * 8).unwrap();
             if name == "linear" {
@@ -6686,37 +6686,42 @@ impl Codegen {
             writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    add rdx, QWORD PTR [r10+16]\n    mov rax, QWORD PTR [r10]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_bytes_extract", instruction_slot * 8, source_slot * 8, size_slot * 8).unwrap();
             return Ok(Scalar::Bytes);
         }
-        if name == "reachable" && args.len() == 5 {
+        if matches!(name, "reachable" | "function_reachable") && args.len() == 5 {
             if self.expr(&args[0], scope)? != Scalar::Source {
-                return Err("asm.reachable expects Source".into());
+                return Err(format!("asm.{name} expects Source"));
             }
             let source_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
             if self.expr(&args[1], scope)? != Scalar::Int {
-                return Err("asm.reachable offset must be i64".into());
+                return Err(format!("asm.{name} offset must be i64"));
             }
             let offset_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", offset_slot * 8).unwrap();
             if self.expr(&args[2], scope)? != Scalar::UInt {
-                return Err("asm.reachable base address must be u64".into());
+                return Err(format!("asm.{name} base address must be u64"));
             }
             let base_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", base_slot * 8).unwrap();
             if self.expr(&args[3], scope)? != Scalar::Int {
-                return Err("asm.reachable bitness must be i64".into());
+                return Err(format!("asm.{name} bitness must be i64"));
             }
             let bitness_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", bitness_slot * 8).unwrap();
             if self.expr(&args[4], scope)? != Scalar::Int {
-                return Err("asm.reachable count must be i64".into());
+                return Err(format!("asm.{name} count must be i64"));
             }
             let count_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
+            let helper = if name == "function_reachable" {
+                "gak_native_asm_function_reachable"
+            } else {
+                "gak_native_asm_reachable"
+            };
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), base_slot * 8, self.arg3(), bitness_slot * 8).unwrap();
             if self.windows {
-                writeln!(self.code, "    sub rsp, 48\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rsp+32], r10\n    call gak_native_asm_reachable\n    add rsp, 48", count_slot * 8).unwrap();
+                writeln!(self.code, "    sub rsp, 48\n    mov r10, QWORD PTR [rbp-{}]\n    mov QWORD PTR [rsp+32], r10\n    call {helper}\n    add rsp, 48", count_slot * 8).unwrap();
             } else {
-                writeln!(self.code, "    mov r8, QWORD PTR [rbp-{}]\n    call gak_native_asm_reachable", count_slot * 8).unwrap();
+                writeln!(self.code, "    mov r8, QWORD PTR [rbp-{}]\n    call {helper}", count_slot * 8).unwrap();
             }
             let ready = self.label();
             writeln!(self.code, "    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();

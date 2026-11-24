@@ -404,6 +404,43 @@ pub unsafe extern "C" fn galeikan_asm_reachable(
     error: *mut u8,
     error_capacity: usize,
 ) -> i32 {
+    // SAFETY: The caller upholds the documented pointer contract.
+    unsafe { galeikan_asm_reachable_impl(bytes, length, start_offset, base_ip, bitness, max_instructions, out, error, error_capacity, true) }
+}
+
+/// Decode reachable instructions without descending into direct calls.
+/// The returned handle must be released with `galeikan_asm_disassembly_free`.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `out` and the
+/// optional error buffer must be writable for their stated sizes.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_function_reachable(
+    bytes: *const u8,
+    length: usize,
+    start_offset: usize,
+    base_ip: u64,
+    bitness: u32,
+    max_instructions: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    // SAFETY: The caller upholds the documented pointer contract.
+    unsafe { galeikan_asm_reachable_impl(bytes, length, start_offset, base_ip, bitness, max_instructions, out, error, error_capacity, false) }
+}
+
+unsafe fn galeikan_asm_reachable_impl(
+    bytes: *const u8,
+    length: usize,
+    start_offset: usize,
+    base_ip: u64,
+    bitness: u32,
+    max_instructions: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+    follow_calls: bool,
+) -> i32 {
     if out.is_null() {
         return write_error(error, error_capacity, "invalid decoder input");
     }
@@ -433,7 +470,11 @@ pub unsafe extern "C" fn galeikan_asm_reachable(
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
     match catch_unwind(AssertUnwindSafe(|| {
-        asm::reachable(input, start_offset, base_ip, bitness, max_instructions)
+        if follow_calls {
+            asm::reachable(input, start_offset, base_ip, bitness, max_instructions)
+        } else {
+            asm::function_reachable(input, start_offset, base_ip, bitness, max_instructions)
+        }
     })) {
         Ok(Ok(instructions)) => {
             let collection = match DecodedCollection::new(instructions) {
