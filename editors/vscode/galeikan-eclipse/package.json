@@ -1,0 +1,24 @@
+{
+  "name": "galeikan-eclipse",
+  "displayName": "Galeikan Eclipse",
+  "description": "An ice-blue dark theme for Visual Studio Code",
+  "version": "0.1.0",
+  "publisher": "galeikan",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GaleikanOrg/Galeikan.git"
+  },
+  "homepage": "https://github.com/GaleikanOrg/Galeikan",
+  "categories": ["Themes"],
+  "engines": { "vscode": "^1.80.0" },
+  "contributes": {
+    "themes": [
+      {
+        "label": "Galeikan Eclipse",
+        "uiTheme": "vs-dark",
+        "path": "./themes/galeikan-noir-color-theme.json"
+      }
+    ]
+  }
+}

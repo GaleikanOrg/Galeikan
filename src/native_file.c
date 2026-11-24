@@ -78,12 +78,15 @@ typedef struct {
 
 #ifdef _WIN32
 static wchar_t *gak_roots[GAK_MAX_ROOTS];
+static wchar_t *gak_write_roots[GAK_MAX_ROOTS];
 wchar_t *gak_python_executable;
 #else
 static char *gak_roots[GAK_MAX_ROOTS];
+static char *gak_write_roots[GAK_MAX_ROOTS];
 char *gak_python_executable;
 #endif
 static size_t gak_root_count;
+static size_t gak_write_root_count;
 static size_t gak_file_metadata_bytes;
 static uint32_t gak_process_grants[GAK_MAX_PROCESS_GRANTS];
 static size_t gak_process_grant_count;
@@ -260,15 +263,23 @@ static wchar_t *gak_final_path(HANDLE handle) {
     return path;
 }
 
-static int gak_allowed(const wchar_t *path) {
-    for (size_t index = 0; index < gak_root_count; index++) {
-        size_t length = wcslen(gak_roots[index]);
+static int gak_allowed_in(const wchar_t *path, wchar_t *const *roots, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        size_t length = wcslen(roots[index]);
         /* Exact case avoids granting a distinct case-sensitive directory. */
-        if (wcsncmp(path, gak_roots[index], length) != 0) continue;
-        if (gak_roots[index][length - 1] == L'\\' || path[length] == L'\\' || path[length] == 0)
+        if (wcsncmp(path, roots[index], length) != 0) continue;
+        if (roots[index][length - 1] == L'\\' || path[length] == L'\\' || path[length] == 0)
             return 1;
     }
     return 0;
+}
+
+static int gak_allowed(const wchar_t *path) {
+    return gak_allowed_in(path, gak_roots, gak_root_count);
+}
+
+static int gak_write_allowed(const wchar_t *path) {
+    return gak_allowed_in(path, gak_write_roots, gak_write_root_count);
 }
 
 static int gak_grant_root(const wchar_t *requested) {
@@ -285,6 +296,23 @@ static int gak_grant_root(const wchar_t *requested) {
         return gak_failf("invalid read directory");
     }
     gak_roots[gak_root_count++] = path;
+    return 0;
+}
+
+static int gak_grant_write_root(const wchar_t *requested) {
+    if (gak_write_root_count >= GAK_MAX_ROOTS) return gak_failf("too many write directories");
+    HANDLE handle = CreateFileW(requested, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (handle == INVALID_HANDLE_VALUE) return gak_failf("invalid write directory");
+    DWORD attributes = GetFileAttributesW(requested);
+    wchar_t *path = gak_final_path(handle);
+    CloseHandle(handle);
+    if (!path || attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        free(path);
+        return gak_failf("invalid write directory");
+    }
+    gak_write_roots[gak_write_root_count++] = path;
     return 0;
 }
 
@@ -324,6 +352,11 @@ int gak_native_init(void) {
         if (options && wcscmp(argument, L"--allow-read") == 0) {
             if (++index >= count) return gak_failf("--allow-read needs a directory");
             if (gak_grant_root(arguments[index]) != 0) return -1;
+            continue;
+        }
+        if (options && wcscmp(argument, L"--allow-write") == 0) {
+            if (++index >= count) return gak_failf("--allow-write needs a directory");
+            if (gak_grant_write_root(arguments[index]) != 0) return -1;
             continue;
         }
         if (options && wcscmp(argument, L"--allow-connect") == 0) {
@@ -422,14 +455,23 @@ static wchar_t *gak_requested_path(const char *path, const char *base) {
 }
 
 #else
-static int gak_allowed(const char *path) {
-    for (size_t index = 0; index < gak_root_count; index++) {
-        size_t length = strlen(gak_roots[index]);
-        if (strncmp(path, gak_roots[index], length) != 0) continue;
-        if ((length == 1 && gak_roots[index][0] == '/') || path[length] == '/' || path[length] == 0)
+static int gak_allowed_in(const char *path, char *const *roots, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        size_t length = strlen(roots[index]);
+        if (strncmp(path, roots[index], length) != 0) continue;
+        if ((length == 1 && roots[index][0] == '/') || path[length] == '/' || path[length] == 0)
             return 1;
     }
     return 0;
+}
+
+
+static int gak_allowed(const char *path) {
+    return gak_allowed_in(path, gak_roots, gak_root_count);
+}
+
+static int gak_write_allowed(const char *path) {
+    return gak_allowed_in(path, gak_write_roots, gak_write_root_count);
 }
 
 static int gak_grant_root(const char *requested) {
@@ -441,6 +483,18 @@ static int gak_grant_root(const char *requested) {
         return gak_failf("invalid read directory: %s", requested);
     }
     gak_roots[gak_root_count++] = path;
+    return 0;
+}
+
+static int gak_grant_write_root(const char *requested) {
+    if (gak_write_root_count >= GAK_MAX_ROOTS) return gak_failf("too many write directories");
+    char *path = realpath(requested, NULL);
+    struct stat metadata;
+    if (!path || stat(path, &metadata) != 0 || !S_ISDIR(metadata.st_mode)) {
+        free(path);
+        return gak_failf("invalid write directory: %s", requested);
+    }
+    gak_write_roots[gak_write_root_count++] = path;
     return 0;
 }
 
@@ -480,6 +534,11 @@ int gak_native_init(void) {
         if (options && strcmp(argument, "--allow-read") == 0) {
             if (++index >= count) return gak_failf("--allow-read needs a directory");
             if (gak_grant_root(arguments[index]) != 0) return -1;
+            continue;
+        }
+        if (options && strcmp(argument, "--allow-write") == 0) {
+            if (++index >= count) return gak_failf("--allow-write needs a directory");
+            if (gak_grant_write_root(arguments[index]) != 0) return -1;
             continue;
         }
         if (options && strcmp(argument, "--allow-connect") == 0) {
@@ -530,14 +589,14 @@ static char *gak_requested_path(const char *path, const char *base) {
 }
 
 /* Walk a verified root handle without following components swapped to symlinks. */
-static int gak_open_beneath_root(const char *canonical) {
+static int gak_open_beneath_roots(const char *canonical, char *const *roots, size_t root_count) {
     const char *root = NULL;
-    for (size_t index = 0; index < gak_root_count; index++) {
-        size_t length = strlen(gak_roots[index]);
-        if (strncmp(canonical, gak_roots[index], length) == 0 &&
-            ((length == 1 && gak_roots[index][0] == '/') ||
+    for (size_t index = 0; index < root_count; index++) {
+        size_t length = strlen(roots[index]);
+        if (strncmp(canonical, roots[index], length) == 0 &&
+            ((length == 1 && roots[index][0] == '/') ||
              canonical[length] == '/' || canonical[length] == 0)) {
-            root = gak_roots[index];
+            root = roots[index];
             break;
         }
     }
@@ -577,7 +636,175 @@ static int gak_open_beneath_root(const char *canonical) {
     free(parts);
     return directory;
 }
+
+static int gak_open_beneath_root(const char *canonical) {
+    return gak_open_beneath_roots(canonical, gak_roots, gak_root_count);
+}
 #endif
+
+typedef struct {
+    uint8_t *backing;
+    void *parent;
+    uint64_t start;
+    uint64_t end;
+} GakWriteSource;
+
+int64_t gak_native_write_file(const uint8_t *path_box, const void *data, int kind,
+                              const uint8_t *base_box) {
+    gak_file_error = NULL;
+    if (!data || (kind != 0 && kind != 1)) {
+        gak_failf("file.write data must be bytes or Source");
+        return -1;
+    }
+    const uint8_t *payload;
+    uint64_t length;
+    if (kind == 0) {
+        length = *(const uint64_t *)data;
+        payload = (const uint8_t *)data + 8;
+    } else {
+        const GakWriteSource *source = (const GakWriteSource *)data;
+        if (!source->backing || source->end < source->start ||
+            source->end > *(const uint64_t *)source->backing) {
+            gak_failf("invalid Source for file.write");
+            return -1;
+        }
+        length = source->end - source->start;
+        payload = source->backing + 8 + source->start;
+    }
+    if (length > GAK_MAX_SNAPSHOT) {
+        gak_failf("file.write exceeds 536870912 bytes");
+        return -1;
+    }
+    char *label = gak_cstring(path_box);
+    char *base = gak_cstring(base_box);
+    if (!label || !base) {
+        free(label);
+        free(base);
+        return -1;
+    }
+    int64_t result = -1;
+#ifdef _WIN32
+    wchar_t *requested = gak_requested_path(label, base);
+    if (!requested) {
+        gak_failf("invalid UTF-8 output path or native allocation failed");
+        goto write_done;
+    }
+    wchar_t *separator = wcsrchr(requested, L'\\');
+    if (!separator || !separator[1] || wcscmp(separator + 1, L".") == 0 ||
+        wcscmp(separator + 1, L"..") == 0) {
+        gak_failf("invalid output file name");
+        free(requested);
+        goto write_done;
+    }
+    wchar_t saved = *separator;
+    if (separator == requested || separator[-1] != L':') *separator = 0;
+    HANDLE parent = CreateFileW(requested, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    *separator = saved;
+    wchar_t *parent_path = parent == INVALID_HANDLE_VALUE ? NULL : gak_final_path(parent);
+    if (parent != INVALID_HANDLE_VALUE) CloseHandle(parent);
+    if (!parent_path || !gak_write_allowed(parent_path)) {
+        gak_failf("file write not allowed: %s", label);
+        free(parent_path);
+        free(requested);
+        goto write_done;
+    }
+    free(parent_path);
+    HANDLE file = CreateFileW(requested, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+        CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(requested);
+    if (file == INVALID_HANDLE_VALUE) {
+        gak_failf("cannot create output file: %s", label);
+        goto write_done;
+    }
+    wchar_t *opened = gak_final_path(file);
+    if (!opened || !gak_write_allowed(opened)) {
+        gak_failf("file write not allowed: %s", label);
+        free(opened);
+        CloseHandle(file);
+        goto write_done;
+    }
+    free(opened);
+    uint64_t written = 0;
+    while (written < length) {
+        DWORD chunk = (DWORD)((length - written) > 1048576 ? 1048576 : length - written);
+        DWORD count = 0;
+        if (!WriteFile(file, payload + written, chunk, &count, NULL) || count == 0) {
+            gak_failf("cannot write output file: %s", label);
+            break;
+        }
+        written += count;
+    }
+    if (!gak_file_error && !FlushFileBuffers(file))
+        gak_failf("cannot flush output file: %s", label);
+    if (!gak_file_error) result = (int64_t)length;
+    CloseHandle(file);
+#else
+    char *requested = gak_requested_path(label, base);
+    if (!requested) {
+        gak_failf("file path exceeds %d bytes or native allocation failed", GAK_MAX_PATH_BYTES);
+        goto write_done;
+    }
+    char *separator = strrchr(requested, '/');
+    if (!separator || !separator[1] || strcmp(separator + 1, ".") == 0 ||
+        strcmp(separator + 1, "..") == 0) {
+        gak_failf("invalid output file name");
+        free(requested);
+        goto write_done;
+    }
+    char *name = separator + 1;
+    if (separator != requested) *separator = 0;
+    char *parent = realpath(requested, NULL);
+    if (!parent || !gak_write_allowed(parent)) {
+        gak_failf("file write not allowed: %s", label);
+        free(parent);
+        free(requested);
+        goto write_done;
+    }
+    int parent_fd = gak_open_beneath_roots(parent, gak_write_roots, gak_write_root_count);
+    free(parent);
+    if (parent_fd < 0) {
+        gak_failf("file write not allowed: %s", label);
+        free(requested);
+        goto write_done;
+    }
+    int file = openat(parent_fd, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    free(requested);
+    close(parent_fd);
+    if (file < 0) {
+        gak_failf("cannot create output file: %s: %s", label, strerror(errno));
+        goto write_done;
+    }
+    char descriptor[64], opened[GAK_MAX_PATH_BYTES];
+    snprintf(descriptor, sizeof(descriptor), "/proc/self/fd/%d", file);
+    ssize_t opened_size = readlink(descriptor, opened, sizeof(opened) - 1);
+    if (opened_size < 0 || (size_t)opened_size >= sizeof(opened) - 1) {
+        gak_failf("cannot verify output file path");
+    } else {
+        opened[opened_size] = 0;
+        if (!gak_write_allowed(opened)) gak_failf("file write not allowed: %s", opened);
+    }
+    uint64_t written = 0;
+    while (!gak_file_error && written < length) {
+        ssize_t count = write(file, payload + written,
+            (size_t)(length - written > 1048576 ? 1048576 : length - written));
+        if (count <= 0) {
+            if (count < 0 && errno == EINTR) continue;
+            gak_failf("cannot write output file: %s", label);
+            break;
+        }
+        written += (uint64_t)count;
+    }
+    if (!gak_file_error && fsync(file) != 0) gak_failf("cannot flush output file: %s", label);
+    if (!gak_file_error) result = (int64_t)length;
+    close(file);
+#endif
+write_done:
+    free(label);
+    free(base);
+    return result;
+}
 
 GakFileResult *gak_native_read_file(const uint8_t *path_box, int64_t max, const uint8_t *base_box) {
     gak_file_error = NULL;

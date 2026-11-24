@@ -11,7 +11,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%7C%20Debian%2013-16344b?style=flat-square)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-7ccfff?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
-**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical reference](docs/technical.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
+**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical reference](docs/technical.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code syntax](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VS Code theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse)
 
 > [!IMPORTANT]
 > Galeikan is a **0.1.0 development preview**. The native compiler supports a smaller subset than the interpreter and VM. Downloads are unsigned, and declared effects are not an operating-system sandbox.
@@ -24,9 +24,9 @@ Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 packa
 | :--- | :--- |
 | Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/Galeikan-0.1.0-preview3-windows-x64-setup.exe) |
 | Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan_0.1.0.preview3_amd64.deb) |
-| Visual Studio Code | [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VSIX download](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan-language-0.1.3.vsix) |
+| Visual Studio Code | [Syntax highlighting](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [Galeikan Eclipse theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse) · [Preview 3 VSIX archive](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan-language-0.1.3.vsix) |
 
-The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/SHA256SUMS.txt). The VSIX keeps its independent extension version, 0.1.3.
+The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/SHA256SUMS.txt). Its archived VSIX is version 0.1.3; the Marketplace extension is updated independently.
 
 The commands below use examples from this repository. Clone it first if you installed a binary package:
 
@@ -119,7 +119,7 @@ The example prints `44`. The bridge exchanges bounded typed values (`i64`, `u64`
 
 ## Explicit effects and research boundaries
 
-An effectful operation needs both a declaration in the source and a matching launch grant. For example, a file-reading program declares `requires { file.read }` and runs with `--allow-read <directory>`. Network and process access have separate grants. `galeikan check` checks source without executing its effects.
+An effectful operation needs both a declaration in the source and a matching launch grant. For example, a file-reading program declares `requires { file.read }` and runs with `--allow-read <directory>`. To save a patched binary as a new file, use `std.file.write` with `requires { file.write }` and `--allow-write <directory>`; existing files are not replaced. Network and process access have separate grants. `galeikan check` checks source without executing its effects.
 
 These checks make access visible and bounded, **not isolated**. Python modules run with their normal OS permissions; Galeikan does not yet provide a complete sandbox for untrusted source. Format metadata and hardening signals are observations, not malware verdicts or proof of runtime protection. The [technical reference](docs/technical.md) describes the current implementation and limits.
 
@@ -138,7 +138,8 @@ cargo build --release
 | [`examples/`](examples/) | Runnable language and research examples |
 | [`tests/`](tests/) | Language and runtime checks |
 | [`python/`](python/) | Optional Python-to-Galeikan bridge |
-| [`editors/vscode/galeikan/`](editors/vscode/galeikan/) | Syntax highlighting and Galeikan Eclipse theme |
+| [`editors/vscode/galeikan/`](editors/vscode/galeikan/) | Syntax highlighting and language configuration |
+| [`editors/vscode/galeikan-eclipse/`](editors/vscode/galeikan-eclipse/) | Optional Galeikan Eclipse color theme |
 | [`scripts/`](scripts/) · [`packaging/`](packaging/) | Windows and Debian release packaging |
 
 For a larger worked problem, try the [triple-capture recovery challenge](docs/triple-capture-challenge.md). Report reproducible issues through [GitHub Issues](https://github.com/GaleikanOrg/Galeikan/issues) with the source file, command, platform, and observed output.

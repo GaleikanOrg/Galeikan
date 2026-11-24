@@ -34,6 +34,7 @@ fn usage() -> &'static str {
         "\n",
         "Permissions:\n",
         "  --allow-read <directory>       Allow file reads from this directory (repeatable)\n",
+        "  --allow-write <directory>      Allow new files in this directory (repeatable)\n",
         "  --allow-connect <host:port>    Allow a network destination (repeatable)\n",
         "  --allow-process <pid|self>     Allow process inspection (repeatable)\n",
         "  --allow-python <executable>    Allow Python interop\n",
@@ -162,6 +163,7 @@ fn main() {
     }
     let script = PathBuf::from(&args[1]);
     let mut roots = Vec::new();
+    let mut write_roots = Vec::new();
     let mut allowed_connections = Vec::new();
     let mut allowed_processes = Vec::new();
     let mut allow_syscall = false;
@@ -241,6 +243,17 @@ fn main() {
                 }
             }
         }
+        if args[i] == "--allow-write" && i + 1 < args.len() {
+            match PathBuf::from(&args[i + 1]).canonicalize() {
+                Ok(path) if path.is_dir() => write_roots.push(path),
+                _ => {
+                    eprintln!("invalid write directory: {}", args[i + 1]);
+                    std::process::exit(2);
+                }
+            }
+            i += 2;
+            continue;
+        }
         if args[i] != "--allow-read" || i + 1 >= args.len() {
             eprintln!("{}", usage());
             std::process::exit(2);
@@ -269,6 +282,7 @@ fn main() {
             &request,
             runtime::CallOptions {
                 read_roots: roots,
+                write_roots,
                 allowed_connections,
                 allowed_processes,
                 allow_syscall,
@@ -290,6 +304,7 @@ fn main() {
             &script,
             runtime::CallOptions {
                 read_roots: roots,
+                write_roots,
                 allowed_connections,
                 allowed_processes,
                 allow_syscall,
@@ -307,6 +322,7 @@ fn main() {
     }
     let options = runtime::RunOptions {
         read_roots: roots,
+        write_roots,
         allowed_connections,
         allowed_processes,
         allow_syscall,

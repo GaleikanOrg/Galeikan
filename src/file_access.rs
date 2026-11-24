@@ -1,5 +1,69 @@
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Create a new file inside a granted directory. Existing files are never replaced.
+pub fn write_new_authorized(requested: &Path, roots: &[PathBuf], bytes: &[u8]) -> Result<(), String> {
+    let parent = requested
+        .parent()
+        .ok_or("output path has no parent")?
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", requested.display()))?;
+    if !is_allowed(&parent, roots) {
+        return Err(format!("file write not allowed: {}", requested.display()));
+    }
+    let name = requested.file_name().ok_or("output path has no file name")?;
+    if !matches!(Path::new(name).components().next(), Some(std::path::Component::Normal(_))) {
+        return Err("invalid output file name".into());
+    }
+    let mut file = create_new_in_parent(&parent, name, roots)
+        .map_err(|error| format!("cannot create {}: {error}", requested.display()))?;
+    let opened = opened_path(&file)?;
+    if !is_allowed(&opened, roots) {
+        return Err(format!("file write not allowed: {}", opened.display()));
+    }
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot write {}: {error}", opened.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn create_new_in_parent(parent: &Path, name: &std::ffi::OsStr, roots: &[PathBuf]) -> std::io::Result<File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Component;
+
+    let root = roots.iter().find(|root| parent.starts_with(root))
+        .ok_or(std::io::ErrorKind::PermissionDenied)?;
+    let root_name = CString::new(root.as_os_str().as_bytes())
+        .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    let root_fd = unsafe { libc::open(root_name.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    if root_fd < 0 { return Err(std::io::Error::last_os_error()); }
+    let mut directory = unsafe { File::from_raw_fd(root_fd) };
+    if opened_path(&directory).map_err(std::io::Error::other)? != *root {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    for part in parent.strip_prefix(root).map_err(|_| std::io::ErrorKind::PermissionDenied)?.components() {
+        let Component::Normal(part) = part else { return Err(std::io::ErrorKind::InvalidInput.into()); };
+        let part = CString::new(part.as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+        let fd = unsafe { libc::openat(directory.as_raw_fd(), part.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        if fd < 0 { return Err(std::io::Error::last_os_error()); }
+        directory = unsafe { File::from_raw_fd(fd) };
+    }
+    if opened_path(&directory).map_err(std::io::Error::other)? != parent {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    let name = CString::new(name.as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) };
+    if fd < 0 { return Err(std::io::Error::last_os_error()); }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn create_new_in_parent(parent: &Path, name: &std::ffi::OsStr, _roots: &[PathBuf]) -> std::io::Result<File> {
+    std::fs::OpenOptions::new().write(true).create_new(true).open(parent.join(name))
+}
 
 pub fn open_authorized(requested: &Path, roots: &[PathBuf]) -> Result<(File, PathBuf), String> {
     open_authorized_with(requested, roots, || {})

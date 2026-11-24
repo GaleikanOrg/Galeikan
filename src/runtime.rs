@@ -702,6 +702,7 @@ impl Value {
 #[derive(Clone)]
 enum Import {
     Binary,
+    File,
     Bytes,
     Text,
     Formats,
@@ -722,6 +723,7 @@ enum Import {
 fn import_has_symbol(import: &Import, symbol: &str) -> bool {
     let module = match import {
         Import::Binary => "binary",
+        Import::File => "file",
         Import::Bytes => "bytes",
         Import::Text => "text",
         Import::Formats => "formats",
@@ -1162,6 +1164,7 @@ struct BundleImport {
 #[derive(serde::Serialize, serde::Deserialize)]
 enum BundleTarget {
     Binary,
+    File,
     Bytes,
     Text,
     Formats,
@@ -1243,6 +1246,7 @@ struct Runtime {
     project_root: PathBuf,
     packages: BTreeMap<String, PathBuf>,
     read_roots: Vec<PathBuf>,
+    write_roots: Vec<PathBuf>,
     allowed_connections: HashSet<String>,
     allowed_processes: HashSet<u32>,
     allow_syscall: bool,
@@ -1271,6 +1275,7 @@ struct Runtime {
 #[derive(Default)]
 struct Permissions {
     read_roots: Vec<PathBuf>,
+    write_roots: Vec<PathBuf>,
     allowed_connections: Vec<String>,
     allowed_processes: Vec<u32>,
     allow_syscall: bool,
@@ -1562,6 +1567,7 @@ fn compile_steps(
 
 pub struct RunOptions {
     pub read_roots: Vec<PathBuf>,
+    pub write_roots: Vec<PathBuf>,
     pub allowed_connections: Vec<String>,
     pub allowed_processes: Vec<u32>,
     pub allow_syscall: bool,
@@ -1576,6 +1582,7 @@ pub fn run(script: &Path, options: RunOptions) -> Result<(), String> {
         script,
         Permissions {
             read_roots: options.read_roots,
+            write_roots: options.write_roots,
             allowed_connections: options.allowed_connections,
             allowed_processes: options.allowed_processes,
             allow_syscall: options.allow_syscall,
@@ -1819,6 +1826,7 @@ fn encode_call_value(value: Value) -> Result<JsonValue, String> {
 
 pub struct CallOptions {
     pub read_roots: Vec<PathBuf>,
+    pub write_roots: Vec<PathBuf>,
     pub allowed_connections: Vec<String>,
     pub allowed_processes: Vec<u32>,
     pub allow_syscall: bool,
@@ -1859,6 +1867,7 @@ impl CallSession {
                 BTreeMap::new(),
                 Permissions {
                     read_roots: options.read_roots,
+                    write_roots: options.write_roots,
                     allowed_connections: options.allowed_connections,
                     allowed_processes: options.allowed_processes,
                     allow_syscall: options.allow_syscall,
@@ -1878,6 +1887,7 @@ impl CallSession {
                 project.packages,
                 Permissions {
                     read_roots: options.read_roots,
+                    write_roots: options.write_roots,
                     allowed_connections: options.allowed_connections,
                     allowed_processes: options.allowed_processes,
                     allow_syscall: options.allow_syscall,
@@ -2033,6 +2043,7 @@ pub fn exec(artifact: &Path, options: RunOptions) -> Result<(), String> {
         BTreeMap::new(),
         Permissions {
             read_roots: options.read_roots,
+            write_roots: options.write_roots,
             allowed_connections: options.allowed_connections,
             allowed_processes: options.allowed_processes,
             allow_syscall: options.allow_syscall,
@@ -2143,6 +2154,7 @@ impl Runtime {
             project_root,
             packages,
             read_roots: permissions.read_roots,
+            write_roots: permissions.write_roots,
             allowed_connections: permissions.allowed_connections.into_iter().collect(),
             allowed_processes: permissions.allowed_processes.into_iter().collect(),
             allow_syscall: permissions.allow_syscall,
@@ -2862,6 +2874,7 @@ impl Runtime {
                 .map(|(alias, target)| {
                     let target = match target {
                         Import::Binary => BundleTarget::Binary,
+                        Import::File => BundleTarget::File,
                         Import::Bytes => BundleTarget::Bytes,
                         Import::Text => BundleTarget::Text,
                         Import::Formats => BundleTarget::Formats,
@@ -2957,6 +2970,7 @@ impl Runtime {
             if !matches!(
                 effect.as_str(),
                 "file.read"
+                    | "file.write"
                     | "net.connect"
                     | "python.exec"
                     | "process.inspect"
@@ -2986,6 +3000,7 @@ impl Runtime {
                 if !matches!(
                     effect.as_str(),
                     "file.read"
+                        | "file.write"
                         | "net.connect"
                         | "python.exec"
                         | "process.inspect"
@@ -3011,6 +3026,7 @@ impl Runtime {
                 }
                 let import = match item.target {
                     BundleTarget::Binary => Import::Binary,
+                    BundleTarget::File => Import::File,
                     BundleTarget::Bytes => Import::Bytes,
                     BundleTarget::Text => Import::Text,
                     BundleTarget::Formats => Import::Formats,
@@ -3231,6 +3247,7 @@ impl Runtime {
                     saw_requires = true;
                     for effect in effects {
                         if effect != "file.read"
+                            && effect != "file.write"
                             && effect != "python.exec"
                             && effect != "net.connect"
                             && effect != "process.inspect"
@@ -3541,6 +3558,8 @@ impl Runtime {
     ) -> Result<Import, String> {
         let imported = if target == "std.binary" {
             Import::Binary
+        } else if target == "std.file" {
+            Import::File
         } else if target == "std.bytes" {
             Import::Bytes
         } else if target == "std.text" {
@@ -4352,6 +4371,12 @@ impl Runtime {
                     }
                     standard_call("binary", function, args)
                 }
+                Some(Import::File) => {
+                    if function == "write" {
+                        self.check_effect(module, "file.write")?;
+                    }
+                    standard_call("file", function, args)
+                }
                 Some(Import::Bytes) => standard_call("bytes", function, args),
                 Some(Import::Text) => standard_call("text", function, args),
                 Some(Import::Formats) => standard_call("formats", function, args),
@@ -4801,6 +4826,7 @@ impl Runtime {
         if let Some((alias, function)) = name.split_once('.') {
             match module.imports.get(alias) {
                 Some(Import::Binary) => self.binary(module, function, &args),
+                Some(Import::File) => self.file(module, function, &args),
                 Some(Import::Bytes) => self.bytes(function, &args),
                 Some(Import::Text) => self.text(function, &args),
                 Some(Import::Formats) => self.formats(function, &args),
@@ -5204,6 +5230,22 @@ impl Runtime {
             _ => Err(format!(
                 "unknown text function or wrong argument count: {name}"
             )),
+        }
+    }
+
+    fn file(&self, module: &Rc<Module>, name: &str, args: &[Value]) -> Result<Value, String> {
+        match (name, args) {
+            ("write", [path, data]) => {
+                self.check_effect(module, "file.write")?;
+                let data = data.as_binary_bytes()?;
+                if data.len() > MAX_SNAPSHOT {
+                    return Err(format!("file.write exceeds {MAX_SNAPSHOT} bytes"));
+                }
+                let path = module.path.parent().unwrap().join(path.as_str()?);
+                file_access::write_new_authorized(&path, &self.write_roots, data)?;
+                Ok(Value::Int(data.len() as i64))
+            }
+            _ => Err(format!("unknown standard function file.{name}")),
         }
     }
 
@@ -8873,6 +8915,16 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         Region, Regions, Source, Str, UInt,
     };
     let qualified = format!("{module}.{name}");
+    if module == "file" && name == "write" {
+        let [path, data] = args else {
+            return Err("file.write expects a path and bytes or Source".into());
+        };
+        require_type(Str, *path)?;
+        if !matches!(data, Bytes | Source | Type::Any) {
+            return Err(format!("file.write expects bytes or Source, got {data}"));
+        }
+        return Ok(Int);
+    }
     if module == "formats" && matches!(name, "clr_table_present" | "clr_table_rows") {
         let [format, index] = args else {
             return Err(format!("{qualified} expects Format and i64 index or str name"));
@@ -9203,6 +9255,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("text", "contains" | "starts_with" | "ends_with") => (&[Str, Str], Bool),
         ("text", "slice") => (&[Str, Int, Int], Str),
         ("binary", "analyze") => (&[Str, Int], Source),
+        ("file", "write") => (&[Str, Type::Any], Int),
         ("binary", "from_hex") => (&[Str], Bytes),
         ("binary", "snapshot") => (&[Bytes], Source),
         ("binary", "deep") => (&[Source, Int, Str], Observation),

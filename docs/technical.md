@@ -4,7 +4,7 @@ This is the function and command reference for the **current source tree**. It i
 
 Use this page to find current functions by module, learn what each group returns, and identify permission requirements. Each function group below gives its present purpose; a name in this reference does not imply that every execution engine supports every argument form. Test the exact source on the intended engine and platform.
 
-**Navigate:** [Commands](#command-line-reference) · [Language and types](#language-and-data-types) · [Bytes and text](#stdbytes) · [Binary data](#stdbinary) · [Formats and CLR](#stdformats) · [Disassembly](#stdasm) · [Processes](#stdprocess) · [Network](#stdnet) · [Utilities](#stdaudit-stdlab-stditer-stdlist-stdresult-stdcli-stdsyscall) · [Effects](#effects-and-grants-reference).
+**Navigate:** [Commands](#command-line-reference) · [Language and types](#language-and-data-types) · [Bytes and text](#stdbytes) · [Binary data](#stdbinary) · [File output](#stdfile) · [Formats and CLR](#stdformats) · [Disassembly](#stdasm) · [Processes](#stdprocess) · [Network](#stdnet) · [Utilities](#stdaudit-stdlab-stditer-stdlist-stdresult-stdcli-stdsyscall) · [Effects](#effects-and-grants-reference).
 
 ## Availability and conventions
 
@@ -29,6 +29,8 @@ Functions are written below without the `std.` prefix for readability: `binary.d
 | `galeikan --help`, `--version` | Show command usage or the core package version. |
 
 `run`, `exec`, `call`, and `serve` accept applicable permission flags. `run` and `exec` can write a case with `--case <output.json>`. Arguments after `--` are passed to the Galeikan program and read with `std.cli`. The compiler's generated file uses `.exe` on Windows and `.native` on Linux. The CLI package version is currently `0.1.0`. Distribution builds have their own preview label.
+
+`--allow-write <directory>` grants creation of new files under an existing directory. Repeat it for several roots. It does not imply `--allow-read` and never authorizes overwriting an existing file.
 
 ## Language and data types
 
@@ -107,6 +109,25 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 `crc32` is a conventional checksum; use SHA-256 when cryptographic collision resistance matters. Entropy and pattern hits are evidence for investigation, not automatic classification. Source size, string count, mutation count, and entropy-window count have implementation limits that return errors rather than silently truncating results.
 
 `strings` scans UTF-16LE/BE on both byte alignments and reports sorted candidate offsets. `read_text` decodes valid Unicode scalars, including surrogate pairs; malformed pairs end a printable run. As with any binary string scan, candidate offsets can include false positives.
+
+### `std.file`
+
+| Function | Current purpose |
+| --- | --- |
+| `write(path: str, data: Source\|bytes) -> i64` | Create a new binary file and return the number of bytes written. The path resolves relative to the importing module; absolute paths are also accepted when granted. The parent directory must exist. Output is limited to 512 MiB. Existing files are never overwritten. |
+
+Declare `requires { file.write }` and run with `--allow-write <directory>`. Reading input still needs `file.read` and `--allow-read`. `binary.patch`, `binary.splice`, and bit mutations return a new `Source`; pass that value to `file.write` to save a modified binary. A failed write may leave a partial new file if the operating system reports an I/O error after creation. This API is a bounded export, not an atomic replacement operation.
+
+```galeikan
+requires { file.read, file.write }
+from std.binary import analyze, patch
+from std.bytes import from_hex
+from std.file import write
+
+let original = analyze("input.bin", 1048576)
+let modified = patch(original, 0, from_hex("47414b"))
+print write("output.bin", modified)
+```
 
 ### `std.formats`
 
@@ -209,6 +230,7 @@ Mapping enumeration is not a snapshot of an entire process; regions can change b
 | Source effect | CLI grant | Scope and limit |
 | --- | --- | --- |
 | `file.read` | `--allow-read <directory>` | Authorizes built-in file reads rooted at the granted directory. |
+| `file.write` | `--allow-write <directory>` | Authorizes creation of new binary files under the granted directory. No overwrite; 512 MiB per write. |
 | `net.connect` | `--allow-connect <host:port>` | Authorizes the matching network destination for bounded TCP/UDP/HTTP operations. |
 | `process.inspect` | `--allow-process <pid\|self>` | Authorizes supported inspection of the specified process; OS permissions still apply. |
 | `python.exec` | `--allow-python <executable>` | Starts a compatible external Python worker with that user's normal OS authority. |

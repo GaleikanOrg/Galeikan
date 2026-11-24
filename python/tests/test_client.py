@@ -393,6 +393,7 @@ class GaleikanClientTests(unittest.TestCase):
             result = Galeikan("galeikan-bin").run(
                 "probe.gak",
                 allow_read=["samples"],
+                allow_write=["out"],
                 allow_connect=["127.0.0.1:8080"],
                 allow_process=[1234],
                 allow_python="python3",
@@ -405,6 +406,7 @@ class GaleikanClientTests(unittest.TestCase):
                 [
                     "galeikan-bin", "run", "probe.gak",
                     "--allow-read", "samples",
+                    "--allow-write", "out",
                     "--allow-connect", "127.0.0.1:8080",
                     "--allow-process", "1234",
                     "--allow-python", "python3",
@@ -1220,11 +1222,11 @@ sys.stdin.read(1)
         with patch("galeikan_bridge._run_bounded") as run:
             run.return_value.check_returncode.return_value = None
             Galeikan("galeikan-bin").exec(
-                "probe.gakb", allow_read=["samples"], allow_python="python3", args=["x"],
+                "probe.gakb", allow_read=["samples"], allow_write=["out"], allow_python="python3", args=["x"],
             )
             self.assertEqual(
                 run.call_args.args[0],
-                ["galeikan-bin", "exec", "probe.gakb", "--allow-read", "samples", "--allow-python", "python3", "--", "x"],
+                ["galeikan-bin", "exec", "probe.gakb", "--allow-read", "samples", "--allow-write", "out", "--allow-python", "python3", "--", "x"],
             )
 
     def test_call_uses_json_protocol_and_permissions(self):
@@ -1232,13 +1234,13 @@ sys.stdin.read(1)
             run.return_value.stdout = '{"version":1,"value":{"$galeikan":"bytes","hex":"00ff"}}\n'
             result = Galeikan("galeikan-bin").call(
                 "module.gak", "echo", b"\x00\xff", engine="vm",
-                allow_read=["samples"], allow_python="python3", args=["sample.bin"],
+                allow_read=["samples"], allow_write=["out"], allow_python="python3", args=["sample.bin"],
             )
             self.assertEqual(result, b"\x00\xff")
             self.assertEqual(
                 run.call_args.args[0],
                 ["galeikan-bin", "call", "module.gak", "echo", "--engine", "vm",
-                 "--allow-read", "samples", "--allow-python", "python3", "--", "sample.bin"],
+                 "--allow-read", "samples", "--allow-write", "out", "--allow-python", "python3", "--", "sample.bin"],
             )
             self.assertEqual(json.loads(run.call_args.kwargs["input"]), {
                 "version": 1, "args": [{"$galeikan": "bytes", "hex": "00ff"}],
@@ -1250,7 +1252,7 @@ sys.stdin.read(1)
             run.return_value.stdout = '{"version":1,"value":42}\n'
             client = Galeikan("galeikan-bin")
             module = client.module(
-                "math.gak", engine="vm", allow_read=["samples"],
+                "math.gak", engine="vm", allow_read=["samples"], allow_write=["out"],
                 allow_python="python3", timeout=5.0,
             )
             self.assertEqual(module.twice(21), 42)
@@ -1258,7 +1260,7 @@ sys.stdin.read(1)
             self.assertEqual(
                 run.call_args.args[0],
                 ["galeikan-bin", "call", "math.gak", "call", "--engine", "vm",
-                 "--allow-read", "samples", "--allow-python", "python3"],
+                 "--allow-read", "samples", "--allow-write", "out", "--allow-python", "python3"],
             )
             self.assertEqual(run.call_args.kwargs["timeout"], 5.0)
             with self.assertRaises(ValueError):

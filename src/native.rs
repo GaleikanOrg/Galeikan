@@ -794,6 +794,7 @@ struct NativeModule {
 #[derive(Clone)]
 enum NativeImport {
     Local(PathBuf),
+    File,
     Python(PathBuf, String),
     Process,
     Syscall,
@@ -1044,6 +1045,10 @@ fn collect_module(
                 imports.insert(alias.clone(), NativeImport::Binary);
                 continue;
             }
+            if target == "std.file" {
+                imports.insert(alias.clone(), NativeImport::File);
+                continue;
+            }
             if target == "std.asm" {
                 imports.insert(alias.clone(), NativeImport::Asm);
                 continue;
@@ -1288,6 +1293,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
                 StmtKind::Requires(effects)
                     if effects.iter().all(|effect| {
                         effect == "file.read"
+                            || effect == "file.write"
                             || effect == "python.exec"
                             || effect == "process.inspect"
                             || effect == "net.connect"
@@ -2046,6 +2052,7 @@ impl Codegen {
             Some(NativeImport::Binary) => {
                 Err("std.binary functions must be called directly".into())
             }
+            Some(NativeImport::File) => Err("std.file functions must be called directly".into()),
             Some(NativeImport::Asm) => Err("std.asm functions must be called directly".into()),
             Some(NativeImport::Lab) => Err("std.lab functions must be called directly".into()),
             Some(NativeImport::Audit) => Err("std.audit functions must be called directly".into()),
@@ -4257,6 +4264,7 @@ impl Codegen {
                 Some(NativeImport::Binary) => {
                     return self.binary_call(function, args, caller_scope)
                 }
+                Some(NativeImport::File) => return self.file_call(function, args, caller_scope),
                 Some(NativeImport::Asm) => return self.asm_call(function, args, caller_scope),
                 Some(NativeImport::Lab) => return self.lab_call(function, args, caller_scope),
                 Some(NativeImport::Audit) => return self.audit_call(function, args, caller_scope),
@@ -6940,6 +6948,39 @@ impl Codegen {
             writeln!(self.code, "    mov r11, QWORD PTR [rip+gak_asm_error]\n    test r11, r11\n    jz {ready}\n    mov rax, r11\n    jmp gak_analyze_error_dynamic\n{ready}:").unwrap();
         }
         Ok(result)
+    }
+
+    fn file_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &HashMap<String, Binding>,
+    ) -> Result<Scalar, String> {
+        let ("write", [path, data]) = (name, args) else {
+            return Err(format!("unknown native file function or wrong arguments: {name}"));
+        };
+        if self.expr(path, scope)? != Scalar::Str {
+            return Err("file.write path must be str".into());
+        }
+        let path_slot = self.reserve_slot()?;
+        writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", path_slot * 8).unwrap();
+        let kind = match self.expr(data, scope)? {
+            Scalar::Bytes => 0,
+            Scalar::Source => 1,
+            _ => return Err("file.write data must be bytes or Source".into()),
+        };
+        let module_dir = self.active_module.parent()
+            .and_then(|path| path.to_str())
+            .ok_or("native module directory is not UTF-8")?
+            .to_owned();
+        let base = self.literal(&module_dir)?;
+        let ready = self.label();
+        writeln!(self.code,
+            "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    mov {}, {kind}\n    lea {}, [rip+{base}]\n    call gak_native_write_file\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_file_error]\n    jmp gak_analyze_error_dynamic\n{ready}:",
+            self.arg0(), path_slot * 8, self.arg1(), self.arg2(), self.arg3()
+        ).unwrap();
+        self.uses_file_read = true;
+        Ok(Scalar::Int)
     }
 
     fn binary_call(

@@ -94,6 +94,7 @@ class Galeikan:
         script: str | PathLike[str],
         *,
         allow_read: Sequence[str | PathLike[str]] = (),
+        allow_write: Sequence[str | PathLike[str]] = (),
         allow_connect: Sequence[str] = (),
         allow_process: Sequence[int] = (),
         allow_python: str | PathLike[str] | None = None,
@@ -103,7 +104,7 @@ class Galeikan:
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         return self._execute(
-            "run", script, allow_read=allow_read, allow_connect=allow_connect,
+            "run", script, allow_read=allow_read, allow_write=allow_write, allow_connect=allow_connect,
             allow_process=allow_process,
             allow_python=allow_python, case_path=case_path,
             args=args, timeout=timeout, check=check,
@@ -114,6 +115,7 @@ class Galeikan:
         bundle: str | PathLike[str],
         *,
         allow_read: Sequence[str | PathLike[str]] = (),
+        allow_write: Sequence[str | PathLike[str]] = (),
         allow_connect: Sequence[str] = (),
         allow_process: Sequence[int] = (),
         allow_python: str | PathLike[str] | None = None,
@@ -123,7 +125,7 @@ class Galeikan:
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         return self._execute(
-            "exec", bundle, allow_read=allow_read, allow_connect=allow_connect,
+            "exec", bundle, allow_read=allow_read, allow_write=allow_write, allow_connect=allow_connect,
             allow_process=allow_process,
             allow_python=allow_python, case_path=case_path,
             args=args, timeout=timeout, check=check,
@@ -136,6 +138,7 @@ class Galeikan:
         *values: Value,
         engine: str | None = None,
         allow_read: Sequence[str | PathLike[str]] = (),
+        allow_write: Sequence[str | PathLike[str]] = (),
         allow_connect: Sequence[str] = (),
         allow_process: Sequence[int] = (),
         allow_python: str | PathLike[str] | None = None,
@@ -148,7 +151,7 @@ class Galeikan:
             if engine not in (None, "native"):
                 raise ValueError("native executable calls require the native engine")
             return self._call_native(
-                script, function, values, allow_read=allow_read,
+                script, function, values, allow_read=allow_read, allow_write=allow_write,
                 allow_connect=allow_connect, allow_process=allow_process,
                 allow_python=allow_python, args=args, timeout=timeout,
             )
@@ -165,6 +168,8 @@ class Galeikan:
         command = [self.binary, "call", str(script), function, "--engine", selected_engine]
         for directory in allow_read:
             command.extend(("--allow-read", str(directory)))
+        for directory in allow_write:
+            command.extend(("--allow-write", str(directory)))
         for endpoint in allow_connect:
             command.extend(("--allow-connect", endpoint))
         for pid in allow_process:
@@ -290,6 +295,7 @@ class Galeikan:
         values: tuple[Value, ...],
         *,
         allow_read: Sequence[str | PathLike[str]],
+        allow_write: Sequence[str | PathLike[str]],
         allow_connect: Sequence[str],
         allow_process: Sequence[int],
         allow_python: str | PathLike[str] | None,
@@ -300,6 +306,8 @@ class Galeikan:
         command = [str(executable), "--galeikan-call"]
         for directory in allow_read:
             command.extend(("--allow-read", str(directory)))
+        for directory in allow_write:
+            command.extend(("--allow-write", str(directory)))
         for endpoint in allow_connect:
             command.extend(("--allow-connect", endpoint))
         for pid in allow_process:
@@ -376,6 +384,7 @@ class Galeikan:
         *,
         engine: str | None = None,
         allow_read: Sequence[str | PathLike[str]] = (),
+        allow_write: Sequence[str | PathLike[str]] = (),
         allow_connect: Sequence[str] = (),
         allow_process: Sequence[int] = (),
         allow_python: str | PathLike[str] | None = None,
@@ -387,6 +396,7 @@ class Galeikan:
             self, script,
             engine=engine,
             allow_read=tuple(allow_read),
+            allow_write=tuple(allow_write),
             allow_connect=tuple(allow_connect),
             allow_process=tuple(allow_process),
             allow_python=allow_python,
@@ -400,6 +410,7 @@ class Galeikan:
         *,
         engine: str | None = None,
         allow_read: Sequence[str | PathLike[str]] = (),
+        allow_write: Sequence[str | PathLike[str]] = (),
         allow_connect: Sequence[str] = (),
         allow_process: Sequence[int] = (),
         allow_python: str | PathLike[str] | None = None,
@@ -408,7 +419,7 @@ class Galeikan:
     ) -> GaleikanSession:
         """Open a persistent, explicitly closed Galeikan function session."""
         return GaleikanSession(
-            self, script, engine=engine, allow_read=allow_read,
+            self, script, engine=engine, allow_read=allow_read, allow_write=allow_write,
             allow_connect=allow_connect, allow_process=allow_process,
             allow_python=allow_python, args=args, timeout=timeout,
         )
@@ -489,6 +500,7 @@ class Galeikan:
         target: str | PathLike[str],
         *,
         allow_read: Sequence[str | PathLike[str]],
+        allow_write: Sequence[str | PathLike[str]],
         allow_connect: Sequence[str],
         allow_process: Sequence[int],
         allow_python: str | PathLike[str] | None,
@@ -502,6 +514,8 @@ class Galeikan:
             command.extend(("--case", str(case_path)))
         for directory in allow_read:
             command.extend(("--allow-read", str(directory)))
+        for directory in allow_write:
+            command.extend(("--allow-write", str(directory)))
         for endpoint in allow_connect:
             command.extend(("--allow-connect", endpoint))
         for pid in allow_process:
@@ -548,6 +562,7 @@ class GaleikanSession:
     def __init__(
         self, client: Galeikan, script: str | PathLike[str], *,
         engine: str | None, allow_read: Sequence[str | PathLike[str]],
+        allow_write: Sequence[str | PathLike[str]],
         allow_connect: Sequence[str], allow_process: Sequence[int],
         allow_python: str | PathLike[str] | None, args: Sequence[str], timeout: float,
     ) -> None:
@@ -566,6 +581,8 @@ class GaleikanSession:
                    [client.binary, "serve", str(script), "--engine", selected_engine])
         for directory in allow_read:
             command.extend(("--allow-read", str(directory)))
+        for directory in allow_write:
+            command.extend(("--allow-write", str(directory)))
         for endpoint in allow_connect:
             command.extend(("--allow-connect", endpoint))
         for pid in allow_process:

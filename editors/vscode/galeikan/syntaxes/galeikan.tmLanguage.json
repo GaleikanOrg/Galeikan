@@ -76,7 +76,7 @@
     "effects": {
       "patterns": [{
         "name": "support.type.effect.galeikan",
-        "match": "\\b(?:file\\.read|net\\.connect|process\\.inspect|python\\.exec|case\\.write|syscall\\.raw)\\b"
+        "match": "\\b(?:file\\.(?:read|write)|net\\.connect|process\\.inspect|python\\.exec|case\\.write|syscall\\.raw)\\b"
       }]
     },
     "memberCalls": {

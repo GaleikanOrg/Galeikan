@@ -9,6 +9,66 @@ use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn file_write_saves_patched_source_and_bytes_with_explicit_grant() {
+    let s = Sandbox::new();
+    let script = s.write(
+        "save-patch.gak",
+        "requires { file.write }\nimport std.file\nimport std.binary\nimport std.bytes\nimport std.cli\nlet source = binary.snapshot(bytes.from_hex(\"414243\"))\nlet patched = binary.patch(source, 1, bytes.from_hex(\"ff\"))\nprint file.write(cli.arg(0), patched)\nprint file.write(cli.arg(1), binary.extract(patched, 0, 1))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let denied = Command::new(galeikan)
+        .arg("run").arg(&script)
+        .args(["--", "denied.bin", "denied-byte.bin"])
+        .output().unwrap();
+    assert!(!denied.status.success());
+    assert!(!s.0.join("denied.bin").exists());
+
+    for engine in ["ast", "vm"] {
+        let source_name = format!("{engine}-patched.bin");
+        let byte_name = format!("{engine}-byte.bin");
+        let output = Command::new(galeikan)
+            .arg("run").arg(&script)
+            .args(["--engine", engine, "--allow-write"]).arg(&s.0)
+            .args(["--", &source_name, &byte_name])
+            .output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.stdout, b"3\n1\n");
+        assert_eq!(fs::read(s.0.join(source_name)).unwrap(), b"A\xffC");
+        assert_eq!(fs::read(s.0.join(byte_name)).unwrap(), b"A");
+    }
+
+    let built = Command::new(galeikan).arg("build").arg(&script).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let bundled = Command::new(galeikan).arg("exec")
+        .arg(script.with_extension("gakb"))
+        .arg("--allow-write").arg(&s.0)
+        .args(["--", "bundle-patched.bin", "bundle-byte.bin"])
+        .output().unwrap();
+    assert!(bundled.status.success(), "{}", String::from_utf8_lossy(&bundled.stderr));
+    assert_eq!(fs::read(s.0.join("bundle-patched.bin")).unwrap(), b"A\xffC");
+
+    if gcc_available() {
+        let compiled = s.compile(&script);
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        let executable = PathBuf::from(String::from_utf8(compiled.stdout).unwrap().trim());
+        let native = Command::new(&executable)
+            .arg("--allow-write").arg(&s.0)
+            .args(["--", "native-patched.bin", "native-byte.bin"])
+            .output().unwrap();
+        assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, b"3\n1\n");
+        assert_eq!(fs::read(s.0.join("native-patched.bin")).unwrap(), b"A\xffC");
+        assert_eq!(fs::read(s.0.join("native-byte.bin")).unwrap(), b"A");
+        let overwrite = Command::new(&executable)
+            .arg("--allow-write").arg(&s.0)
+            .args(["--", "native-patched.bin", "native-byte.bin"])
+            .output().unwrap();
+        assert!(!overwrite.status.success());
+        assert_eq!(fs::read(s.0.join("native-patched.bin")).unwrap(), b"A\xffC");
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_accepts_full_dword_process_grants_in_all_engines() {
