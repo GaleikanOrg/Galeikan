@@ -1,0 +1,31 @@
+name: Publish Galeikan VS Code extensions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - galeikan-language-0.1.6.vsix
+          - galeikan-eclipse-0.1.1.vsix
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download the verified Preview 4 package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download v0.1.0-preview4 --repo GaleikanOrg/Galeikan --pattern '${{ matrix.package }}' --dir dist
+      - name: Publish to Visual Studio Marketplace
+        run: npx --yes @vscode/vsce@4.0.2 publish --oidc --packagePath 'dist/${{ matrix.package }}'
