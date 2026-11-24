@@ -925,8 +925,34 @@ pub unsafe extern "C" fn galeikan_formats_import_fingerprint(
     error: *mut u8,
     error_capacity: usize,
 ) -> i32 {
+    unsafe { formats_fingerprint_ffi(bytes, length, output, error, error_capacity, false) }
+}
+
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `output` must
+/// point to 64 writable bytes, and the optional error buffer must be writable
+/// for its stated capacity. Output must not overlap the input span.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_formats_dependency_fingerprint(
+    bytes: *const u8,
+    length: usize,
+    output: *mut u8,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    unsafe { formats_fingerprint_ffi(bytes, length, output, error, error_capacity, true) }
+}
+
+unsafe fn formats_fingerprint_ffi(
+    bytes: *const u8,
+    length: usize,
+    output: *mut u8,
+    error: *mut u8,
+    error_capacity: usize,
+    dependency: bool,
+) -> i32 {
     if output.is_null() || (bytes.is_null() && length != 0) || length > 512 * 1024 * 1024 {
-        return write_error(error, error_capacity, "invalid import fingerprint input");
+        return write_error(error, error_capacity, "invalid fingerprint input");
     }
     if !error.is_null() && error_capacity > 0 {
         // SAFETY: The caller provides a writable error buffer.
@@ -939,18 +965,20 @@ pub unsafe extern "C" fn galeikan_formats_import_fingerprint(
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
     match catch_unwind(AssertUnwindSafe(|| {
-        formats::probe(input)?.import_fingerprint(input)
+        let report = formats::probe(input)?;
+        if dependency { report.dependency_fingerprint(input) }
+        else { report.import_fingerprint(input) }
     })) {
         Ok(Ok(fingerprint)) => {
             if fingerprint.len() != 64 {
-                return write_error(error, error_capacity, "invalid import fingerprint length");
+                return write_error(error, error_capacity, "invalid fingerprint length");
             }
             // SAFETY: The caller provides 64 writable bytes that do not overlap input.
             unsafe { ptr::copy_nonoverlapping(fingerprint.as_ptr(), output, 64) };
             0
         }
         Ok(Err(message)) => write_error(error, error_capacity, &message),
-        Err(_) => write_error(error, error_capacity, "import fingerprint failed"),
+        Err(_) => write_error(error, error_capacity, "fingerprint failed"),
     }
 }
 

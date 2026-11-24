@@ -2723,11 +2723,11 @@ int64_t gak_native_formats_import_count(const void *value, int delayed) {
 }
 
 #ifdef GALEIKAN_FORMATS_IMPORT_FINGERPRINT
-void *gak_native_formats_import_fingerprint(const void *value) {
+static void *gak_native_formats_fingerprint(const void *value, int dependency) {
     gak_formats_error = NULL;
     if (!value) { gak_format_fail("invalid Format"); return NULL; }
     const GakFormat *format = value;
-    if (format->kind != 1) {
+    if (!dependency && format->kind != 1) {
         gak_format_fail("PE imports require a PE image"); return NULL;
     }
     const GakSourceHead *source = format->source;
@@ -2742,12 +2742,22 @@ void *gak_native_formats_import_fingerprint(const void *value) {
     const uint8_t *bytes = source->backing + sizeof backing_size + source->start;
     char fingerprint[64];
     uint8_t error[256] = {0};
-    if (galeikan_formats_import_fingerprint(bytes, (size_t)(source->end - source->start),
-                                            (uint8_t *)fingerprint, error, sizeof error)) {
-        gak_format_fail(error[0] ? (const char *)error : "import fingerprint failed");
+    int32_t status = dependency
+        ? galeikan_formats_dependency_fingerprint(bytes, (size_t)(source->end - source->start),
+                                                 (uint8_t *)fingerprint, error, sizeof error)
+        : galeikan_formats_import_fingerprint(bytes, (size_t)(source->end - source->start),
+                                             (uint8_t *)fingerprint, error, sizeof error);
+    if (status) {
+        gak_format_fail(error[0] ? (const char *)error : "fingerprint failed");
         return NULL;
     }
     return gak_format_box(fingerprint, sizeof fingerprint);
+}
+void *gak_native_formats_import_fingerprint(const void *value) {
+    return gak_native_formats_fingerprint(value, 0);
+}
+void *gak_native_formats_dependency_fingerprint(const void *value) {
+    return gak_native_formats_fingerprint(value, 1);
 }
 #endif
 

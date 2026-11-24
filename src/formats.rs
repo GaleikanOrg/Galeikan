@@ -95,6 +95,40 @@ fn import_fingerprint_records(regular: &[ImportInfo], delayed: &[ImportInfo]) ->
     Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn dependency_fingerprint_records(pe: bool, regular: &[String], delayed: &[String]) -> Result<String, String> {
+    let mut records = Vec::new();
+    let mut total_bytes = 0_usize;
+    for (category, names) in [(0_u8, regular), (1_u8, delayed)] {
+        for name in names {
+            let normalized = if pe { name.as_bytes().to_ascii_lowercase() } else { name.as_bytes().to_vec() };
+            let record_size = 5_usize
+                .checked_add(normalized.len())
+                .ok_or("dependency fingerprint size overflow")?;
+            total_bytes = total_bytes
+                .checked_add(4)
+                .and_then(|size| size.checked_add(record_size))
+                .ok_or("dependency fingerprint size overflow")?;
+            if total_bytes > MAX_IMPORT_FINGERPRINT_BYTES {
+                return Err("dependency fingerprint exceeds 16 MiB".into());
+            }
+            let mut record = Vec::with_capacity(record_size);
+            record.push(category);
+            record.extend_from_slice(&(normalized.len() as u32).to_le_bytes());
+            record.extend_from_slice(&normalized);
+            records.push(record);
+        }
+    }
+    records.sort_unstable();
+    let mut hash = Sha256::new();
+    hash.update(b"galeikan.dependency-fingerprint.v1\0");
+    hash.update([u8::from(pe)]);
+    for record in records {
+        hash.update((record.len() as u32).to_le_bytes());
+        hash.update(record);
+    }
+    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 #[derive(Clone, Debug)]
 pub struct ExportInfo {
     pub name: String,
@@ -1879,6 +1913,14 @@ impl FormatReport {
 
     pub fn import_fingerprint(&self, bytes: &[u8]) -> Result<String, String> {
         import_fingerprint_records(self.imports(bytes)?, self.delay_imports(bytes)?)
+    }
+
+    pub fn dependency_fingerprint(&self, bytes: &[u8]) -> Result<String, String> {
+        if self.name.starts_with("PE") {
+            dependency_fingerprint_records(true, self.dependencies(bytes)?, self.delay_dependencies(bytes)?)
+        } else {
+            dependency_fingerprint_records(false, self.needed_libraries(bytes)?, &[])
+        }
     }
 
     pub fn delay_imports(&self, bytes: &[u8]) -> Result<&[ImportInfo], String> {
@@ -4414,7 +4456,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{import_fingerprint_records, probe, section_name, ImportInfo};
+    use super::{dependency_fingerprint_records, import_fingerprint_records, probe, section_name, ImportInfo};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     fn exercise_mutated_format(bytes: &[u8]) {
@@ -4424,6 +4466,7 @@ mod tests {
             let _ = report.field("entry");
             let _ = report.section(0);
             let _ = report.dependencies(bytes);
+            let _ = report.dependency_fingerprint(bytes);
             for name in [
                 "pe.dynamic_base",
                 "pe.nx_compat",
@@ -6070,6 +6113,40 @@ mod tests {
             import_fingerprint_records(&imports, &[]).unwrap_err(),
             "PE import fingerprint exceeds 16 MiB"
         );
+    }
+
+    #[test]
+    fn dependency_fingerprint_tracks_libraries_and_format() {
+        let pe = pe_with_delay_imports(false);
+        let baseline = probe(&pe).unwrap().dependency_fingerprint(&pe).unwrap();
+        assert_eq!(baseline.len(), 64);
+        assert!(baseline.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        for variant in [pe_with_delay_imports(true), pe_with_legacy_delay_imports(false)] {
+            assert_eq!(probe(&variant).unwrap().dependency_fingerprint(&variant).unwrap(), baseline);
+        }
+        let mut lower = pe.clone();
+        lower[0x360..0x36a].copy_from_slice(b"user32.dll");
+        assert_eq!(probe(&lower).unwrap().dependency_fingerprint(&lower).unwrap(), baseline);
+        let mut changed = pe;
+        changed[0x360] = b'X';
+        assert_ne!(probe(&changed).unwrap().dependency_fingerprint(&changed).unwrap(), baseline);
+
+        let elf = elf64_with_needed();
+        let elf_baseline = probe(&elf).unwrap().dependency_fingerprint(&elf).unwrap();
+        assert_ne!(elf_baseline, baseline);
+        let mut lower_elf = elf.clone();
+        lower_elf[0x181..0x185].copy_from_slice(b"LIBC");
+        assert_ne!(probe(&lower_elf).unwrap().dependency_fingerprint(&lower_elf).unwrap(), elf_baseline);
+        let mut changed_elf = elf;
+        changed_elf[0x181] = b'x';
+        assert_ne!(probe(&changed_elf).unwrap().dependency_fingerprint(&changed_elf).unwrap(), elf_baseline);
+    }
+
+    #[test]
+    fn dependency_fingerprint_rejects_oversized_profile() {
+        let names = vec!["A".repeat(4096); 4100];
+        assert_eq!(dependency_fingerprint_records(false, &names, &[]).unwrap_err(),
+                   "dependency fingerprint exceeds 16 MiB");
     }
 
     #[test]

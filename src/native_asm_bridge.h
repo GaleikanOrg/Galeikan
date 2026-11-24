@@ -25,6 +25,9 @@ int32_t galeikan_asm_linear(const uint8_t *bytes, size_t length,
 int32_t galeikan_formats_import_fingerprint(const uint8_t *bytes, size_t length,
                                             uint8_t *output, uint8_t *error,
                                             size_t error_capacity);
+int32_t galeikan_formats_dependency_fingerprint(const uint8_t *bytes, size_t length,
+                                                uint8_t *output, uint8_t *error,
+                                                size_t error_capacity);
 void galeikan_asm_disassembly_free(void *handle);
 size_t galeikan_asm_disassembly_count(const void *handle);
 int32_t galeikan_asm_disassembly_bounds(const void *handle, size_t *start, size_t *end);

@@ -5806,14 +5806,14 @@ impl Codegen {
                 writeln!(self.code, "    mov {}, rax\n    mov {}, {}\n    call gak_native_formats_import_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1(), if name.starts_with("delay_") { 1 } else { 0 }).unwrap();
                 return Ok(Scalar::Int);
             }
-            ("import_fingerprint", [report]) => {
+            ("import_fingerprint" | "dependency_fingerprint", [report]) => {
                 if self.expr(report, scope)? != Scalar::Format {
-                    return Err("formats.import_fingerprint expects Format".into());
+                    return Err(format!("formats.{name} expects Format"));
                 }
                 self.uses_formats = true;
                 self.uses_import_fingerprint = true;
                 let ready = self.label();
-                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_import_fingerprint\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_{name}\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
                 return Ok(Scalar::Str);
             }
             ("import_iat_rva" | "delay_import_iat_rva", [report, index]) => {
