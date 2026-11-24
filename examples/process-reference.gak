@@ -1,0 +1,11 @@
+requires { process.inspect }
+import std.process
+
+let maps = process.regions(process.self_pid())
+if process.count(maps) > 0 {
+    let region = process.at(maps, 0)
+    let address = process.start_u64(region)
+    let key = process.reference(region, address)
+    print key
+    print process.resolve(region, key) == address
+}

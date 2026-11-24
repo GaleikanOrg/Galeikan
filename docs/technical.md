@@ -192,18 +192,40 @@ For these two functions, basic-block successors also omit direct call targets wh
 | Functions | Current purpose |
 | --- | --- |
 | `self_pid`, `parent_pid`, `children`, `thread_ids`, `executable`, `modules` | Identify the current/target process, its parent/children/threads, executable, and loaded module paths where the OS exposes them. |
-| `regions`, `images`, `readable_regions`, `writable_regions`, `executable_regions`, `wx_regions` | Enumerate mappings or select by image backing and memory permissions. |
+| `regions`, `images`, `readable_regions`, `writable_regions`, `executable_regions`, `non_image_executable_regions`, `wx_regions` | Enumerate mappings or filter by image backing and memory permissions, including executable non-image mappings and writable/executable mappings. |
 | `heap_candidates` | Select readable and writable, non-image-backed mappings classified as heap, anonymous, or private. These are **candidate regions**, not confirmed allocator objects or a heap dump. |
-| `count`, `at`, `locate`, `locate_u64` | Count regions, index one, or locate a mapping containing an address. |
-| `pid`, `start`, `start_u64`, `end`, `end_u64`, `size`, `access`, `label`, `kind`, `image_backed` | Inspect a region's owner, address interval, extent, access flags, mapped label/type, or image status. |
+| `count`, `mapped_bytes`, `at`, `locate`, `locate_u64` | Count regions, sum their mapped sizes as `u64`, index one, or locate a mapping containing an address. |
+| `pid`, `start`, `start_u64`, `end`, `end_u64`, `size`, `size_u64`, `access`, `label`, `kind`, `sharing`, `image_backed` | Inspect a region's owner, address interval, extent, access flags, label, kind, sharing classification, or image status. Prefer unsigned address and size accessors when signed `i64` cannot represent the range. |
 | `offset`, `offset_u64`, `address`, `address_u64` | Translate between a region-relative offset and address. |
-| `reference`, `resolve`, `advance_ref` | Create, resolve, or move a checked process-region reference. |
+| `reference`, `resolve`, `advance_ref` | Create a checked region reference for an address, resolve it back to `u64`, or move it within the same region by a signed delta. References encode the region label, PID, start, and offset; resolving checks that prefix and the current range. |
 | `snapshot`, `snapshot_u64`, `snapshot_region`, `snapshot_ref`, `snapshot_at`, `snapshot_at_u64` | Capture a bounded process-memory range as a `Source`, by PID/address, region, or reference. |
-| `hunt_region` | Search an accessible region for a bounded byte pattern. |
-| `pointer_refs_u64` | Search a readable region for the little-endian bytes of a `u64` pointer value and return matching region-relative offsets, including unaligned matches. It does not dereference or validate those values. |
-| `read_pointer_u64` | Read eight bytes at a region-relative offset as a little-endian `u64`. The region must be readable, the range must fit, and OS process permissions still apply. This reads a value; it does not follow the pointer. |
+| `hunt_region(region, pattern, offset, length)` | Search a readable region and return region-relative matching `Offsets`. `pattern` accepts `bytes`, UTF-8 text, or a `hex:` string with masked bytes. |
+| `hunt_regions(regions, pattern, per_region, total)` | Search readable regions in order, limiting both each region and the aggregate bytes; return absolute match addresses as `List<u64>`. All regions must belong to one process. |
+| `pointer_refs_u32`, `pointer_refs_u64` | Search a readable region for a little-endian 32- or 64-bit pointer value and return region-relative `Offsets`, including unaligned matches. Values are matched, not dereferenced. |
+| `pointer_refs_regions_u32`, `pointer_refs_regions_u64` | Search readable regions for the pointer value with per-region and total byte limits; return absolute addresses as `List<u64>`. |
+| `read_pointer_u32`, `read_pointer_u64` | Read a little-endian 32- or 64-bit pointer value at a region-relative offset and return `u64`. This does not follow the pointer. |
+| `pointer_chain_u32`, `pointer_chain_u64` | Follow 0–32 pointer dereferences from an absolute `u64` address through a `Regions` collection; return the starting address and each resolved address as `List<u64>`. |
+| `pointer_path_u32`, `pointer_path_u64` | Follow 0–32 dereferences, adding each signed field offset before its read. Return the starting address and resolved addresses as `List<u64>`. Reject cycles, out-of-range addresses, and unmapped targets. |
 
-Mapping enumeration is not a snapshot of an entire process; regions can change between lookup and read, and permission grants do not override OS access controls.
+Process searches accept patterns of 1–4096 bytes; masked patterns are limited to 64 bytes. Each scan is limited to 16 MiB and 10,000 matches. Multi-region scans apply a 16 MiB aggregate cap in addition to the per-region cap. Pointer paths require every read and resolved target to remain mapped in the same authorized process. Mapping enumeration is not a snapshot of an entire process; regions can change between lookup and read, and permission grants do not override OS access controls.
+
+The checked reference form is useful when a raw address is hard to remember. The reference below is tied to the selected mapping and can be resolved only against a matching region:
+
+```galeikan
+requires { process.inspect }
+import std.process
+
+let maps = process.regions(process.self_pid())
+if process.count(maps) > 0 {
+    let region = process.at(maps, 0)
+    let address = process.start_u64(region)
+    let key = process.reference(region, address)
+    print key
+    print process.resolve(region, key) == address
+}
+```
+
+Run the [runnable example](../examples/process-reference.gak) with `galeikan run examples/process-reference.gak --allow-process self`. A reference describes a mapping at the time of enumeration; it is not a durable pointer across process restarts or remapping.
 
 ### `std.net`
 
