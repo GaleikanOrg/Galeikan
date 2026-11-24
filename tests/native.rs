@@ -12900,6 +12900,34 @@ fn native_binary_analyze_preserves_unicode_file_labels() {
 }
 
 #[test]
+fn binary_bit_distance_matches_ast_vm_and_native_for_views_and_errors() {
+    if !gcc_available() {
+        return;
+    }
+    let s = Sandbox::new();
+    let script = s.write(
+        "bit-distance.gak",
+        "from std.binary import from_hex, snapshot, view, patch, bit_distance\nfrom std.result import message\nfn compare(left: Source, right: Source) -> i64 = bit_distance(left, right)\nfn attempt(left: Source, right: Source) -> Result<i64> = bit_distance(left, right)\nlet left = snapshot(from_hex(\"00 0f f0 ff\"))\nlet right = snapshot(from_hex(\"00 f0 f0 00\"))\nlet empty = snapshot(from_hex(\"\"))\nprint compare(left, right)\nprint compare(view(left, 1, 2), view(right, 1, 2))\nprint compare(left, patch(left, 2, from_hex(\"f1\")))\nprint compare(empty, empty)\nprint compare(left, left)\nprint message(attempt(left, empty))\n",
+    );
+    let galeikan = env!("CARGO_BIN_EXE_galeikan");
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(galeikan).arg("run").arg(&script)
+            .args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        if let Some(prior) = &expected { assert_eq!(&output.stdout, prior); }
+        expected = Some(output.stdout);
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected.unwrap());
+    assert_eq!(native.stdout, b"16\n8\n1\n0\n0\nbit_distance requires equal Source lengths\n");
+}
+
+#[test]
 fn native_binary_diff_matches_vm_for_views_splices_and_length_changes() {
     if !gcc_available() {
         return;

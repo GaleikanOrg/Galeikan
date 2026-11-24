@@ -410,6 +410,7 @@ const CATCHABLE_RESULT_ERRORS: &[(&str, &str)] = &[
     ("gak_diff_limit_negative", "max_differences out of range"),
     ("gak_diff_limit", "max_differences must be at most 10000"),
     ("gak_diff_many", "LimitExceeded: too many differences"),
+    ("gak_bit_distance_length", "bit_distance requires equal Source lengths"),
     ("gak_patch_empty", "patch data must not be empty"),
     (
         "gak_patch_limit",
@@ -7722,6 +7723,18 @@ impl Codegen {
                 writeln!(self.code, "    test rax, rax\n    js gak_diff_limit_negative\n    cmp rax, 10000\n    ja gak_diff_limit\n    mov r10, rax\n    mov rax, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [rbp-{}]\n    call gak_diff_source\n    cmp rax, -1\n    je gak_diff_many", left_slot * 8, right_slot * 8).unwrap();
                 Ok(Scalar::Diff)
             }
+            ("bit_distance", [left, right]) => {
+                if self.expr(left, scope)? != Scalar::Source {
+                    return Err("binary.bit_distance left must be Source".into());
+                }
+                let left_slot = self.reserve_slot()?;
+                writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", left_slot * 8).unwrap();
+                if self.expr(right, scope)? != Scalar::Source {
+                    return Err("binary.bit_distance right must be Source".into());
+                }
+                writeln!(self.code, "    mov rdx, rax\n    mov rax, QWORD PTR [rbp-{}]\n    mov r10, QWORD PTR [rax+24]\n    sub r10, QWORD PTR [rax+16]\n    mov r11, QWORD PTR [rdx+24]\n    sub r11, QWORD PTR [rdx+16]\n    cmp r10, r11\n    jne gak_bit_distance_length\n    call gak_bit_distance_source", left_slot * 8).unwrap();
+                Ok(Scalar::Int)
+            }
             ("diff_offsets", [diff]) => {
                 if self.expr(diff, scope)? != Scalar::Diff {
                     return Err("binary.diff_offsets expects Diff".into());
@@ -9558,7 +9571,7 @@ impl Codegen {
         out.push_str("gak_text_offset_negative_msg: .ascii \"text offset must not be negative\\n\"\ngak_text_offset_negative_msg_end:\ngak_max_chars_range_msg: .ascii \"max_chars out of range\\n\"\ngak_max_chars_range_msg_end:\ngak_max_chars_limit_msg: .ascii \"max_chars must be 1 to 4096\\n\"\ngak_max_chars_limit_msg_end:\ngak_text_encoding_msg: .ascii \"text encoding must be ascii, utf8, utf16le, or utf16be\\n\"\ngak_text_encoding_msg_end:\ngak_text_offset_bounds_msg: .ascii \"text offset out of bounds\\n\"\ngak_text_offset_bounds_msg_end:\ngak_text_not_printable_msg: .ascii \"no printable text at offset\\n\"\ngak_text_not_printable_msg_end:\n");
         out.push_str("gak_strings_minimum_range_msg: .ascii \"minimum string length out of range\\n\"\ngak_strings_minimum_range_msg_end:\ngak_strings_minimum_limit_msg: .ascii \"minimum string length must be 1 to 4096\\n\"\ngak_strings_minimum_limit_msg_end:\ngak_strings_many_msg: .ascii \"too many strings\\n\"\ngak_strings_many_msg_end:\n");
         out.push_str("gak_hunt_invalid_hex_msg: .ascii \"invalid hex pattern\\n\"\ngak_hunt_invalid_hex_msg_end:\ngak_hunt_hex_limit_msg: .ascii \"hex pattern exceeds 1048576 bytes\\n\"\ngak_hunt_hex_limit_msg_end:\ngak_hunt_odd_hex_msg: .ascii \"hex pattern needs an even number of nibbles\\n\"\ngak_hunt_odd_hex_msg_end:\ngak_hunt_mask_limit_msg: .ascii \"masked hex pattern exceeds 64 bytes\\n\"\ngak_hunt_mask_limit_msg_end:\ngak_hunt_empty_msg: .ascii \"empty search pattern\\n\"\ngak_hunt_empty_msg_end:\ngak_hunt_many_msg: .ascii \"too many matches\\n\"\ngak_hunt_many_msg_end:\n");
-        out.push_str("gak_diff_limit_negative_msg: .ascii \"max_differences out of range\\n\"\ngak_diff_limit_negative_msg_end:\ngak_diff_limit_msg: .ascii \"max_differences must be at most 10000\\n\"\ngak_diff_limit_msg_end:\ngak_diff_many_msg: .ascii \"LimitExceeded: too many differences\\n\"\ngak_diff_many_msg_end:\ngak_diff_memory_msg: .ascii \"native Diff memory exceeds 64 MiB\\n\"\ngak_diff_memory_msg_end:\n");
+        out.push_str("gak_diff_limit_negative_msg: .ascii \"max_differences out of range\\n\"\ngak_diff_limit_negative_msg_end:\ngak_diff_limit_msg: .ascii \"max_differences must be at most 10000\\n\"\ngak_diff_limit_msg_end:\ngak_diff_many_msg: .ascii \"LimitExceeded: too many differences\\n\"\ngak_diff_many_msg_end:\ngak_diff_memory_msg: .ascii \"native Diff memory exceeds 64 MiB\\n\"\ngak_diff_memory_msg_end:\ngak_bit_distance_length_msg: .ascii \"bit_distance requires equal Source lengths\\n\"\ngak_bit_distance_length_msg_end:\n");
         out.push_str("gak_patch_empty_msg: .ascii \"patch data must not be empty\\n\"\ngak_patch_empty_msg_end:\ngak_patch_limit_msg: .ascii \"LimitExceeded: patch exceeds 1048576 bytes\\n\"\ngak_patch_limit_msg_end:\n");
         out.push_str("gak_splice_insert_limit_msg: .ascii \"LimitExceeded: splice insertion exceeds 1048576 bytes\\n\"\ngak_splice_insert_limit_msg_end:\ngak_splice_empty_msg: .ascii \"splice must insert or remove at least one byte\\n\"\ngak_splice_empty_msg_end:\ngak_splice_size_overflow_msg: .ascii \"splice size overflow\\n\"\ngak_splice_size_overflow_msg_end:\ngak_splice_size_limit_msg: .ascii \"LimitExceeded: Source exceeds 536870912 bytes\\n\"\ngak_splice_size_limit_msg_end:\n");
         out.push_str("gak_text_limit_prefix: .ascii \"LimitExceeded: text exceeds \"\ngak_text_limit_prefix_end:\ngak_text_limit_suffix: .ascii \" characters\"\ngak_text_limit_suffix_end:\n");
@@ -10722,6 +10735,7 @@ gak_cli_utf8_done:
             ("gak_diff_limit_negative", "gak_diff_limit_negative_msg"),
             ("gak_diff_limit", "gak_diff_limit_msg"),
             ("gak_diff_many", "gak_diff_many_msg"),
+            ("gak_bit_distance_length", "gak_bit_distance_length_msg"),
             ("gak_diff_memory", "gak_diff_memory_msg"),
             ("gak_patch_empty", "gak_patch_empty_msg"),
             ("gak_patch_limit", "gak_patch_limit_msg"),

@@ -104,9 +104,11 @@ Built-ins include `print` for output, `len` for supported collections/text/bytes
 | `read_text`, `read_cstring`, `read_utf8`, `read_wstring` | Decode bounded fixed-length or terminated ASCII/UTF-8/UTF-16 text. `read_text` and `strings` accept `ascii`, `utf8`, `utf16le`, and `utf16be`; UTF-8 scans count Unicode scalars and skip malformed sequences. |
 | `size`, `sha256`, `crc32`, `entropy`, `entropy_windows`, `histogram` | Get size, SHA-256, CRC32 (including an optional previous CRC for chunking), global entropy, source-span-aware window entropy, or a 256-count byte-frequency list. `histogram` accepts bytes or a `Source`. |
 | `find`, `contains`, `hunt`, `strings` | Search bounded source bytes, match a byte pattern, or enumerate candidate strings. |
-| `hexdump`, `diff`, `diff_offsets`, `diff_count` | Produce a bounded hex view; compare sources and inspect changed offsets/count. |
+| `hexdump`, `diff`, `diff_offsets`, `diff_count`, `bit_distance` | Produce a bounded hex view; compare sources and inspect changed byte offsets/count or count differing bits. `bit_distance` requires equal visible Source lengths and includes source views. |
 
 `crc32` is a conventional checksum; use SHA-256 when cryptographic collision resistance matters. Entropy and pattern hits are evidence for investigation, not automatic classification. Source size, string count, mutation count, and entropy-window count have implementation limits that return errors rather than silently truncating results.
+
+Use [`examples/bit_distance.gak`](../examples/bit_distance.gak) to compare an immutable patched Source with its original. It prints `1` because the patch flips one bit. This measures bit changes, not semantic equivalence or executable behavior.
 
 `strings` scans UTF-16LE/BE on both byte alignments and reports sorted candidate offsets. `read_text` decodes valid Unicode scalars, including surrogate pairs; malformed pairs end a printable run. As with any binary string scan, candidate offsets can include false positives.
 

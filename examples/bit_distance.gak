@@ -1,0 +1,6 @@
+from std.binary import bit_distance, from_hex, patch, snapshot
+
+let original = snapshot(from_hex("4d 5a 90 00"))
+let modified = patch(original, 2, from_hex("91"))
+
+print bit_distance(original, modified)

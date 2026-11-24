@@ -103,3 +103,40 @@ gak_diff_scan_done:
 gak_diff_scan_many:
     mov rax, -1
     ret
+
+# Inputs: rax = left Source, rdx = right Source with equal visible lengths.
+# Returns count of differing bits in rax. No POPCNT instruction requirement.
+gak_bit_distance_source:
+    mov r8, QWORD PTR [rax]
+    add r8, QWORD PTR [rax+16]
+    add r8, 8
+    mov r9, QWORD PTR [rdx]
+    add r9, QWORD PTR [rdx+16]
+    add r9, 8
+    mov rcx, QWORD PTR [rax+24]
+    sub rcx, QWORD PTR [rax+16]
+    xor eax, eax
+    xor edx, edx
+gak_bit_distance_next:
+    cmp rdx, rcx
+    jae gak_bit_distance_done
+    movzx r10d, BYTE PTR [r8+rdx]
+    xor r10b, BYTE PTR [r9+rdx]
+    mov r11d, r10d
+    shr r11d, 1
+    and r11d, 0x55
+    sub r10d, r11d
+    mov r11d, r10d
+    and r10d, 0x33
+    shr r11d, 2
+    and r11d, 0x33
+    add r10d, r11d
+    mov r11d, r10d
+    shr r11d, 4
+    add r10d, r11d
+    and r10d, 0x0f
+    add rax, r10
+    inc rdx
+    jmp gak_bit_distance_next
+gak_bit_distance_done:
+    ret

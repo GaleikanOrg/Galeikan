@@ -5634,6 +5634,17 @@ impl Runtime {
                     offsets,
                 })))
             }
+            ("bit_distance", [left, right]) => {
+                let left = left.as_source()?;
+                let right = right.as_source()?;
+                if left.bytes().len() != right.bytes().len() {
+                    return Err("bit_distance requires equal Source lengths".into());
+                }
+                let distance: u64 = left.bytes().iter().zip(right.bytes())
+                    .map(|(a, b)| u64::from((a ^ b).count_ones()))
+                    .sum();
+                Ok(Value::Int(i64::try_from(distance).map_err(|_| "bit_distance out of range")?))
+            }
             ("diff_offsets", [Value::Diff(diff)]) => Ok(Value::Offsets(diff.offsets.clone())),
             ("diff_count", [Value::Diff(diff)]) => Ok(Value::Int(
                 i64::try_from(diff.offsets.len()).map_err(|_| "diff count out of range")?,
@@ -9301,6 +9312,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("binary", "value_u64") => (&[Observation], UInt),
         ("binary", "signed_value") => (&[Observation], Int),
         ("binary", "diff") => (&[Source, Source, Int], Diff),
+        ("binary", "bit_distance") => (&[Source, Source], Int),
         ("binary", "diff_offsets") => (&[Diff], Offsets),
         ("binary", "diff_count") => (&[Diff], Int),
         ("binary", "hunt") => (&[Source, Type::Any], Offsets),
