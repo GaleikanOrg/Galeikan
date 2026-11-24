@@ -441,6 +441,43 @@ pub unsafe extern "C" fn galeikan_asm_function_reachable(
     unsafe { galeikan_asm_reachable_impl(bytes, length, start_offset, base_ip, bitness, max_instructions, out, error, error_capacity, false) }
 }
 
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null. `out` must hold
+/// `out_capacity` writable u64 values, and `out_count` must be writable.
+/// Output buffers must not overlap input or each other.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_ret_gadget_starts(
+    bytes: *const u8,
+    length: usize,
+    bitness: u32,
+    max_instructions: usize,
+    out: *mut u64,
+    out_capacity: usize,
+    out_count: *mut usize,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if out_count.is_null() || out.is_null() || (bytes.is_null() && length != 0)
+        || length > asm::MAX_GADGET_SCAN_BYTES || out_capacity > asm::MAX_DISASSEMBLY {
+        return write_error(error, error_capacity, "invalid gadget scan input");
+    }
+    unsafe { *out_count = 0 };
+    if !error.is_null() && error_capacity > 0 { unsafe { *error = 0 } }
+    let input = if length == 0 { &[] } else { unsafe { std::slice::from_raw_parts(bytes, length) } };
+    match catch_unwind(AssertUnwindSafe(|| asm::ret_gadget_starts(input, bitness, max_instructions))) {
+        Ok(Ok(starts)) if starts.len() <= out_capacity => {
+            for (index, start) in starts.iter().enumerate() {
+                unsafe { *out.add(index) = *start as u64 };
+            }
+            unsafe { *out_count = starts.len() };
+            0
+        }
+        Ok(Ok(_)) => write_error(error, error_capacity, "gadget output buffer too small"),
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "x86 gadget scan failed"),
+    }
+}
+
 unsafe fn galeikan_asm_reachable_impl(
     bytes: *const u8,
     length: usize,
@@ -1150,6 +1187,28 @@ pub unsafe extern "C" fn galeikan_asm_instruction_successor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ret_gadget_ffi_bounds_output_and_preserves_it_on_failure() {
+        let code = b"\x58\x5f\xc3\xeb\xfe\xc3";
+        let mut output = [u64::MAX; 4];
+        let mut count = usize::MAX;
+        let mut error = [0_u8; 128];
+        let call = |output: &mut [u64], count: &mut usize, error: &mut [u8], bits, depth| unsafe {
+            galeikan_asm_ret_gadget_starts(code.as_ptr(), code.len(), bits, depth,
+                output.as_mut_ptr(), output.len(), count, error.as_mut_ptr(), error.len())
+        };
+        assert_eq!(call(&mut output, &mut count, &mut error, 8, 3), -1);
+        assert_eq!(count, 0);
+        assert_eq!(output, [u64::MAX; 4]);
+        assert!(error[0] != 0);
+        assert_eq!(call(&mut output[..2], &mut count, &mut error, 64, 3), -1);
+        assert_eq!(count, 0);
+        assert_eq!(output, [u64::MAX; 4]);
+        assert_eq!(call(&mut output, &mut count, &mut error, 64, 3), 0);
+        assert_eq!(count, 4);
+        assert_eq!(output, [0, 1, 2, 5]);
+    }
 
     #[test]
     fn import_fingerprint_ffi_rejects_invalid_input_without_writing_output() {

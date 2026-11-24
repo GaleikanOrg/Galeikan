@@ -6,6 +6,54 @@ use iced_x86::{
 };
 
 pub const MAX_DISASSEMBLY: usize = 10_000;
+pub const MAX_GADGET_SCAN_BYTES: usize = 1024 * 1024;
+pub const MAX_GADGET_INSTRUCTIONS: usize = 8;
+
+/// Find alternate x86 decode starts that end exactly at a near RET.
+/// Offsets are relative to `bytes`; no executability or stack effect is inferred.
+pub fn ret_gadget_starts(bytes: &[u8], bitness: u32, max_instructions: usize) -> Result<Vec<usize>, String> {
+    if !matches!(bitness, 16 | 32 | 64) {
+        return Err("x86 bitness must be 16, 32, or 64".into());
+    }
+    if !(1..=MAX_GADGET_INSTRUCTIONS).contains(&max_instructions) {
+        return Err(format!("gadget instruction count must be between 1 and {MAX_GADGET_INSTRUCTIONS}"));
+    }
+    if bytes.len() > MAX_GADGET_SCAN_BYTES {
+        return Err(format!("gadget scan exceeds {MAX_GADGET_SCAN_BYTES} bytes"));
+    }
+    let mut starts = BTreeSet::new();
+    for ret in 0..bytes.len() {
+        let ret_size = match bytes[ret] {
+            0xc3 => 1,
+            0xc2 => 3,
+            _ => continue,
+        };
+        let Some(ret_end) = ret.checked_add(ret_size) else { continue };
+        if ret_end > bytes.len() { continue; }
+        let earliest = ret.saturating_sub(15 * (max_instructions - 1));
+        for start in earliest..=ret {
+            let mut decoder = Decoder::new(bitness, &bytes[start..ret_end], DecoderOptions::NONE);
+            let mut cursor = start;
+            for _ in 0..max_instructions {
+                let instruction = decoder.decode();
+                if instruction.is_invalid() || instruction.len() == 0 { break; }
+                let next = cursor + instruction.len();
+                if cursor == ret {
+                    if next == ret_end && instruction.flow_control() == FlowControl::Return {
+                        starts.insert(start);
+                        if starts.len() > MAX_DISASSEMBLY {
+                            return Err("too many ret gadget candidates".into());
+                        }
+                    }
+                    break;
+                }
+                if next > ret || instruction.flow_control() != FlowControl::Next { break; }
+                cursor = next;
+            }
+        }
+    }
+    Ok(starts.into_iter().collect())
+}
 
 #[derive(Clone, Debug)]
 pub struct Decoded {
@@ -588,7 +636,22 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_dominators, block_natural_loop, block_path, blocks, blocks_with_calls, call_targets, data_refs, data_xrefs, decode, function_reachable, overlaps, reachable, xrefs, Block};
+    use super::{block_dominators, block_natural_loop, block_path, blocks, blocks_with_calls, call_targets, data_refs, data_xrefs, decode, function_reachable, overlaps, reachable, ret_gadget_starts, xrefs, Block};
+
+    #[test]
+    fn ret_gadget_candidates_require_exact_decode_and_bounded_input() {
+        let code = b"\x58\x5f\xc3\xeb\xfe\xc3";
+        assert_eq!(ret_gadget_starts(code, 64, 3).unwrap(), [0, 1, 2, 5]);
+        assert_eq!(ret_gadget_starts(code, 64, 1).unwrap(), [2, 5]);
+        assert_eq!(ret_gadget_starts(b"\x90\xc2\x08\x00", 64, 2).unwrap(), [0, 1]);
+        assert!(ret_gadget_starts(b"\xc2\x08", 64, 2).unwrap().is_empty());
+        assert_eq!(ret_gadget_starts(code, 8, 2).unwrap_err(), "x86 bitness must be 16, 32, or 64");
+        assert_eq!(ret_gadget_starts(code, 64, 0).unwrap_err(), "gadget instruction count must be between 1 and 8");
+        assert_eq!(ret_gadget_starts(&vec![0; super::MAX_GADGET_SCAN_BYTES + 1], 64, 2).unwrap_err(),
+                   "gadget scan exceeds 1048576 bytes");
+        assert_eq!(ret_gadget_starts(&vec![0xc3; 10001], 64, 1).unwrap_err(),
+                   "too many ret gadget candidates");
+    }
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {

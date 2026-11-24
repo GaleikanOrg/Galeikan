@@ -6525,6 +6525,14 @@ impl Runtime {
 
     fn asm(&self, name: &str, args: &[Value]) -> Result<Value, String> {
         match (name, args) {
+            ("ret_gadget_starts", [source, bitness, count]) => {
+                let source = source.as_source()?;
+                let bitness = u32::try_from(bitness.as_int()?)
+                    .map_err(|_| "x86 bitness must be 16, 32, or 64")?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "gadget instruction count must be between 1 and 8")?;
+                Ok(Value::Offsets(asm::ret_gadget_starts(source.bytes(), bitness, count)?))
+            }
             ("linear", [Value::Format(source, report), count]) => {
                 let count = usize::try_from(count.as_int()?).map_err(|_| {
                     format!("instruction count must be between 1 and {MAX_DISASSEMBLY}")
@@ -9190,6 +9198,10 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         if matches!(name, "reachable" | "function_reachable") {
             check_arguments(&qualified, args, &[Source, Int, UInt, Int, Int])?;
             return Ok(Disassembly);
+        }
+        if name == "ret_gadget_starts" {
+            check_arguments(&qualified, args, &[Source, Int, Int])?;
+            return Ok(Offsets);
         }
         if name == "count" {
             check_arguments(&qualified, args, &[Disassembly])?;

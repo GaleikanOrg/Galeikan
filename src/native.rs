@@ -6707,6 +6707,24 @@ impl Codegen {
             writeln!(self.code, "    mov r11, QWORD PTR [rbp-{}]\n    mov rdx, QWORD PTR [r11+16]\n    mov r10, QWORD PTR [rbp-{}]\n    add rdx, QWORD PTR [r10+16]\n    mov rax, QWORD PTR [r10]\n    mov r10, QWORD PTR [rbp-{}]\n    call gak_bytes_extract", instruction_slot * 8, source_slot * 8, size_slot * 8).unwrap();
             return Ok(Scalar::Bytes);
         }
+        if name == "ret_gadget_starts" && args.len() == 3 {
+            if self.expr(&args[0], scope)? != Scalar::Source {
+                return Err("asm.ret_gadget_starts expects Source".into());
+            }
+            let source_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", source_slot * 8).unwrap();
+            if self.expr(&args[1], scope)? != Scalar::Int {
+                return Err("asm.ret_gadget_starts bitness must be i64".into());
+            }
+            let bitness_slot = self.reserve_slot()?;
+            writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", bitness_slot * 8).unwrap();
+            if self.expr(&args[2], scope)? != Scalar::Int {
+                return Err("asm.ret_gadget_starts count must be i64".into());
+            }
+            let ready = self.label();
+            writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_ret_gadget_starts\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), source_slot * 8, self.arg1(), bitness_slot * 8, self.arg2()).unwrap();
+            return Ok(Scalar::Offsets);
+        }
         if matches!(name, "reachable" | "function_reachable") && args.len() == 5 {
             if self.expr(&args[0], scope)? != Scalar::Source {
                 return Err(format!("asm.{name} expects Source"));

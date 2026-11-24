@@ -1,0 +1,5 @@
+from std.binary import from_hex, snapshot
+from std.asm import ret_gadget_starts
+
+let code = snapshot(from_hex("58 5f c3 eb fe c3"))
+print ret_gadget_starts(code, 64, 3)

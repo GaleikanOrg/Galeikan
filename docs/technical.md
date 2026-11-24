@@ -185,6 +185,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 | --- | --- |
 | `entry`, `linear`, `reachable_entry`, `decode`, `decode_u64`, `reachable` | Decode the declared executable entry, a bounded linear range, or reachable x86 instructions. |
 | `function_entry`, `function_reachable` | Walk reachable x86 instructions from a parsed executable entry or a `Source` offset without descending into direct call targets. The walk follows fallthrough and direct branches. |
+| `ret_gadget_starts(source, bitness, max_instructions)` | Find source-relative start offsets of valid x86 instruction sequences that end exactly in a near `ret`. Accepts 16/32/64-bit decoding and at most 8 instructions per candidate. |
 | `count`, `at`, `next`, `size`, `offset`, `address`, `address_u64`, `target`, `target_u64`, `data_target_u64` | Navigate a `Disassembly` or `Instruction` and inspect positions, size, branch target, or data reference. |
 | `text`, `mnemonic`, `flow`, `source`, `bytes` | Read formatted instruction text, mnemonic, control-flow class, origin source, or instruction bytes. |
 | `register_usage_complete`, `register_reads`, `register_writes`, `flags_read`, `flags_modified` | Inspect register/flag use including implicit and conditional access where available. |
@@ -192,6 +193,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 | `block_count`, `block_instruction`, `block_start`, `block_end`, `block_instruction_count`, `block_successors`, `block_unresolved` | Traverse bounded basic blocks and their outgoing edges. |
 
 The decoder provides static instruction observations. Indirect control flow can remain unresolved; a reachable walk is not complete program execution.
+`ret_gadget_starts` scans at most 1 MiB of the visible `Source` and returns at most 10,000 sorted candidate offsets. It accepts only sequences with straight-line instructions before a near `ret` (`C3` or `C2 imm16`). Overlapping decodes are possible; offsets may point into data. It does not prove that a candidate is executable, reachable, or useful as a ROP gadget. Use [`examples/ret_gadget_starts.gak`](../examples/ret_gadget_starts.gak) for a small static example.
 `function_reachable(source, offset, base_ip, bitness, max_instructions)` and `function_entry(format, max_instructions)` are intraprocedural approximations. A direct call target is excluded, but a jump to another function (including a tail call) can still be followed. Results remain bounded by the supplied instruction limit and source/entry range.
 For these two functions, basic-block successors also omit direct call targets while preserving the call's fallthrough edge. Instruction-level `successors` still reports the decoded call target, so call references remain inspectable.
 

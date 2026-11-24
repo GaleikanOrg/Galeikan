@@ -36,6 +36,31 @@ fn native_function_reachable_matches_vm() {
 }
 
 #[test]
+fn ret_gadget_candidates_match_ast_vm_and_native_with_bounds() {
+    if !gcc_available() { return; }
+    let s = Sandbox::new();
+    let script = s.write(
+        "ret-gadget-candidates.gak",
+        "from std.binary import from_hex, snapshot, view\nfrom std.asm import ret_gadget_starts\nfrom std.bytes import repeat\nfrom std.result import message\nfn attempt(source: Source, bits: i64, count: i64) -> Result<Offsets> = ret_gadget_starts(source, bits, count)\nlet code = snapshot(from_hex(\"58 5f c3 eb fe c3\"))\nprint ret_gadget_starts(code, 64, 3)\nprint ret_gadget_starts(code, 64, 1)\nprint ret_gadget_starts(view(code, 1, 5), 64, 2)\nprint ret_gadget_starts(snapshot(from_hex(\"c2 08\")), 64, 2)\nprint message(attempt(code, 8, 2))\nprint message(attempt(code, 64, 0))\nprint message(attempt(snapshot(repeat(from_hex(\"c3\"), 10001)), 64, 1))\n",
+    );
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&script).args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        if let Some(prior) = &expected { assert_eq!(&output.stdout, prior); }
+        expected = Some(output.stdout);
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected.unwrap());
+    assert_eq!(native.stdout, b"[0, 1, 2, 5]\n[2, 5]\n[0, 1, 4]\n[]\nx86 bitness must be 16, 32, or 64\ngadget instruction count must be between 1 and 8\ntoo many ret gadget candidates\n");
+}
+
+#[test]
 fn file_write_saves_patched_source_and_bytes_with_explicit_grant() {
     let s = Sandbox::new();
     let script = s.write(

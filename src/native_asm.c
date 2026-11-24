@@ -336,6 +336,49 @@ GakAsmDisassembly *gak_native_asm_function_reachable(const GakSourceHead *source
     return gak_native_asm_reachable_mode(source, offset, base_ip, bitness, max_instructions, 1);
 }
 
+uint64_t *gak_native_asm_ret_gadget_starts(const GakSourceHead *source,
+                                            int64_t bitness, int64_t max_instructions) {
+    gak_asm_error = NULL;
+    if (!source || !source->backing || source->end < source->start ||
+        source->end > *(const uint64_t *)source->backing) {
+        gak_asm_fail("invalid Source for x86 decoder");
+        return NULL;
+    }
+    if (bitness != 16 && bitness != 32 && bitness != 64) {
+        gak_asm_fail("x86 bitness must be 16, 32, or 64");
+        return NULL;
+    }
+    if (max_instructions < 1 || max_instructions > 8) {
+        gak_asm_fail("gadget instruction count must be between 1 and 8");
+        return NULL;
+    }
+    uint64_t length = source->end - source->start;
+    if (length > 1048576) {
+        gak_asm_fail("gadget scan exceeds 1048576 bytes");
+        return NULL;
+    }
+    uint64_t *scratch = malloc(10000 * sizeof(uint64_t));
+    if (!scratch) {
+        gak_asm_fail("native allocation failed");
+        return NULL;
+    }
+    size_t count = 0;
+    uint8_t error[256] = {0};
+    const uint8_t *bytes = source->backing + sizeof(uint64_t) + source->start;
+    int32_t status = galeikan_asm_ret_gadget_starts(bytes, (size_t)length,
+        (uint32_t)bitness, (size_t)max_instructions,
+        scratch, 10000, &count, error, sizeof error);
+    if (status) {
+        free(scratch);
+        gak_asm_fail(error[0] ? (const char *)error : "x86 gadget scan failed");
+        return NULL;
+    }
+    uint64_t *result = gak_asm_box_u64_list(count);
+    if (result) memcpy(result + 1, scratch, count * sizeof(uint64_t));
+    free(scratch);
+    return result;
+}
+
 #ifdef GALEIKAN_ASM_FORMATS
 static GakAsmDisassembly *gak_native_asm_entry_disassembly(const uint64_t info[7],
                                                             int64_t count, int mode) {
