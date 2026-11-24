@@ -256,7 +256,7 @@ fn function_reachable_keeps_direct_calls_out_of_the_local_walk() {
     let s = Sandbox::new();
     let script = s.write(
         "function-walk.gak",
-        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\n",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\nprint asm.block_successors(local, 0)[0]\nprint asm.block_unresolved(local, 0)\n",
     );
     let built = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("build")
@@ -276,7 +276,7 @@ fn function_reachable_keeps_direct_calls_out_of_the_local_walk() {
         }
         let output = process.output().unwrap();
         assert!(output.status.success(), "{}", stderr(&output));
-        assert_eq!(stdout(&output), "3\n5\n4101\nret\n");
+        assert_eq!(stdout(&output), "3\n5\n4101\nret\n4101\nfalse\n");
     }
 }
 

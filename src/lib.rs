@@ -317,11 +317,19 @@ struct DecodedCollection {
 
 impl DecodedCollection {
     fn new(instructions: Vec<(usize, asm::Decoded)>) -> Result<Self, String> {
+        Self::new_with_calls(instructions, true)
+    }
+
+    fn new_with_calls(instructions: Vec<(usize, asm::Decoded)>, follow_calls: bool) -> Result<Self, String> {
         let decoded = instructions
             .iter()
             .map(|(_, instruction)| instruction)
             .collect::<Vec<_>>();
-        let blocks = asm::blocks(&decoded)?;
+        let blocks = if follow_calls {
+            asm::blocks(&decoded)?
+        } else {
+            asm::blocks_with_calls(&decoded, false)?
+        };
         let overlaps = asm::overlaps(&decoded)?;
         Ok(Self {
             instructions,
@@ -477,7 +485,7 @@ unsafe fn galeikan_asm_reachable_impl(
         }
     })) {
         Ok(Ok(instructions)) => {
-            let collection = match DecodedCollection::new(instructions) {
+            let collection = match DecodedCollection::new_with_calls(instructions, follow_calls) {
                 Ok(collection) => collection,
                 Err(message) => return write_error(error, error_capacity, &message),
             };

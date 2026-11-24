@@ -61,6 +61,16 @@ impl Decoded {
     }
 }
 
+fn successors_with_calls(instruction: &Decoded, follow_calls: bool) -> Result<Vec<u64>, String> {
+    if !follow_calls && instruction.flow == "call" {
+        return Ok(vec![instruction
+            .ip
+            .checked_add(instruction.size as u64)
+            .ok_or("instruction address overflow")?]);
+    }
+    instruction.successors()
+}
+
 pub struct DecodeContext {
     info_factory: InstructionInfoFactory,
     formatter: IntelFormatter,
@@ -240,15 +250,7 @@ fn reachable_with_calls(
                 pending.push_back(candidate);
             }
         };
-        let successors = if !follow_calls && instruction.flow == "call" {
-            vec![instruction
-                .ip
-                .checked_add(instruction.size as u64)
-                .ok_or("instruction address overflow")?]
-        } else {
-            instruction.successors()?
-        };
-        for target in successors {
+        for target in successors_with_calls(&instruction, follow_calls)? {
             if let Some(relative) = target.checked_sub(base_ip) {
                 if let Ok(relative) = usize::try_from(relative) {
                     enqueue(relative);
@@ -261,6 +263,10 @@ fn reachable_with_calls(
 }
 
 pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
+    blocks_with_calls(instructions, true)
+}
+
+pub fn blocks_with_calls(instructions: &[&Decoded], follow_calls: bool) -> Result<Vec<Block>, String> {
     if instructions.is_empty() {
         return Ok(Vec::new());
     }
@@ -285,7 +291,7 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
                 leaders.insert(following.ip);
             }
         }
-        for target in instruction.successors()? {
+        for target in successors_with_calls(instruction, follow_calls)? {
             if addresses.contains(&target) && (target != next || instruction.flow != "next") {
                 leaders.insert(target);
             }
@@ -298,7 +304,7 @@ pub fn blocks(instructions: &[&Decoded]) -> Result<Vec<Block>, String> {
             continue;
         }
         let last = instructions[index - 1];
-        let successors = last.successors()?;
+        let successors = successors_with_calls(last, follow_calls)?;
         // The abort destination depends on the surrounding outermost XBEGIN.
         let transaction_exit = matches!(last.mnemonic.as_str(), "xabort" | "xend");
         result.push(Block {
@@ -582,7 +588,7 @@ pub fn overlaps(instructions: &[&Decoded]) -> Result<Vec<bool>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_dominators, block_natural_loop, block_path, blocks, call_targets, data_refs, data_xrefs, decode, function_reachable, overlaps, reachable, xrefs, Block};
+    use super::{block_dominators, block_natural_loop, block_path, blocks, blocks_with_calls, call_targets, data_refs, data_xrefs, decode, function_reachable, overlaps, reachable, xrefs, Block};
 
     #[test]
     fn register_and_flag_usage_includes_implicit_and_conditional_accesses() {
@@ -691,6 +697,13 @@ mod tests {
         assert_eq!(branch.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(), [0, 2, 3, 5]);
         let call_next = function_reachable(b"\xe8\x00\x00\x00\x00\xc3", 0, 0x1000, 64, 2).unwrap();
         assert_eq!(call_next.iter().map(|(offset, _)| *offset).collect::<Vec<_>>(), [0, 5]);
+        let decoded = local.iter().map(|(_, instruction)| instruction).collect::<Vec<_>>();
+        let graph = blocks_with_calls(&decoded, false).unwrap();
+        assert_eq!(graph[0].successors, [0x1005]);
+        assert!(!graph[0].unresolved);
+        let full_graph = blocks_with_calls(&decoded, true).unwrap();
+        assert_eq!(full_graph[0].successors, [0x1005, 0x1007]);
+        assert!(full_graph[0].unresolved);
     }
 
     #[test]

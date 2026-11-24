@@ -17,7 +17,7 @@ fn native_function_reachable_matches_vm() {
     let s = Sandbox::new();
     let script = s.write(
         "function-walk.gaks",
-        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\n",
+        "import std.binary\nimport std.asm\nlet source = binary.snapshot(binary.from_hex(\"e8 02 00 00 00 90 c3 90 c3\"))\nlet local = asm.function_reachable(source, 0, 0x1000u64, 64, 5)\nlet all = asm.reachable(source, 0, 0x1000u64, 64, 5)\nprint asm.count(local)\nprint asm.count(all)\nprint asm.address_u64(asm.at(local, 1))\nprint asm.mnemonic(asm.at(local, 2))\nprint asm.block_successors(local, 0)[0]\nprint asm.block_unresolved(local, 0)\n",
     );
     let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
         .arg("run")
@@ -26,7 +26,7 @@ fn native_function_reachable_matches_vm() {
         .output()
         .unwrap();
     assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
-    assert_eq!(vm.stdout, b"3\n5\n4101\nret\n");
+    assert_eq!(vm.stdout, b"3\n5\n4101\nret\n4101\nfalse\n");
     let built = s.compile(&script);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());

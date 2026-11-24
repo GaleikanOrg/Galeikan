@@ -185,6 +185,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 
 The decoder provides static instruction observations. Indirect control flow can remain unresolved; a reachable walk is not complete program execution.
 `function_reachable(source, offset, base_ip, bitness, max_instructions)` and `function_entry(format, max_instructions)` are intraprocedural approximations. A direct call target is excluded, but a jump to another function (including a tail call) can still be followed. Results remain bounded by the supplied instruction limit and source/entry range.
+For these two functions, basic-block successors also omit direct call targets while preserving the call's fallthrough edge. Instruction-level `successors` still reports the decoded call target, so call references remain inspectable.
 
 ### `std.process`
 

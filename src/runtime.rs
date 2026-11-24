@@ -105,11 +105,24 @@ impl Disassembly {
         start: usize,
         instructions: Vec<Arc<AsmInstruction>>,
     ) -> Result<Self, String> {
+        Self::new_with_calls(source, start, instructions, true)
+    }
+
+    fn new_with_calls(
+        source: Arc<Source>,
+        start: usize,
+        instructions: Vec<Arc<AsmInstruction>>,
+        follow_calls: bool,
+    ) -> Result<Self, String> {
         let decoded = instructions
             .iter()
             .map(|instruction| &instruction.decoded)
             .collect::<Vec<_>>();
-        let blocks = asm::blocks(&decoded)?;
+        let blocks = if follow_calls {
+            asm::blocks(&decoded)?
+        } else {
+            asm::blocks_with_calls(&decoded, false)?
+        };
         let overlaps = asm::overlaps(&decoded)?;
         let range_start = instructions
             .iter()
@@ -6599,10 +6612,11 @@ impl Runtime {
                         decoded,
                     }));
                 }
-                Ok(Value::Disassembly(Arc::new(Disassembly::new(
+                Ok(Value::Disassembly(Arc::new(Disassembly::new_with_calls(
                     source.clone(),
                     start,
                     instructions,
+                    name != "function_entry",
                 )?)))
             }
             ("entry", [Value::Format(source, report)]) => {
@@ -6676,10 +6690,11 @@ impl Runtime {
                         decoded,
                     }));
                 }
-                Ok(Value::Disassembly(Arc::new(Disassembly::new(
+                Ok(Value::Disassembly(Arc::new(Disassembly::new_with_calls(
                     source,
                     offset,
                     instructions,
+                    name != "function_reachable",
                 )?)))
             }
             ("text", [Value::Instruction(i)]) => Ok(Value::Str(i.decoded.text.clone())),
