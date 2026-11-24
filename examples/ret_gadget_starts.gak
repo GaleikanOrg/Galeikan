@@ -1,5 +1,9 @@
 from std.binary import from_hex, snapshot
-from std.asm import ret_gadget_starts
+from std.asm import at, linear_source, mnemonic, ret_gadget_starts
 
 let code = snapshot(from_hex("58 5f c3 eb fe c3"))
+let candidate = linear_source(code, 0, 0x4000u64, 64, 3)
 print ret_gadget_starts(code, 64, 3)
+for index in [0, 1, 2] {
+    print mnemonic(at(candidate, index))
+}

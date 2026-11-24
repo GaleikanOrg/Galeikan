@@ -555,6 +555,40 @@ pub unsafe extern "C" fn galeikan_asm_linear(
     error: *mut u8,
     error_capacity: usize,
 ) -> i32 {
+    unsafe { galeikan_asm_linear_impl(bytes, length, base_ip, bitness, count, out,
+        error, error_capacity, "linear disassembly exceeds executable entry region") }
+}
+
+/// Decode consecutive instructions from a caller-selected Source span.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `out` and the
+/// optional error buffer must be writable for their stated sizes.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_asm_linear_source(
+    bytes: *const u8,
+    length: usize,
+    base_ip: u64,
+    bitness: u32,
+    count: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    unsafe { galeikan_asm_linear_impl(bytes, length, base_ip, bitness, count, out,
+        error, error_capacity, "linear disassembly exceeds Source") }
+}
+
+unsafe fn galeikan_asm_linear_impl(
+    bytes: *const u8,
+    length: usize,
+    base_ip: u64,
+    bitness: u32,
+    count: usize,
+    out: *mut *mut c_void,
+    error: *mut u8,
+    error_capacity: usize,
+    range_error: &str,
+) -> i32 {
     if out.is_null() {
         return write_error(error, error_capacity, "invalid decoder input");
     }
@@ -587,7 +621,7 @@ pub unsafe extern "C" fn galeikan_asm_linear(
         let mut ip = base_ip;
         for _ in 0..count {
             if offset >= input.len() {
-                return Err("linear disassembly exceeds executable entry region".to_owned());
+                return Err(range_error.to_owned());
             }
             let decoded = decoder.decode(input, offset, ip, bitness)?;
             ip = ip

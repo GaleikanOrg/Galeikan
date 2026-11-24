@@ -1,6 +1,6 @@
 # Galeikan technical reference
 
-This is the function and command reference for the **current source tree**. It is a living development document, not a stable API contract. The packaged `v0.1.0-preview3` release is described separately in the [Preview 3 technical review](technical-review-preview3.md). Source changes after that tag may not be available in the downloadable packages yet.
+This is the function and command reference for **Galeikan 0.1.0 Preview 4**. It describes the packaged implementation and remains a development API rather than a stable contract. The [Preview 3 technical review](technical-review-preview3.md) is retained as an archive of the earlier release.
 
 Use this page to find current functions by module, learn what each group returns, and identify permission requirements. Each function group below gives its present purpose; a name in this reference does not imply that every execution engine supports every argument form. Test the exact source on the intended engine and platform.
 
@@ -8,7 +8,7 @@ Use this page to find current functions by module, learn what each group returns
 
 ## Availability and conventions
 
-The Preview 3 downloads do not yet include `binary.histogram`, `process.heap_candidates`, `process.pointer_refs_u64`, or `process.read_pointer_u64`; these are implemented in the current source tree. `check` validates source without running it. The AST interpreter and VM cover more language constructs than the native compiler, so compile and test a program before relying on native delivery. All byte counts and offsets are bounded; invalid ranges return errors. Functions that access files, processes, networks, Python, or raw syscalls require the corresponding declared effect and runtime grant.
+Preview 4 includes `binary.histogram`, `process.heap_candidates`, `process.pointer_refs_u64`, `process.read_pointer_u64`, and the other functions listed here. `check` validates source without running it. The AST interpreter and VM cover more language constructs than the native compiler, so compile and test a program before relying on native delivery. All byte counts and offsets are bounded; invalid ranges return errors. Functions that access files, processes, networks, Python, or raw syscalls require the corresponding declared effect and runtime grant.
 
 Functions are written below without the `std.` prefix for readability: `binary.deep` means `std.binary.deep` after importing `std.binary`. A vertical bar in a table groups related calls; it does not indicate that they all take the same arguments or return the same type.
 
@@ -186,6 +186,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 | `entry`, `linear`, `reachable_entry`, `decode`, `decode_u64`, `reachable` | Decode the declared executable entry, a bounded linear range, or reachable x86 instructions. |
 | `function_entry`, `function_reachable` | Walk reachable x86 instructions from a parsed executable entry or a `Source` offset without descending into direct call targets. The walk follows fallthrough and direct branches. |
 | `ret_gadget_starts(source, bitness, max_instructions)` | Find source-relative start offsets of valid x86 instruction sequences that end exactly in a near `ret`. Accepts 16/32/64-bit decoding and at most 8 instructions per candidate. |
+| `linear_source(source, offset, base_ip, bitness, count)` | Decode a fixed number of consecutive instructions from any visible `Source` offset, using `base_ip` as the first instruction address. Unlike `reachable`, it does not follow branches. |
 | `count`, `at`, `next`, `size`, `offset`, `address`, `address_u64`, `target`, `target_u64`, `data_target_u64` | Navigate a `Disassembly` or `Instruction` and inspect positions, size, branch target, or data reference. |
 | `text`, `mnemonic`, `flow`, `source`, `bytes` | Read formatted instruction text, mnemonic, control-flow class, origin source, or instruction bytes. |
 | `register_usage_complete`, `register_reads`, `register_writes`, `flags_read`, `flags_modified` | Inspect register/flag use including implicit and conditional access where available. |
@@ -194,6 +195,7 @@ These accessors operate on the parsed CLR metadata of a PE file and fail cleanly
 
 The decoder provides static instruction observations. Indirect control flow can remain unresolved; a reachable walk is not complete program execution.
 `ret_gadget_starts` scans at most 1 MiB of the visible `Source` and returns at most 10,000 sorted candidate offsets. It accepts only sequences with straight-line instructions before a near `ret` (`C3` or `C2 imm16`). Overlapping decodes are possible; offsets may point into data. It does not prove that a candidate is executable, reachable, or useful as a ROP gadget. Use [`examples/ret_gadget_starts.gak`](../examples/ret_gadget_starts.gak) for a small static example.
+Pass a returned offset to `linear_source` to inspect the instructions. Offsets from a `Source` view are relative to that view; choose `base_ip` from a trusted file-to-address mapping when a real virtual address is needed. `linear_source` accepts 1–10,000 instructions and fails if the selected span ends early.
 `function_reachable(source, offset, base_ip, bitness, max_instructions)` and `function_entry(format, max_instructions)` are intraprocedural approximations. A direct call target is excluded, but a jump to another function (including a tail call) can still be followed. Results remain bounded by the supplied instruction limit and source/entry range.
 For these two functions, basic-block successors also omit direct call targets while preserving the call's fallthrough edge. Instruction-level `successors` still reports the decoded call target, so call references remain inspectable.
 

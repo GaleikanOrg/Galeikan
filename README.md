@@ -11,22 +11,22 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%7C%20Debian%2013-16344b?style=flat-square)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-7ccfff?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language)
 
-**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical reference](docs/technical.md) · [FAQ](docs/faq.md) · [Preview 3 technical review](docs/technical-review-preview3.md) · [Examples](examples/) · [VS Code syntax](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VS Code theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse)
+**Explore:** [Download](https://github.com/GaleikanOrg/Galeikan/releases) · [Quickstart](docs/quickstart.md) · [Technical reference](docs/technical.md) · [FAQ](docs/faq.md) · [Preview 4 release notes](docs/release-notes-preview4.md) · [Examples](examples/) · [VS Code syntax](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [VS Code theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse)
 
 > [!IMPORTANT]
 > Galeikan is a **0.1.0 development preview**. The native compiler supports a smaller subset than the interpreter and VM. Downloads are unsigned, and declared effects are not an operating-system sandbox.
 
 ## Start in a few minutes
 
-Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 package from the [current release](https://github.com/GaleikanOrg/Galeikan/releases/tag/v0.1.0-preview3). The Windows installer adds `galeikan` to your user PATH; open a **new terminal** after setup. The Debian package installs the CLI at `/usr/bin/galeikan`.
+Download the **Galeikan** installer for Windows x64 or the Debian 13 amd64 package from [Preview 4](https://github.com/GaleikanOrg/Galeikan/releases/tag/v0.1.0-preview4). The Windows installer adds `galeikan` to your user PATH; open a **new terminal** after setup. The Debian package installs the CLI at `/usr/bin/galeikan`.
 
 | Download | Current artifact |
 | :--- | :--- |
-| Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/Galeikan-0.1.0-preview3-windows-x64-setup.exe) |
-| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan_0.1.0.preview3_amd64.deb) |
-| Visual Studio Code | [Syntax highlighting](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [Galeikan Eclipse theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse) · [Preview 3 VSIX archive](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/galeikan-language-0.1.3.vsix) |
+| Windows x64 | [Galeikan setup `.exe`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview4/Galeikan-0.1.0-preview4-windows-x64-setup.exe) |
+| Debian 13 amd64 | [Galeikan `.deb`](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview4/galeikan_0.1.0.preview4_amd64.deb) |
+| Visual Studio Code | [Syntax highlighting](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-language) · [Galeikan Eclipse theme](https://marketplace.visualstudio.com/items?itemName=galeikan.galeikan-eclipse) · [Preview 4 syntax VSIX](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview4/galeikan-language-0.1.6.vsix) · [Theme VSIX](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview4/galeikan-eclipse-0.1.1.vsix) |
 
-The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview3/SHA256SUMS.txt). Its archived VSIX is version 0.1.3; the Marketplace extension is updated independently.
+The release also includes [SHA-256 checksums](https://github.com/GaleikanOrg/Galeikan/releases/download/v0.1.0-preview4/SHA256SUMS.txt). The Marketplace extensions can be updated independently of the CLI release.
 
 The commands below use examples from this repository. Clone it first if you installed a binary package:
 

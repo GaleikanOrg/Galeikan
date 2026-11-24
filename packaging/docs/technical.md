@@ -1,0 +1,277 @@
+# Galeikan technical reference
+
+This is the function and command reference for **Galeikan 0.1.0 Preview 4**. It describes the packaged implementation and remains a development API rather than a stable contract. The [Preview 3 technical review](technical-review-preview3.md) is retained as an archive of the earlier release.
+
+Use this page to find current functions by module, learn what each group returns, and identify permission requirements. Each function group below gives its present purpose; a name in this reference does not imply that every execution engine supports every argument form. Test the exact source on the intended engine and platform.
+
+**Navigate:** [Commands](#command-line-reference) · [Language and types](#language-and-data-types) · [Bytes and text](#stdbytes) · [Binary data](#stdbinary) · [File output](#stdfile) · [Formats and CLR](#stdformats) · [Disassembly](#stdasm) · [Processes](#stdprocess) · [Network](#stdnet) · [Utilities](#stdaudit-stdlab-stditer-stdlist-stdresult-stdcli-stdsyscall) · [Effects](#effects-and-grants-reference).
+
+## Availability and conventions
+
+Preview 4 includes `binary.histogram`, `process.heap_candidates`, `process.pointer_refs_u64`, `process.read_pointer_u64`, and the other functions listed here. `check` validates source without running it. The AST interpreter and VM cover more language constructs than the native compiler, so compile and test a program before relying on native delivery. All byte counts and offsets are bounded; invalid ranges return errors. Functions that access files, processes, networks, Python, or raw syscalls require the corresponding declared effect and runtime grant.
+
+Functions are written below without the `std.` prefix for readability: `binary.deep` means `std.binary.deep` after importing `std.binary`. A vertical bar in a table groups related calls; it does not indicate that they all take the same arguments or return the same type.
+
+## Command-line reference
+
+| Command | Purpose |
+| --- | --- |
+| `galeikan check <source>` | Parse and check a `.gak` or `.gaks` file without executing its effects. |
+| `galeikan run <source> [--engine ast\|vm]` | Execute source in the AST interpreter (default) or bytecode VM. |
+| `galeikan build <source>` | Write a versioned `.gakb` bytecode bundle. |
+| `galeikan inspect <bundle.gakb>` | Validate and describe a bytecode bundle without executing it. |
+| `galeikan exec <bundle.gakb>` | Run a bundle with the bytecode VM. |
+| `galeikan compile <source>` | Build a host x86-64 native program for supported language constructs. |
+| `galeikan call <source\|bundle> <function>` | Call an exported function through a JSON request on standard input. |
+| `galeikan serve <source\|bundle>` | Keep a JSON-lines function-call session alive for clients such as the Python bridge. |
+| `galeikan lock <project-dir>` | Resolve project-local packages and write their lock data. |
+| `galeikan verify-case <case.json>` | Check a recorded case's hashes and lineage without rerunning its source. |
+| `galeikan --help`, `--version` | Show command usage or the core package version. |
+
+`run`, `exec`, `call`, and `serve` accept applicable permission flags. `run` and `exec` can write a case with `--case <output.json>`. Arguments after `--` are passed to the Galeikan program and read with `std.cli`. The compiler's generated file uses `.exe` on Windows and `.native` on Linux. The CLI package version is currently `0.1.0`. Distribution builds have their own preview label.
+
+`--allow-write <directory>` grants creation of new files under an existing directory. Repeat it for several roots. It does not imply `--allow-read` and never authorizes overwriting an existing file.
+
+## Language and data types
+
+```galeikan
+requires { file.read }
+import std.binary
+from std.result import is_error
+
+fn header_byte(source: Source) -> Result<Observation> = binary.deep(source, 0, "u8")
+
+let sample: Source = binary.analyze("sample.bin", 4096)
+let first = header_byte(sample)
+if is_error(first) {
+    print "No first byte"
+} else {
+    print first
+}
+```
+
+`.gak` and `.gaks` are interchangeable source extensions. `let` is immutable, `var` is mutable, `fn` declares a function, typed parameters/returns are supported, and `requires` declares intended effects. The preview has conditionals, `while`/`for`, matching, records and classes, methods, `return`, `break`, and `continue`. Imports can name a standard module, a local source module, an offline `pkg.*` package, or a project-local `py.*` Python module. `import helper as h` and `from helper import name` are supported. File-scoped modules live beside the importing source under the project boundary.
+
+| Type or value | Meaning |
+| --- | --- |
+| `i64`, `u64`, `bool`, `str`, `bytes` | Signed and unsigned 64-bit integers, Boolean, UTF-8 text, and raw bytes. Checked integer arithmetic reports overflow; bitwise and shift operators are available. |
+| `List<T>`, `Offsets` | Homogeneous lists and bounded offset sequences. Indexing and iteration are supported in the appropriate execution paths. |
+| `Result<T>` | Success or an error message; `std.result` constructs, tests, and recovers values. |
+| `Source` | Bounded byte snapshot or derived view with origin and lineage. |
+| `Observation`, `Diff`, `Finding` | Source-linked decoded value, byte comparison, and audit result. |
+| `Format`, `Section` | Parsed PE/ELF report and a selected section. |
+| `Instruction`, `Disassembly` | Decoded x86 instruction and bounded instruction collection. |
+| `Regions`, `Region` | Process mapping collection and one mapping. |
+| `HttpResponse` | Bounded HTTP result with status, body, and headers. |
+| records and classes | User-defined structured values and associated methods. |
+
+Built-ins include `print` for output, `len` for supported collections/text/bytes, `assert` for runtime checks, and `i64`/`u64` for checked integer conversion. String escapes include newline/tab/carriage return, NUL, quote, backslash, two-digit `\xNN`, and Unicode scalar `\u{N}`. `\xNN` creates text; use `bytes.from_hex` for exact raw byte values. An `Observation` is always tied to a range in a `Source`; errors and `Result` values should be checked before relying on decoded content.
+
+## Standard-library reference
+
+### `std.bytes`
+
+| Function | Current purpose |
+| --- | --- |
+| `from_hex`, `to_hex` | Decode hex text into bytes; encode bytes as hex text. |
+| `from_utf8`, `to_utf8` | Encode text as UTF-8 bytes (up to 1 MiB); decode bytes to text with strict UTF-8 validation. |
+| `from_utf16le`, `from_utf16be`, `to_utf16le`, `to_utf16be` | Convert text and bytes using UTF-16 little or big endian, rejecting odd-length input and invalid surrogate pairs. Encoded bytes are limited to 1 MiB. |
+| `from_latin1`, `to_latin1` | Convert ISO-8859-1 text and bytes without replacement; encoding rejects characters above U+00FF. This is not Windows-1252. |
+| `pack` | Pack a checked integer or field into bytes using the requested representation. |
+| `concat`, `repeat`, `xor` | Concatenate, repeat, or XOR byte buffers with size checks. |
+| `at`, `find`, `contains` | Read a byte by index, locate a byte sequence, or test membership. |
+
+### `std.text`
+
+| Function | Current purpose |
+| --- | --- |
+| `length`, `byte_length` | Count Unicode characters or UTF-8 bytes. |
+| `repeat`, `replace` | Repeat text within the result-size limit, or replace all non-overlapping substring matches. |
+| `split` | Split text on a nonempty separator into `List<str>`, retaining empty leading, trailing, and adjacent fields; at most 100,000 fields. |
+| `join` | Join a `List<str>` with a separator into bounded text; an empty list produces empty text. |
+| `find`, `contains` | Find a substring or test whether it occurs. |
+| `starts_with`, `ends_with` | Test a text prefix or suffix. |
+| `slice` | Take a checked character-indexed substring. |
+
+### `std.binary`
+
+| Function family | Current purpose |
+| --- | --- |
+| `analyze`, `from_hex`, `snapshot` | Read an authorized file into a bounded `Source`, decode hex bytes, or capture in-memory bytes as a `Source`. |
+| `view`, `extract`, `patch`, `splice` | Create bounded source views, extract bytes, replace a span immutably, or insert/remove bytes while keeping lineage. |
+| `deep`, `value`, `signed_value`, `value_u64`, `offset`, `width` | Decode a typed integer observation and read its value, signed value, unsigned value, byte offset, or width. `deep` accepts `u8`, signed/unsigned 16/32/64-bit little/big-endian fields, and canonical `uleb128`/`sleb128`. |
+| `bits`, `signed_bits`, `patch_bits`, `patch_signed_bits` | Read or immutably change 1–64 bits with explicit `lsb0`/`msb0` ordering and signedness checks. |
+| `read_text`, `read_cstring`, `read_utf8`, `read_wstring` | Decode bounded fixed-length or terminated ASCII/UTF-8/UTF-16 text. `read_text` and `strings` accept `ascii`, `utf8`, `utf16le`, and `utf16be`; UTF-8 scans count Unicode scalars and skip malformed sequences. |
+| `size`, `sha256`, `crc32`, `entropy`, `entropy_windows`, `histogram` | Get size, SHA-256, CRC32 (including an optional previous CRC for chunking), global entropy, source-span-aware window entropy, or a 256-count byte-frequency list. `histogram` accepts bytes or a `Source`. |
+| `find`, `contains`, `hunt`, `strings` | Search bounded source bytes, match a byte pattern, or enumerate candidate strings. |
+| `hexdump`, `diff`, `diff_offsets`, `diff_count`, `bit_distance` | Produce a bounded hex view; compare sources and inspect changed byte offsets/count or count differing bits. `bit_distance` requires equal visible Source lengths and includes source views. |
+
+`crc32` is a conventional checksum; use SHA-256 when cryptographic collision resistance matters. Entropy and pattern hits are evidence for investigation, not automatic classification. Source size, string count, mutation count, and entropy-window count have implementation limits that return errors rather than silently truncating results.
+
+Use [`examples/bit_distance.gak`](../examples/bit_distance.gak) to compare an immutable patched Source with its original. It prints `1` because the patch flips one bit. This measures bit changes, not semantic equivalence or executable behavior.
+
+`strings` scans UTF-16LE/BE on both byte alignments and reports sorted candidate offsets. `read_text` decodes valid Unicode scalars, including surrogate pairs; malformed pairs end a printable run. As with any binary string scan, candidate offsets can include false positives.
+
+### `std.file`
+
+| Function | Current purpose |
+| --- | --- |
+| `write(path: str, data: Source\|bytes) -> i64` | Create a new binary file and return the number of bytes written. The path resolves relative to the importing module; absolute paths are also accepted when granted. The parent directory must exist. Output is limited to 512 MiB. Existing files are never overwritten. |
+
+Declare `requires { file.write }` and run with `--allow-write <directory>`. Reading input still needs `file.read` and `--allow-read`. `binary.patch`, `binary.splice`, and bit mutations return a new `Source`; pass that value to `file.write` to save a modified binary. A failed write may leave a partial new file if the operating system reports an I/O error after creation. This API is a bounded export, not an atomic replacement operation.
+
+```galeikan
+requires { file.read, file.write }
+from std.binary import analyze, patch
+from std.bytes import from_hex
+from std.file import write
+
+let original = analyze("input.bin", 1048576)
+let modified = patch(original, 0, from_hex("47414b"))
+print write("output.bin", modified)
+```
+
+### `std.formats`
+
+`probe(source)` produces a `Format` for supported PE or ELF data. Format accessors inspect file structures; they do not execute the file. The following is the current public accessor catalog, grouped by the object returned.
+
+| Functions | Current purpose |
+| --- | --- |
+| `probe`, `kind`, `bits`, `endian`, `arch`, `build_id` | Parse a source and report recognized format, word size, byte order, architecture, or ELF build ID. |
+| `signal`, `field`, `image_base` | Read a selected hardening/declaration signal, named observed field, or PE image base. Signals are file metadata, not runtime proof. |
+| `count`, `section`, `section_at_offset`, `section_at_address` | Count sections and select one by index, file offset, or virtual address. |
+| `name`, `data`, `offset`, `size`, `virtual_size`, `address`, `address_u64`, `flags`, `flags_u64`, `writable`, `executable` | Inspect a selected section's name, bytes, location, extent, flags, and write/execute attributes. |
+| `overlay`, `entry_view` | Return bytes beyond mapped content or a bounded view around the declared entry point. |
+| `rva`, `pe_va`, `pe_va_at`, `va`, `va_u64`, `elf_va_at` | Map PE RVA/VA or ELF VA ranges into source views; the `_at` forms allow an explicit address context. |
+| `rva_offset`, `pe_va_offset`, `pe_va_offset_at`, `va_offset`, `va_offset_u64`, `elf_va_offset_at` | Convert a declared virtual address into a file offset, with checked mapping. |
+| `offset_rva`, `offset_pe_va`, `offset_pe_va_at`, `offset_va`, `offset_va_u64`, `offset_elf_va_at` | Convert a file offset into a format virtual address, with checked mapping. |
+| `import_count`, `delay_import_count`, `export_count`, `import_iat_rva`, `delay_import_iat_rva` | Count PE imports, delayed imports, or exports and inspect import-address-table locations. |
+| `import_fingerprint` | Return a lowercase SHA-256 digest of PE regular and delay imports for sample comparison. Library and symbol names are ASCII-case-normalized; records are sorted, and duplicate imports remain significant. |
+| `dependency_fingerprint` | Return a lowercase SHA-256 digest of PE regular/delayed dependency names or ELF `DT_NEEDED` library names. Records are normalized and sorted; duplicate names remain significant. |
+| `export_name`, `export_target`, `export_kind`, `export_summary`, `export_ordinal`, `export_address`, `export_view` | Inspect an export's name, target/forwarder, kind, ordinal, address, summary, or backing source view. |
+| `dependency_count`, `delay_dependency_count`, `needed_count`, `dependency_name`, `delay_dependency_name`, `needed_name` | Count and name PE normal/delayed dependencies or ELF `DT_NEEDED` libraries. |
+| `certificate_count`, `certificate_data` | Count PE certificate entries and return bounded certificate bytes; no trust-chain validation is performed. |
+| `debug_count`, `debug_kind`, `debug_type`, `debug_size`, `debug_timestamp`, `debug_data` | Count and inspect PE debug directory entries and their data. |
+| `debug_pdb_path`, `debug_pdb_guid`, `debug_pdb_age` | Read CodeView RSDS PDB identity fields when present. |
+| `tls_callback_count`, `tls_callback_address_u64` | Count PE TLS callbacks and report their declared addresses. |
+| `symbol_count`, `static_symbol_count`, `coff_symbol_count` | Count dynamic, static, or PE COFF symbols. COFF auxiliary rows are excluded from the logical count. |
+| `coff_symbol_name`, `coff_symbol_field` | Read a PE COFF symbol name or numeric field. |
+| `symbol_defined`, `static_symbol_defined`, `symbol_at_address`, `static_symbol_at_address`, `symbol_at_address_at`, `static_symbol_at_address_at` | Test definition status or find dynamic/static symbols at a mapped address. |
+| `symbol_view`, `static_symbol_view`, `symbol_address_u64`, `static_symbol_address_u64` | Return the backing source view or address for dynamic/static symbols. |
+| `relocation_count`, `relocation_location`, `relocation_address`, `relocation_address_u64`, `relocation_kind`, `relocation_summary` | Count relocation entries and read their location, address, type, or summary. |
+
+`import_fingerprint` is a Galeikan-specific comparison key, not the conventional PE imphash. It hashes sorted, length-prefixed records with a versioned domain tag; each record includes regular/delay status, name/ordinal status, DLL name, and symbol. Canonical records are limited to 16 MiB. It ignores IAT addresses and does not hash executable code. Matching fingerprints indicate matching parsed import profiles under this definition, not identical files or malicious intent.
+
+`dependency_fingerprint` uses a separate versioned SHA-256 domain for PE and ELF. It includes PE regular/delayed status or ELF `DT_NEEDED` names, sorts length-prefixed records, ASCII-case-normalizes PE names while preserving case-sensitive ELF names, and caps canonical records at 16 MiB. It is an inventory comparison key, not a file hash or a malware verdict.
+
+#### CLR metadata within `std.formats`
+
+These accessors operate on the parsed CLR metadata of a PE file and fail cleanly if the required directory/table is missing or malformed. Table indices and blob lengths are bounded.
+
+| Functions | Current purpose |
+| --- | --- |
+| `clr_metadata_version`, `clr_stream_count`, `clr_stream_name`, `clr_stream_rva`, `clr_stream_size`, `clr_stream_data` | Describe the metadata root and its named streams; return a bounded stream view. |
+| `clr_string`, `clr_blob`, `clr_guid` | Read a value from the `#Strings`, `#Blob`, or `#GUID` heap. |
+| `clr_module_name`, `clr_module_mvid` | Read the Module table's name and module version ID. |
+| `clr_table_present` | Test whether a supported metadata table is present. |
+| `clr_type_name`, `clr_type_namespace`, `clr_type_ref_name`, `clr_type_ref_namespace`, `clr_type_ref_full_name` | Resolve TypeDef or TypeRef names, namespaces, and nested reference names. |
+| `clr_method_name`, `clr_method_owner`, `clr_method_rva`, `clr_method_signature`, `clr_method_signature_text` | Identify a MethodDef's name/declaring type, RVA, raw signature, or decoded signature text. |
+| `clr_method_impl_flags`, `clr_method_flags`, `clr_method_max_stack`, `clr_method_local_sig_token` | Inspect declared method attributes, implementation flags, IL stack limit, and local-signature token. |
+| `clr_method_il`, `clr_method_eh_count`, `clr_method_eh_field` | Read a bounded IL body and exception-handler clauses; these do not execute or verify managed code. |
+
+### `std.asm`
+
+| Functions | Current purpose |
+| --- | --- |
+| `entry`, `linear`, `reachable_entry`, `decode`, `decode_u64`, `reachable` | Decode the declared executable entry, a bounded linear range, or reachable x86 instructions. |
+| `function_entry`, `function_reachable` | Walk reachable x86 instructions from a parsed executable entry or a `Source` offset without descending into direct call targets. The walk follows fallthrough and direct branches. |
+| `ret_gadget_starts(source, bitness, max_instructions)` | Find source-relative start offsets of valid x86 instruction sequences that end exactly in a near `ret`. Accepts 16/32/64-bit decoding and at most 8 instructions per candidate. |
+| `linear_source(source, offset, base_ip, bitness, count)` | Decode a fixed number of consecutive instructions from any visible `Source` offset, using `base_ip` as the first instruction address. Unlike `reachable`, it does not follow branches. |
+| `count`, `at`, `next`, `size`, `offset`, `address`, `address_u64`, `target`, `target_u64`, `data_target_u64` | Navigate a `Disassembly` or `Instruction` and inspect positions, size, branch target, or data reference. |
+| `text`, `mnemonic`, `flow`, `source`, `bytes` | Read formatted instruction text, mnemonic, control-flow class, origin source, or instruction bytes. |
+| `register_usage_complete`, `register_reads`, `register_writes`, `flags_read`, `flags_modified` | Inspect register/flag use including implicit and conditional access where available. |
+| `successors`, `call_targets`, `data_refs`, `xrefs`, `data_xrefs`, `overlap_count`, `overlap_at` | Inspect resolved branch successors, call/data references, cross-references, or overlapping decode starts. |
+| `block_count`, `block_instruction`, `block_start`, `block_end`, `block_instruction_count`, `block_successors`, `block_unresolved` | Traverse bounded basic blocks and their outgoing edges. |
+
+The decoder provides static instruction observations. Indirect control flow can remain unresolved; a reachable walk is not complete program execution.
+`ret_gadget_starts` scans at most 1 MiB of the visible `Source` and returns at most 10,000 sorted candidate offsets. It accepts only sequences with straight-line instructions before a near `ret` (`C3` or `C2 imm16`). Overlapping decodes are possible; offsets may point into data. It does not prove that a candidate is executable, reachable, or useful as a ROP gadget. Use [`examples/ret_gadget_starts.gak`](../examples/ret_gadget_starts.gak) for a small static example.
+Pass a returned offset to `linear_source` to inspect the instructions. Offsets from a `Source` view are relative to that view; choose `base_ip` from a trusted file-to-address mapping when a real virtual address is needed. `linear_source` accepts 1–10,000 instructions and fails if the selected span ends early.
+`function_reachable(source, offset, base_ip, bitness, max_instructions)` and `function_entry(format, max_instructions)` are intraprocedural approximations. A direct call target is excluded, but a jump to another function (including a tail call) can still be followed. Results remain bounded by the supplied instruction limit and source/entry range.
+For these two functions, basic-block successors also omit direct call targets while preserving the call's fallthrough edge. Instruction-level `successors` still reports the decoded call target, so call references remain inspectable.
+
+### `std.process`
+
+| Functions | Current purpose |
+| --- | --- |
+| `self_pid`, `parent_pid`, `children`, `thread_ids`, `executable`, `modules` | Identify the current/target process, its parent/children/threads, executable, and loaded module paths where the OS exposes them. |
+| `regions`, `images`, `readable_regions`, `writable_regions`, `executable_regions`, `non_image_executable_regions`, `wx_regions` | Enumerate mappings or filter by image backing and memory permissions, including executable non-image mappings and writable/executable mappings. |
+| `heap_candidates` | Select readable and writable, non-image-backed mappings classified as heap, anonymous, or private. These are **candidate regions**, not confirmed allocator objects or a heap dump. |
+| `count`, `mapped_bytes`, `at`, `locate`, `locate_u64` | Count regions, sum their mapped sizes as `u64`, index one, or locate a mapping containing an address. |
+| `pid`, `start`, `start_u64`, `end`, `end_u64`, `size`, `size_u64`, `access`, `label`, `kind`, `sharing`, `image_backed` | Inspect a region's owner, address interval, extent, access flags, label, kind, sharing classification, or image status. Prefer unsigned address and size accessors when signed `i64` cannot represent the range. |
+| `offset`, `offset_u64`, `address`, `address_u64` | Translate between a region-relative offset and address. |
+| `reference`, `resolve`, `advance_ref` | Create a checked region reference for an address, resolve it back to `u64`, or move it within the same region by a signed delta. References encode the region label, PID, start, and offset; resolving checks that prefix and the current range. |
+| `snapshot`, `snapshot_u64`, `snapshot_region`, `snapshot_ref`, `snapshot_at`, `snapshot_at_u64` | Capture a bounded process-memory range as a `Source`, by PID/address, region, or reference. |
+| `hunt_region(region, pattern, offset, length)` | Search a readable region and return region-relative matching `Offsets`. `pattern` accepts `bytes`, UTF-8 text, or a `hex:` string with masked bytes. |
+| `hunt_regions(regions, pattern, per_region, total)` | Search readable regions in order, limiting both each region and the aggregate bytes; return absolute match addresses as `List<u64>`. All regions must belong to one process. |
+| `pointer_refs_u32`, `pointer_refs_u64` | Search a readable region for a little-endian 32- or 64-bit pointer value and return region-relative `Offsets`, including unaligned matches. Values are matched, not dereferenced. |
+| `pointer_refs_regions_u32`, `pointer_refs_regions_u64` | Search readable regions for the pointer value with per-region and total byte limits; return absolute addresses as `List<u64>`. |
+| `read_pointer_u32`, `read_pointer_u64` | Read a little-endian 32- or 64-bit pointer value at a region-relative offset and return `u64`. This does not follow the pointer. |
+| `pointer_chain_u32`, `pointer_chain_u64` | Follow 0–32 pointer dereferences from an absolute `u64` address through a `Regions` collection; return the starting address and each resolved address as `List<u64>`. |
+| `pointer_path_u32`, `pointer_path_u64` | Follow 0–32 dereferences, adding each signed field offset before its read. Return the starting address and resolved addresses as `List<u64>`. Reject cycles, out-of-range addresses, and unmapped targets. |
+
+Process searches accept patterns of 1–4096 bytes; masked patterns are limited to 64 bytes. Each scan is limited to 16 MiB and 10,000 matches. Multi-region scans apply a 16 MiB aggregate cap in addition to the per-region cap. Pointer paths require every read and resolved target to remain mapped in the same authorized process. Mapping enumeration is not a snapshot of an entire process; regions can change between lookup and read, and permission grants do not override OS access controls.
+
+The checked reference form is useful when a raw address is hard to remember. The reference below is tied to the selected mapping and can be resolved only against a matching region:
+
+```galeikan
+requires { process.inspect }
+import std.process
+
+let maps = process.regions(process.self_pid())
+if process.count(maps) > 0 {
+    let region = process.at(maps, 0)
+    let address = process.start_u64(region)
+    let key = process.reference(region, address)
+    print key
+    print process.resolve(region, key) == address
+}
+```
+
+Run the [runnable example](../examples/process-reference.gak) with `galeikan run examples/process-reference.gak --allow-process self`. A reference describes a mapping at the time of enumeration; it is not a durable pointer across process restarts or remapping.
+
+### `std.net`
+
+| Functions | Current purpose |
+| --- | --- |
+| `exchange`, `datagram` | Send and receive bounded TCP or UDP data with timeout and destination grant checks. |
+| `fetch`, `request` | Perform bounded HTTP retrieval or a request with explicit method/body/headers. |
+| `status`, `body`, `headers` | Read an `HttpResponse` status, bounded response body, or headers. |
+
+### `std.audit`, `std.lab`, `std.iter`, `std.list`, `std.result`, `std.cli`, `std.syscall`
+
+| Module and functions | Current purpose |
+| --- | --- |
+| `audit.bound`, `audit.expect` | Create a `Finding` from a bounded or expected numeric observation. |
+| `audit.hunt`, `audit.signal` | Produce a finding from a byte-pattern match or a file-format signal. |
+| `audit.passed`, `audit.failed` | Test the outcome of a `Finding`. |
+| `lab.mutate` | Generate a bounded list of immutable `Source` variants using bit flips, byte/integer boundaries, truncation, insertion, or deletion. |
+| `iter.range` | Produce a bounded integer-offset range for iteration. |
+| `list.count`, `list.append`, `list.concat` | Count, immutably append to, or concatenate homogeneous flat lists. |
+| `result.ok`, `result.fail` | Construct a successful or failed `Result`. |
+| `result.is_ok`, `result.is_error`, `result.message`, `result.recover` | Test a `Result`, read its failure message, or use a fallback value. |
+| `cli.count`, `cli.arg`, `cli.int` | Count and read program arguments, including checked `i64` parsing. |
+| `syscall.call` | Invoke a Linux x86-64 system call after `--allow-syscall`; this bypasses the safety expectations of ordinary built-ins and is for controlled local experiments only. |
+
+## Effects and grants reference
+
+| Source effect | CLI grant | Scope and limit |
+| --- | --- | --- |
+| `file.read` | `--allow-read <directory>` | Authorizes built-in file reads rooted at the granted directory. |
+| `file.write` | `--allow-write <directory>` | Authorizes creation of new binary files under the granted directory. No overwrite; 512 MiB per write. |
+| `net.connect` | `--allow-connect <host:port>` | Authorizes the matching network destination for bounded TCP/UDP/HTTP operations. |
+| `process.inspect` | `--allow-process <pid\|self>` | Authorizes supported inspection of the specified process; OS permissions still apply. |
+| `python.exec` | `--allow-python <executable>` | Starts a compatible external Python worker with that user's normal OS authority. |
+| `case.write` | `--case <output.json>` | Records a case from an execution path that supports case output. |
+| `syscall.raw` | `--allow-syscall` | Permits unrestricted Linux x86-64 system calls; use only for controlled experiments. |
+
+For a research workflow, document the exact grants beside the script, set finite byte/time limits, preserve the source hashes, and test all intended engines. `check` is a parser/type preflight, not an execution or sandbox proof.

@@ -1,8 +1,8 @@
 {
   "name": "galeikan-language",
-  "displayName": "Galeikan",
-  "description": "Syntax highlighting and language configuration for Galeikan source files",
-  "version": "0.1.5",
+  "displayName": "Galeikan Language",
+  "description": "Syntax highlighting and language configuration for Galeikan .gak and .gaks source files",
+  "version": "0.1.6",
   "publisher": "galeikan",
   "icon": "icon.png",
   "repository": {

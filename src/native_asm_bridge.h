@@ -27,6 +27,9 @@ int32_t galeikan_asm_ret_gadget_starts(const uint8_t *bytes, size_t length,
 int32_t galeikan_asm_linear(const uint8_t *bytes, size_t length,
                             uint64_t base_ip, uint32_t bitness, size_t count,
                             void **out, uint8_t *error, size_t error_capacity);
+int32_t galeikan_asm_linear_source(const uint8_t *bytes, size_t length,
+                                   uint64_t base_ip, uint32_t bitness, size_t count,
+                                   void **out, uint8_t *error, size_t error_capacity);
 int32_t galeikan_formats_import_fingerprint(const uint8_t *bytes, size_t length,
                                             uint8_t *output, uint8_t *error,
                                             size_t error_capacity);

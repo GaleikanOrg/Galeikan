@@ -243,10 +243,10 @@ GakAsmInstruction *gak_native_asm_entry(const uint64_t info[6]) {
     return instruction;
 }
 
-static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *source,
+static GakAsmDisassembly *gak_native_asm_source_disassembly(const GakSourceHead *source,
                                                         int64_t offset, uint64_t base_ip,
                                                         int64_t bitness, int64_t max_instructions,
-                                                        int function_only) {
+                                                        int mode) {
     gak_asm_error = NULL;
     if (!source || !source->backing || source->end < source->start ||
         source->end > *(const uint64_t *)source->backing) {
@@ -254,7 +254,8 @@ static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *sou
         return NULL;
     }
     if (offset < 0) {
-        gak_asm_fail("reachable entry offset must be nonnegative");
+        gak_asm_fail(mode == 2 ? "linear start offset must be nonnegative" :
+            "reachable entry offset must be nonnegative");
         return NULL;
     }
     if (bitness != 16 && bitness != 32 && bitness != 64) {
@@ -267,13 +268,18 @@ static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *sou
     }
     uint64_t length = source->end - source->start;
     if ((uint64_t)offset >= length) {
-        gak_asm_fail("reachable entry offset out of bounds");
+        gak_asm_fail(mode == 2 ? "linear start offset out of bounds" :
+            "reachable entry offset out of bounds");
         return NULL;
     }
     const uint8_t *bytes = source->backing + sizeof(uint64_t) + source->start;
     uint8_t error[256] = {0};
     void *decoded = NULL;
-    int failed = function_only
+    int failed = mode == 2
+        ? galeikan_asm_linear_source(bytes + offset, (size_t)(length - (uint64_t)offset),
+                                     base_ip, (uint32_t)bitness, (size_t)max_instructions,
+                                     &decoded, error, sizeof error)
+        : mode == 1
         ? galeikan_asm_function_reachable(bytes, (size_t)length, (size_t)offset, base_ip,
                                           (uint32_t)bitness, (size_t)max_instructions,
                                           &decoded, error, sizeof error)
@@ -291,7 +297,8 @@ static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *sou
         return NULL;
     }
     uint64_t range_start = 0, range_end = 0;
-    if (!gak_asm_bounds(decoded, 0, &range_start, &range_end)) {
+    if (!gak_asm_bounds(decoded, mode == 2 ? (uint64_t)offset : 0,
+                        &range_start, &range_end)) {
         galeikan_asm_disassembly_free(decoded);
         return NULL;
     }
@@ -313,7 +320,7 @@ static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *sou
     disassembly->source = source;
     disassembly->start_offset = (uint64_t)offset;
     disassembly->decoded = decoded;
-    disassembly->offset_bias = 0;
+    disassembly->offset_bias = mode == 2 ? (uint64_t)offset : 0;
     disassembly->address_kind = 0;
     disassembly->display_source = source;
     disassembly->range_start = range_start;
@@ -327,13 +334,19 @@ static GakAsmDisassembly *gak_native_asm_reachable_mode(const GakSourceHead *sou
 GakAsmDisassembly *gak_native_asm_reachable(const GakSourceHead *source,
                                              int64_t offset, uint64_t base_ip,
                                              int64_t bitness, int64_t max_instructions) {
-    return gak_native_asm_reachable_mode(source, offset, base_ip, bitness, max_instructions, 0);
+    return gak_native_asm_source_disassembly(source, offset, base_ip, bitness, max_instructions, 0);
 }
 
 GakAsmDisassembly *gak_native_asm_function_reachable(const GakSourceHead *source,
                                                       int64_t offset, uint64_t base_ip,
                                                       int64_t bitness, int64_t max_instructions) {
-    return gak_native_asm_reachable_mode(source, offset, base_ip, bitness, max_instructions, 1);
+    return gak_native_asm_source_disassembly(source, offset, base_ip, bitness, max_instructions, 1);
+}
+
+GakAsmDisassembly *gak_native_asm_linear_source(const GakSourceHead *source,
+                                                int64_t offset, uint64_t base_ip,
+                                                int64_t bitness, int64_t count) {
+    return gak_native_asm_source_disassembly(source, offset, base_ip, bitness, count, 2);
 }
 
 uint64_t *gak_native_asm_ret_gadget_starts(const GakSourceHead *source,

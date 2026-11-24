@@ -61,6 +61,31 @@ fn ret_gadget_candidates_match_ast_vm_and_native_with_bounds() {
 }
 
 #[test]
+fn linear_source_decodes_candidate_at_selected_offset_across_engines() {
+    if !gcc_available() { return; }
+    let s = Sandbox::new();
+    let script = s.write(
+        "linear-source.gak",
+        "from std.binary import from_hex, snapshot, view\nfrom std.asm import ret_gadget_starts, linear_source, count, at, offset, address_u64, mnemonic, bytes\nfrom std.bytes import to_hex\nlet source = snapshot(from_hex(\"58 5f c3 eb fe c3\"))\nlet starts = ret_gadget_starts(source, 64, 3)\nlet lines = linear_source(source, starts[0], 0x4000u64, 64, 3)\nlet selected = view(source, 1, 5)\nlet local = linear_source(selected, 0, 0x4001u64, 64, 2)\nprint count(lines)\nprint offset(at(lines, 0))\nprint address_u64(at(lines, 0))\nprint mnemonic(at(lines, 1))\nprint mnemonic(at(lines, 2))\nprint to_hex(bytes(at(lines, 1)))\nprint offset(at(local, 1))\nprint address_u64(at(local, 1))\n",
+    );
+    let mut expected = None;
+    for engine in ["ast", "vm"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&script).args(["--engine", engine]).output().unwrap();
+        assert!(output.status.success(), "{engine}: {}", String::from_utf8_lossy(&output.stderr));
+        if let Some(prior) = &expected { assert_eq!(&output.stdout, prior); }
+        expected = Some(output.stdout);
+    }
+    let built = s.compile(&script);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = PathBuf::from(String::from_utf8(built.stdout).unwrap().trim());
+    let native = Command::new(executable).output().unwrap();
+    assert!(native.status.success(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, expected.unwrap());
+    assert_eq!(native.stdout, b"3\n0\n16384\npop\nret\n5f\n1\n16386\n");
+}
+
+#[test]
 fn file_write_saves_patched_source_and_bytes_with_explicit_grant() {
     let s = Sandbox::new();
     let script = s.write(

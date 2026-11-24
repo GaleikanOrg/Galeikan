@@ -71,8 +71,10 @@ if command -v xdg-mime >/dev/null 2>&1; then
   [[ "$(mime_type "$example")" == text/x-galeikan ]]
 fi
 cmp "$project_root/packaging/README.md" "$staging/usr/share/doc/galeikan/README.md"
-cmp "$project_root/packaging/docs/quickstart.md" "$staging/usr/share/doc/galeikan/docs/quickstart.md"
-[[ "$(find "$staging/usr/share/doc/galeikan/docs" -type f | wc -l)" -eq 1 ]]
+for document in quickstart.md technical.md faq.md release-notes-preview4.md; do
+  cmp "$project_root/packaging/docs/$document" "$staging/usr/share/doc/galeikan/docs/$document"
+done
+[[ "$(find "$staging/usr/share/doc/galeikan/docs" -type f | wc -l)" -eq 4 ]]
 "$binary" check "$example"
 printf 'print 42\n' > "$staging/syntax-smoke.gaks"
 if command -v xdg-mime >/dev/null 2>&1; then

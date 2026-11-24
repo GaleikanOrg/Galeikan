@@ -1,6 +1,6 @@
 # Galeikan FAQ
 
-This FAQ describes the current source tree. The downloadable Preview 3 packages may contain fewer functions. See the [quickstart](quickstart.md) for commands and the [technical reference](technical.md) for current signatures and limits.
+This FAQ describes Galeikan 0.1.0 Preview 4. See the [quickstart](quickstart.md) for commands and the [technical reference](technical.md) for current signatures and limits.
 
 ## Language and distribution
 
@@ -70,7 +70,7 @@ No. The native build applies available platform hardening checks, but no compile
 
 ### Are ROP, BROP, symbolic execution, SMT solving, and kernel debugging built in?
 
-Not as complete native subsystems today. Galeikan already provides lower-level building blocks such as bounded binary parsing, disassembly, control-flow queries, and process-memory inspection. Full gadget search, exploit-chain construction, symbolic execution, solver integration, and kernel debugging remain larger research milestones. The [technical reference](technical.md) lists the functions that exist now.
+Not as complete native subsystems today. Galeikan provides lower-level building blocks such as bounded binary parsing, disassembly, control-flow queries, process-memory inspection, and a limited `ret`-ending instruction-sequence candidate scan. `asm.ret_gadget_starts` returns offsets, and `asm.linear_source` lets you inspect the instructions at a chosen offset. This is not a complete gadget index, exploit-chain builder, BROP implementation, symbolic executor, solver, or kernel debugger. The [technical reference](technical.md) lists the implemented functions and limits.
 
 ### Where should I start?
 

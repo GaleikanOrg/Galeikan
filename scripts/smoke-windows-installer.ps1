@@ -195,19 +195,22 @@ if ($bundleAssociation -ne 'Galeikan.Bundle' -or
 }
 $productName = (Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Galeikan').GetValue('DisplayName')
 if ($productName -ne $expectedProductName) { throw 'Installed product name is not Galeikan' }
-$installedGuide = Join-Path $smokeRoot 'docs\quickstart.md'
-$sourceGuide = Join-Path $projectRoot 'packaging\docs\quickstart.md'
-if (-not (Test-Path -LiteralPath $installedGuide) -or
-    (Get-FileHash -LiteralPath $installedGuide -Algorithm SHA256).Hash -ne
-    (Get-FileHash -LiteralPath $sourceGuide -Algorithm SHA256).Hash) {
-    throw 'Installed English guide does not match the current source.'
+$docNames = @('quickstart.md', 'technical.md', 'faq.md', 'release-notes-preview4.md')
+foreach ($name in $docNames) {
+    $installedDoc = Join-Path $smokeRoot "docs\$name"
+    $sourceDoc = Join-Path $projectRoot "packaging\docs\$name"
+    if (-not (Test-Path -LiteralPath $installedDoc) -or
+        (Get-FileHash -LiteralPath $installedDoc -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $sourceDoc -Algorithm SHA256).Hash) {
+        throw "Installed English documentation differs from source: $name"
+    }
 }
 $installedReadme = Join-Path $smokeRoot 'README.md'
 $sourceReadme = Join-Path $projectRoot 'packaging\README.md'
 if (-not (Test-Path -LiteralPath $installedReadme) -or
     (Get-FileHash -LiteralPath $installedReadme -Algorithm SHA256).Hash -ne
     (Get-FileHash -LiteralPath $sourceReadme -Algorithm SHA256).Hash -or
-    (Get-ChildItem -LiteralPath (Join-Path $smokeRoot 'docs') -File).Count -ne 1) {
+    (Get-ChildItem -LiteralPath (Join-Path $smokeRoot 'docs') -File).Count -ne $docNames.Count) {
     throw 'Installer contains unexpected or outdated documentation.'
 }
 & $binary check $example

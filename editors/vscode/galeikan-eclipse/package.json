@@ -1,8 +1,8 @@
 {
   "name": "galeikan-eclipse",
   "displayName": "Galeikan Eclipse",
-  "description": "An ice-blue dark theme for Visual Studio Code",
-  "version": "0.1.0",
+  "description": "An ice-blue Visual Studio Code theme inspired by Galeikan",
+  "version": "0.1.1",
   "publisher": "galeikan",
   "icon": "icon.png",
   "repository": {

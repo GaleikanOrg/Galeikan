@@ -6725,7 +6725,7 @@ impl Codegen {
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, rax\n    call gak_native_asm_ret_gadget_starts\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_asm_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), source_slot * 8, self.arg1(), bitness_slot * 8, self.arg2()).unwrap();
             return Ok(Scalar::Offsets);
         }
-        if matches!(name, "reachable" | "function_reachable") && args.len() == 5 {
+        if matches!(name, "reachable" | "function_reachable" | "linear_source") && args.len() == 5 {
             if self.expr(&args[0], scope)? != Scalar::Source {
                 return Err(format!("asm.{name} expects Source"));
             }
@@ -6751,10 +6751,10 @@ impl Codegen {
             }
             let count_slot = self.reserve_slot()?;
             writeln!(self.code, "    mov QWORD PTR [rbp-{}], rax", count_slot * 8).unwrap();
-            let helper = if name == "function_reachable" {
-                "gak_native_asm_function_reachable"
-            } else {
-                "gak_native_asm_reachable"
+            let helper = match name {
+                "function_reachable" => "gak_native_asm_function_reachable",
+                "linear_source" => "gak_native_asm_linear_source",
+                _ => "gak_native_asm_reachable",
             };
             writeln!(self.code, "    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]\n    mov {}, QWORD PTR [rbp-{}]", self.arg0(), source_slot * 8, self.arg1(), offset_slot * 8, self.arg2(), base_slot * 8, self.arg3(), bitness_slot * 8).unwrap();
             if self.windows {

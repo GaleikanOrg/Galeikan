@@ -6716,6 +6716,40 @@ impl Runtime {
                     name != "function_reachable",
                 )?)))
             }
+            ("linear_source", [source, offset, base_ip, bitness, count]) => {
+                let source = source.as_source()?;
+                let offset = usize::try_from(offset.as_int()?)
+                    .map_err(|_| "linear start offset must be nonnegative")?;
+                if offset >= source.bytes().len() {
+                    return Err("linear start offset out of bounds".into());
+                }
+                let mut ip = base_ip.as_uint()?;
+                let bitness = u32::try_from(bitness.as_int()?)
+                    .map_err(|_| "x86 bitness must be 16, 32, or 64")?;
+                let count = usize::try_from(count.as_int()?)
+                    .map_err(|_| "instruction count must be between 1 and 10000")?;
+                if !(1..=MAX_DISASSEMBLY).contains(&count) {
+                    return Err("instruction count must be between 1 and 10000".into());
+                }
+                let mut cursor = offset;
+                let mut decoder = asm::DecodeContext::new();
+                let mut instructions = Vec::with_capacity(count);
+                for _ in 0..count {
+                    if cursor >= source.bytes().len() {
+                        return Err("linear disassembly exceeds Source".into());
+                    }
+                    let decoded = decoder.decode(source.bytes(), cursor, ip, bitness)?;
+                    let next = cursor + decoded.size;
+                    let view = Source::view(source.clone(), cursor, next)?;
+                    ip = ip.checked_add(decoded.size as u64)
+                        .ok_or("instruction address overflow")?;
+                    instructions.push(Arc::new(AsmInstruction {
+                        source: Arc::new(view), offset: cursor, decoded,
+                    }));
+                    cursor = next;
+                }
+                Ok(Value::Disassembly(Arc::new(Disassembly::new(source, offset, instructions)?)))
+            }
             ("text", [Value::Instruction(i)]) => Ok(Value::Str(i.decoded.text.clone())),
             ("mnemonic", [Value::Instruction(i)]) => Ok(Value::Str(i.decoded.mnemonic.clone())),
             ("flow", [Value::Instruction(i)]) => Ok(Value::Str(i.decoded.flow.into())),
@@ -9195,7 +9229,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
             check_arguments(&qualified, args, &[Source, Int, UInt, Int])?;
             return Ok(Instruction);
         }
-        if matches!(name, "reachable" | "function_reachable") {
+        if matches!(name, "reachable" | "function_reachable" | "linear_source") {
             check_arguments(&qualified, args, &[Source, Int, UInt, Int, Int])?;
             return Ok(Disassembly);
         }
