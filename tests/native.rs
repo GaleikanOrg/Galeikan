@@ -8310,6 +8310,49 @@ fn native_pe_and_elf_dependencies_match_vm() {
     fs::write(s.0.join("sample.elf"), &elf).unwrap();
     fs::write(s.0.join("sample-delay.pe"), &delay).unwrap();
     fs::write(s.0.join("sample-delay-va.pe"), &delay_va).unwrap();
+    let fingerprint_script = s.write(
+        "import-fingerprint.gak",
+        "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, import_fingerprint\nfrom std.cli import arg\nprint import_fingerprint(probe(analyze(arg(0), 4096)))\n",
+    );
+    let built_fingerprint = s.compile(&fingerprint_script);
+    assert!(built_fingerprint.status.success(), "{}", String::from_utf8_lossy(&built_fingerprint.stderr));
+    let fingerprint_executable = PathBuf::from(String::from_utf8(built_fingerprint.stdout).unwrap().trim());
+    let mut fingerprints = Vec::new();
+    for fixture in ["sample.pe", "sample-delay.pe", "sample-delay-va.pe"] {
+        let ast = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&fingerprint_script)
+            .args(["--engine", "ast", "--allow-read"]).arg(&s.0)
+            .args(["--", fixture]).output().unwrap();
+        let vm = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&fingerprint_script)
+            .args(["--engine", "vm", "--allow-read"]).arg(&s.0)
+            .args(["--", fixture]).output().unwrap();
+        let native = Command::new(&fingerprint_executable)
+            .arg("--allow-read").arg(&s.0)
+            .args(["--", fixture]).output().unwrap();
+        assert!(ast.status.success(), "{fixture}: {}", String::from_utf8_lossy(&ast.stderr));
+        assert!(vm.status.success(), "{fixture}: {}", String::from_utf8_lossy(&vm.stderr));
+        assert!(native.status.success(), "{fixture}: {}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(ast.stdout, vm.stdout, "{fixture}");
+        assert_eq!(native.stdout, vm.stdout, "{fixture}");
+        assert_eq!(vm.stdout.len(), 65);
+        fingerprints.push(vm.stdout);
+    }
+    assert_ne!(fingerprints[0], fingerprints[1]);
+    assert_eq!(fingerprints[1], fingerprints[2]);
+    for engine in ["ast", "vm"] {
+        let rejected = Command::new(env!("CARGO_BIN_EXE_galeikan"))
+            .arg("run").arg(&fingerprint_script)
+            .args(["--engine", engine, "--allow-read"]).arg(&s.0)
+            .args(["--", "sample.elf"]).output().unwrap();
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("PE imports require a PE image"));
+    }
+    let native_rejected = Command::new(&fingerprint_executable)
+        .arg("--allow-read").arg(&s.0)
+        .args(["--", "sample.elf"]).output().unwrap();
+    assert!(!native_rejected.status.success());
+    assert!(String::from_utf8_lossy(&native_rejected.stderr).contains("PE imports require a PE image"));
     let script = s.write(
         "dependencies.gak",
         "requires { file.read }\nfrom std.binary import analyze\nfrom std.formats import probe, kind, dependency_count, dependency_name, needed_count, needed_name, import_count, import_library, import_symbol, import_kind, import_summary, delay_dependency_count, delay_dependency_name, delay_import_count, delay_import_library, delay_import_symbol, delay_import_kind, delay_import_summary\nfrom std.iter import range\nfrom std.cli import arg\nfrom std.result import is_error, message\nlet report: Format = probe(analyze(arg(0), 4096))\nfn missing() -> Result<str> = dependency_name(report, 1)\nprint kind(report)\nprint dependency_count(report)\nprint dependency_name(report, 0)\nif kind(report) == \"elf\" {\n    print needed_count(report)\n    print needed_name(report, 0)\n} else {\n    print import_count(report)\n    for index in range(import_count(report)) {\n        print import_summary(report, index)\n        print import_library(report, index)\n        print import_symbol(report, index)\n        print import_kind(report, index)\n    }\n    print delay_dependency_count(report)\n    for index in range(delay_dependency_count(report)) {\n        print delay_dependency_name(report, index)\n    }\n    print delay_import_count(report)\n    for index in range(delay_import_count(report)) {\n        print delay_import_summary(report, index)\n        print delay_import_library(report, index)\n        print delay_import_symbol(report, index)\n        print delay_import_kind(report, index)\n    }\n}\nprint is_error(missing())\nprint message(missing())\n",

@@ -850,6 +850,7 @@ struct Codegen {
     uses_net: bool,
     uses_text: bool,
     uses_formats: bool,
+    uses_import_fingerprint: bool,
     uses_bits: bool,
     uses_lab: bool,
 }
@@ -1248,6 +1249,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
         uses_net: false,
         uses_text: false,
         uses_formats: false,
+        uses_import_fingerprint: false,
         uses_bits: false,
         uses_lab: false,
     };
@@ -1371,6 +1373,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
     let uses_process = generator.uses_process;
     let uses_net = generator.uses_net;
     let uses_formats = generator.uses_formats;
+    let uses_import_fingerprint = generator.uses_import_fingerprint;
     let uses_lab = generator.uses_lab;
     let uses_asm = modules.values().any(|module| {
         module
@@ -1378,7 +1381,7 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .values()
             .any(|import| matches!(import, NativeImport::Asm))
     });
-    let runtime_library = if uses_asm || uses_net {
+    let runtime_library = if uses_asm || uses_net || uses_import_fingerprint {
         Some(find_native_runtime_library()?)
     } else {
         None
@@ -1511,6 +1514,9 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
         .arg("-Werror")
         .arg(gcc_path(&text_runtime_path));
     if let Some(helper_path) = &formats_runtime_path {
+        if uses_import_fingerprint {
+            compiler.arg("-DGALEIKAN_FORMATS_IMPORT_FINGERPRINT");
+        }
         compiler
             .arg("-x")
             .arg("c")
@@ -1518,6 +1524,8 @@ pub fn compile(script: &Path, emit_asm: bool) -> Result<PathBuf, String> {
             .arg("-Wall")
             .arg("-Wextra")
             .arg("-Werror")
+            .arg("-I")
+            .arg(gcc_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").as_path()))
             .arg(gcc_path(helper_path));
     }
     if let Some(helper_path) = &lab_runtime_path {
@@ -1907,6 +1915,7 @@ impl Codegen {
                     self.uses_net,
                     self.uses_text,
                     self.uses_formats,
+                    self.uses_import_fingerprint,
                     self.uses_bits,
                     self.uses_lab,
                 );
@@ -1990,8 +1999,9 @@ impl Codegen {
                     self.uses_net = checkpoint.13;
                     self.uses_text = checkpoint.14;
                     self.uses_formats = checkpoint.15;
-                    self.uses_bits = checkpoint.16;
-                    self.uses_lab = checkpoint.17;
+                    self.uses_import_fingerprint = checkpoint.16;
+                    self.uses_bits = checkpoint.17;
+                    self.uses_lab = checkpoint.18;
                 }
             }
         }
@@ -5795,6 +5805,16 @@ impl Codegen {
                 let ready = self.label();
                 writeln!(self.code, "    mov {}, rax\n    mov {}, {}\n    call gak_native_formats_import_count\n    cmp rax, -1\n    jne {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0(), self.arg1(), if name.starts_with("delay_") { 1 } else { 0 }).unwrap();
                 return Ok(Scalar::Int);
+            }
+            ("import_fingerprint", [report]) => {
+                if self.expr(report, scope)? != Scalar::Format {
+                    return Err("formats.import_fingerprint expects Format".into());
+                }
+                self.uses_formats = true;
+                self.uses_import_fingerprint = true;
+                let ready = self.label();
+                writeln!(self.code, "    mov {}, rax\n    call gak_native_formats_import_fingerprint\n    test rax, rax\n    jnz {ready}\n    mov rax, QWORD PTR [rip+gak_formats_error]\n    jmp gak_analyze_error_dynamic\n{ready}:", self.arg0()).unwrap();
+                return Ok(Scalar::Str);
             }
             ("import_iat_rva" | "delay_import_iat_rva", [report, index]) => {
                 if self.expr(report, scope)? != Scalar::Format {

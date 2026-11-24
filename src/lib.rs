@@ -3,6 +3,10 @@
 #[allow(dead_code)]
 mod asm;
 #[allow(dead_code)]
+mod clr_signature;
+#[allow(dead_code)]
+mod formats;
+#[allow(dead_code)]
 mod net;
 
 use sha2::{Digest, Sha256};
@@ -906,6 +910,48 @@ pub unsafe extern "C" fn galeikan_asm_sha256(
     // SAFETY: The caller provides at least 32 writable output bytes.
     unsafe { ptr::copy_nonoverlapping(digest.as_ptr(), output, digest.len()) };
     0
+}
+
+/// Write a 64-byte lowercase ASCII SHA-256 fingerprint of PE imports.
+/// # Safety
+/// `bytes` must be readable for `length` bytes when non-null; `output` must
+/// point to 64 writable bytes, and the optional error buffer must be writable
+/// for its stated capacity. Output must not overlap the input span.
+#[no_mangle]
+pub unsafe extern "C" fn galeikan_formats_import_fingerprint(
+    bytes: *const u8,
+    length: usize,
+    output: *mut u8,
+    error: *mut u8,
+    error_capacity: usize,
+) -> i32 {
+    if output.is_null() || (bytes.is_null() && length != 0) || length > 512 * 1024 * 1024 {
+        return write_error(error, error_capacity, "invalid import fingerprint input");
+    }
+    if !error.is_null() && error_capacity > 0 {
+        // SAFETY: The caller provides a writable error buffer.
+        unsafe { *error = 0 };
+    }
+    let input = if length == 0 {
+        &[]
+    } else {
+        // SAFETY: The caller keeps `length` readable bytes alive for this call.
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        formats::probe(input)?.import_fingerprint(input)
+    })) {
+        Ok(Ok(fingerprint)) => {
+            if fingerprint.len() != 64 {
+                return write_error(error, error_capacity, "invalid import fingerprint length");
+            }
+            // SAFETY: The caller provides 64 writable bytes that do not overlap input.
+            unsafe { ptr::copy_nonoverlapping(fingerprint.as_ptr(), output, 64) };
+            0
+        }
+        Ok(Err(message)) => write_error(error, error_capacity, &message),
+        Err(_) => write_error(error, error_capacity, "import fingerprint failed"),
+    }
 }
 
 fn optional_address(value: Option<u64>, output: *mut u64) -> i32 {

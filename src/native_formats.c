@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef GALEIKAN_FORMATS_IMPORT_FINGERPRINT
+#include "native_asm_bridge.h"
+#endif
 
 /* Native Source: boxed backing, parent, start, end, and provenance fields. */
 typedef struct {
@@ -2718,6 +2721,35 @@ int64_t gak_native_formats_import_count(const void *value, int delayed) {
     if (!gak_pe_import_scan(value, delayed, -1, &result)) return -1;
     return (int64_t)result.count;
 }
+
+#ifdef GALEIKAN_FORMATS_IMPORT_FINGERPRINT
+void *gak_native_formats_import_fingerprint(const void *value) {
+    gak_formats_error = NULL;
+    if (!value) { gak_format_fail("invalid Format"); return NULL; }
+    const GakFormat *format = value;
+    if (format->kind != 1) {
+        gak_format_fail("PE imports require a PE image"); return NULL;
+    }
+    const GakSourceHead *source = format->source;
+    if (!source || !source->backing || source->start > source->end) {
+        gak_format_fail("invalid Source"); return NULL;
+    }
+    uint64_t backing_size;
+    memcpy(&backing_size, source->backing, sizeof backing_size);
+    if (source->end > backing_size) {
+        gak_format_fail("invalid Source"); return NULL;
+    }
+    const uint8_t *bytes = source->backing + sizeof backing_size + source->start;
+    char fingerprint[64];
+    uint8_t error[256] = {0};
+    if (galeikan_formats_import_fingerprint(bytes, (size_t)(source->end - source->start),
+                                            (uint8_t *)fingerprint, error, sizeof error)) {
+        gak_format_fail(error[0] ? (const char *)error : "import fingerprint failed");
+        return NULL;
+    }
+    return gak_format_box(fingerprint, sizeof fingerprint);
+}
+#endif
 
 int64_t gak_native_formats_import_iat_rva(const void *value, int64_t index,
                                            int delayed) {

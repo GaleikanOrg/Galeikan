@@ -6956,6 +6956,9 @@ impl Runtime {
                 i64::try_from(report.delay_imports(source.bytes())?.len())
                     .map_err(|_| "delay import count outside i64 range")?,
             )),
+            ("import_fingerprint", [Value::Format(source, report)]) => {
+                Ok(Value::Str(report.import_fingerprint(source.bytes())?))
+            }
             ("export_count", [Value::Format(source, report)]) => Ok(Value::Int(
                 i64::try_from(report.exports(source.bytes())?.len())
                     .map_err(|_| "export count outside i64 range")?,
@@ -9311,6 +9314,7 @@ fn standard_call(module: &str, name: &str, args: &[Type]) -> Result<Type, String
         ("formats", "signal") => (&[Format, Str], Str),
         ("formats", "count") => (&[Format], Int),
         ("formats", "import_count" | "delay_import_count") => (&[Format], Int),
+        ("formats", "import_fingerprint") => (&[Format], Str),
         ("formats", "export_count") => (&[Format], Int),
         ("formats", "certificate_count") => (&[Format], Int),
         ("formats", "debug_count") => (&[Format], Int),

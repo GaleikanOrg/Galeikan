@@ -144,6 +144,7 @@ print write("output.bin", modified)
 | `rva_offset`, `pe_va_offset`, `pe_va_offset_at`, `va_offset`, `va_offset_u64`, `elf_va_offset_at` | Convert a declared virtual address into a file offset, with checked mapping. |
 | `offset_rva`, `offset_pe_va`, `offset_pe_va_at`, `offset_va`, `offset_va_u64`, `offset_elf_va_at` | Convert a file offset into a format virtual address, with checked mapping. |
 | `import_count`, `delay_import_count`, `export_count`, `import_iat_rva`, `delay_import_iat_rva` | Count PE imports, delayed imports, or exports and inspect import-address-table locations. |
+| `import_fingerprint` | Return a lowercase SHA-256 digest of PE regular and delay imports for sample comparison. Library and symbol names are ASCII-case-normalized; records are sorted, and duplicate imports remain significant. |
 | `export_name`, `export_target`, `export_kind`, `export_summary`, `export_ordinal`, `export_address`, `export_view` | Inspect an export's name, target/forwarder, kind, ordinal, address, summary, or backing source view. |
 | `dependency_count`, `delay_dependency_count`, `needed_count`, `dependency_name`, `delay_dependency_name`, `needed_name` | Count and name PE normal/delayed dependencies or ELF `DT_NEEDED` libraries. |
 | `certificate_count`, `certificate_data` | Count PE certificate entries and return bounded certificate bytes; no trust-chain validation is performed. |
@@ -155,6 +156,8 @@ print write("output.bin", modified)
 | `symbol_defined`, `static_symbol_defined`, `symbol_at_address`, `static_symbol_at_address`, `symbol_at_address_at`, `static_symbol_at_address_at` | Test definition status or find dynamic/static symbols at a mapped address. |
 | `symbol_view`, `static_symbol_view`, `symbol_address_u64`, `static_symbol_address_u64` | Return the backing source view or address for dynamic/static symbols. |
 | `relocation_count`, `relocation_location`, `relocation_address`, `relocation_address_u64`, `relocation_kind`, `relocation_summary` | Count relocation entries and read their location, address, type, or summary. |
+
+`import_fingerprint` is a Galeikan-specific comparison key, not the conventional PE imphash. It hashes sorted, length-prefixed records with a versioned domain tag; each record includes regular/delay status, name/ordinal status, DLL name, and symbol. It ignores IAT addresses and does not hash executable code. Matching fingerprints indicate matching parsed import profiles under this definition, not identical files or malicious intent.
 
 #### CLR metadata within `std.formats`
 

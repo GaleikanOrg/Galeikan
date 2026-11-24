@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy)]
 pub struct NumericField {
@@ -1835,6 +1836,35 @@ impl FormatReport {
             Ok(imports) => Ok(imports),
             Err(error) => Err(error.clone()),
         }
+    }
+
+    pub fn import_fingerprint(&self, bytes: &[u8]) -> Result<String, String> {
+        let mut records = Vec::new();
+        for (category, imports) in [
+            (0_u8, self.imports(bytes)?),
+            (1_u8, self.delay_imports(bytes)?),
+        ] {
+            for import in imports {
+                let library = import.library.as_bytes().to_ascii_lowercase();
+                let symbol = import.symbol.as_bytes().to_ascii_lowercase();
+                let mut record = Vec::with_capacity(10 + library.len() + symbol.len());
+                record.push(category);
+                record.push(u8::from(import.kind == "ordinal"));
+                record.extend_from_slice(&(library.len() as u32).to_le_bytes());
+                record.extend_from_slice(&library);
+                record.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
+                record.extend_from_slice(&symbol);
+                records.push(record);
+            }
+        }
+        records.sort_unstable();
+        let mut hash = Sha256::new();
+        hash.update(b"galeikan.pe.import-fingerprint.v1\0");
+        for record in records {
+            hash.update((record.len() as u32).to_le_bytes());
+            hash.update(record);
+        }
+        Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
     }
 
     pub fn delay_imports(&self, bytes: &[u8]) -> Result<&[ImportInfo], String> {
@@ -5988,6 +6018,28 @@ mod tests {
                 assert_eq!(report.imports(&bytes).unwrap()[0].iat_rva, Some(0x1060));
             }
         }
+    }
+
+    #[test]
+    fn pe_import_fingerprint_is_case_and_width_independent_but_tracks_symbols() {
+        let original = pe_with_delay_imports(false);
+        let baseline = probe(&original).unwrap().import_fingerprint(&original).unwrap();
+        assert_eq!(baseline.len(), 64);
+        assert!(baseline.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        for bytes in [pe_with_delay_imports(true), pe_with_legacy_delay_imports(false)] {
+            assert_eq!(probe(&bytes).unwrap().import_fingerprint(&bytes).unwrap(), baseline);
+        }
+        let mut lower = original.clone();
+        lower[0x360..0x36a].copy_from_slice(b"user32.dll");
+        lower[0x382..0x38d].copy_from_slice(b"messageboxa");
+        assert_eq!(probe(&lower).unwrap().import_fingerprint(&lower).unwrap(), baseline);
+        let mut reordered = original.clone();
+        reordered[0x240..0x244].copy_from_slice(&original[0x244..0x248]);
+        reordered[0x244..0x248].copy_from_slice(&original[0x240..0x244]);
+        assert_eq!(probe(&reordered).unwrap().import_fingerprint(&reordered).unwrap(), baseline);
+        let mut changed = original;
+        changed[0x382] = b'N';
+        assert_ne!(probe(&changed).unwrap().import_fingerprint(&changed).unwrap(), baseline);
     }
 
     #[test]
