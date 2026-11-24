@@ -1620,6 +1620,7 @@ fn find_native_runtime_library() -> Result<PathBuf, String> {
         }
     }
     if !cfg!(windows) {
+        candidates.push(directory.join("../lib/galeikan").join(filename));
         candidates.push(PathBuf::from("/usr/lib/galeikan").join(filename));
     }
     candidates

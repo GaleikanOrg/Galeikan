@@ -62,9 +62,13 @@ install -Dm644 packaging/debian/text-x-galeikan.png "$staging/usr/share/icons/hi
 install -Dm644 packaging/debian/text-x-galeikan-script.png "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"
 for editor_asset in \
   package.json README.md icon.png language-configuration.json \
-  syntaxes/galeikan.tmLanguage.json themes/galeikan-noir-color-theme.json; do
+  syntaxes/galeikan.tmLanguage.json; do
   install -Dm644 "editors/vscode/galeikan/$editor_asset" \
-    "$staging/usr/share/galeikan/editor/vscode/$editor_asset"
+    "$staging/usr/share/galeikan/editor/vscode/galeikan-language/$editor_asset"
+done
+for editor_asset in package.json README.md icon.png themes/galeikan-noir-color-theme.json; do
+  install -Dm644 "editors/vscode/galeikan-eclipse/$editor_asset" \
+    "$staging/usr/share/galeikan/editor/vscode/galeikan-eclipse/$editor_asset"
 done
 
 mkdir -p "$staging/DEBIAN"

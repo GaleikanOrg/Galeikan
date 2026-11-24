@@ -36,6 +36,9 @@ if (-not (Test-Path -LiteralPath $decoder)) { throw "Missing decoder library: $d
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsix = Join-Path $distDir ("galeikan-language-{0}.vsix" -f $extensionManifest.version)
 if (-not (Test-Path -LiteralPath $vsix)) { throw "Missing VS Code extension: $vsix" }
+$themeManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan-eclipse\package.json') -Raw | ConvertFrom-Json
+$themeVsix = Join-Path $distDir ("galeikan-eclipse-{0}.vsix" -f $themeManifest.version)
+if (-not (Test-Path -LiteralPath $themeVsix)) { throw "Missing VS Code theme: $themeVsix" }
 
 $pathHelper = Join-Path $distDir 'galeikan-path.exe'
 $pathHelperSource = Join-Path $projectRoot 'packaging\windows\path_helper.c'
@@ -48,7 +51,7 @@ $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 Push-Location (Split-Path -Parent $script)
 try {
     if ($makensis) {
-        & $makensis.Source "-DPROJECT_ROOT=$($projectRoot.Replace('\', '/'))" "-DOUTPUT_EXE=$($output.Replace('\', '/'))" "-DVSIX_FILE=$($vsix.Replace('\', '/'))" "-DPRODUCT_NAME=$productName" $script
+        & $makensis.Source "-DPROJECT_ROOT=$($projectRoot.Replace('\', '/'))" "-DOUTPUT_EXE=$($output.Replace('\', '/'))" "-DVSIX_FILE=$($vsix.Replace('\', '/'))" "-DTHEME_VSIX_FILE=$($themeVsix.Replace('\', '/'))" "-DPRODUCT_NAME=$productName" $script
     } else {
         $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
         if (-not $wsl) { throw 'NSIS makensis was not found; install NSIS or use WSL with makensis.' }
@@ -60,7 +63,8 @@ try {
         $outputWsl = ConvertTo-WslPath $output
         $scriptWsl = ConvertTo-WslPath $script
         $vsixWsl = ConvertTo-WslPath $vsix
-        & wsl.exe makensis "-DPROJECT_ROOT=$rootWsl" "-DOUTPUT_EXE=$outputWsl" "-DVSIX_FILE=$vsixWsl" "-DPRODUCT_NAME=$productName" $scriptWsl
+        $themeVsixWsl = ConvertTo-WslPath $themeVsix
+        & wsl.exe makensis "-DPROJECT_ROOT=$rootWsl" "-DOUTPUT_EXE=$outputWsl" "-DVSIX_FILE=$vsixWsl" "-DTHEME_VSIX_FILE=$themeVsixWsl" "-DPRODUCT_NAME=$productName" $scriptWsl
     }
 } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) { throw 'NSIS installer build failed' }

@@ -10,6 +10,9 @@ Unicode true
 !ifndef VSIX_FILE
   !error "Pass -DVSIX_FILE=<absolute path> to makensis"
 !endif
+!ifndef THEME_VSIX_FILE
+  !error "Pass -DTHEME_VSIX_FILE=<absolute path> to makensis"
+!endif
 !ifndef PRODUCT_NAME
   !error "Pass -DPRODUCT_NAME=<display name> to makensis"
 !endif
@@ -52,17 +55,22 @@ Section "Galeikan CLI" SEC_CLI
   File /oname=galeikan.ico "${PROJECT_ROOT}/packaging/windows/assets/galeikan.ico"
   SetOutPath "$INSTDIR\brand"
   File "${PROJECT_ROOT}/logo_GaleikanEcosystem.jpg"
-  SetOutPath "$INSTDIR\editor\vscode"
+  SetOutPath "$INSTDIR\editor\vscode\galeikan-language"
   File "${PROJECT_ROOT}/editors/vscode/galeikan/package.json"
   File "${PROJECT_ROOT}/editors/vscode/galeikan/README.md"
   File "${PROJECT_ROOT}/editors/vscode/galeikan/icon.png"
   File "${PROJECT_ROOT}/editors/vscode/galeikan/language-configuration.json"
-  SetOutPath "$INSTDIR\editor\vscode\syntaxes"
+  SetOutPath "$INSTDIR\editor\vscode\galeikan-language\syntaxes"
   File "${PROJECT_ROOT}/editors/vscode/galeikan/syntaxes/galeikan.tmLanguage.json"
-  SetOutPath "$INSTDIR\editor\vscode\themes"
-  File "${PROJECT_ROOT}/editors/vscode/galeikan/themes/galeikan-noir-color-theme.json"
+  SetOutPath "$INSTDIR\editor\vscode\galeikan-eclipse"
+  File "${PROJECT_ROOT}/editors/vscode/galeikan-eclipse/package.json"
+  File "${PROJECT_ROOT}/editors/vscode/galeikan-eclipse/README.md"
+  File "${PROJECT_ROOT}/editors/vscode/galeikan-eclipse/icon.png"
+  SetOutPath "$INSTDIR\editor\vscode\galeikan-eclipse\themes"
+  File "${PROJECT_ROOT}/editors/vscode/galeikan-eclipse/themes/galeikan-noir-color-theme.json"
   SetOutPath "$INSTDIR\editor"
   File "${VSIX_FILE}"
+  File "${THEME_VSIX_FILE}"
 
   SetOutPath "$INSTDIR\tools"
   File /oname=galeikan-path.exe "${PROJECT_ROOT}/dist/galeikan-path.exe"

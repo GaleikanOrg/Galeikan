@@ -17,6 +17,8 @@ $expectedProductName = if ($releaseChannel -eq 'stable') {
 }
 $extensionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan\package.json') -Raw | ConvertFrom-Json
 $vsixName = "galeikan-language-$($extensionManifest.version).vsix"
+$themeManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'editors\vscode\galeikan-eclipse\package.json') -Raw | ConvertFrom-Json
+$themeVsixName = "galeikan-eclipse-$($themeManifest.version).vsix"
 $installer = if ($InstallerPath) {
     [System.IO.Path]::GetFullPath($InstallerPath)
 } else {
@@ -108,7 +110,9 @@ if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $exam
 }
 if (-not (Test-Path -LiteralPath (Join-Path $smokeRoot 'icons\galeikan.ico')) -or
     -not (Test-Path -LiteralPath (Join-Path $smokeRoot "editor\$vsixName")) -or
-    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\package.json'))) {
+    -not (Test-Path -LiteralPath (Join-Path $smokeRoot "editor\$themeVsixName")) -or
+    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\galeikan-language\package.json')) -or
+    -not (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\galeikan-eclipse\package.json'))) {
     throw 'Installed file icons or editor assets are missing'
 }
 $installedVsix = Join-Path $smokeRoot "editor\$vsixName"
@@ -117,14 +121,30 @@ if ((Get-FileHash -LiteralPath $installedVsix -Algorithm SHA256).Hash -ne
     (Get-FileHash -LiteralPath $builtVsix -Algorithm SHA256).Hash) {
     throw 'Installed VS Code extension does not match the current build'
 }
-foreach ($asset in @('package.json', 'language-configuration.json', 'syntaxes\galeikan.tmLanguage.json', 'themes\galeikan-noir-color-theme.json')) {
-    $installedAsset = Join-Path (Join-Path $smokeRoot 'editor\vscode') $asset
+if ((Get-FileHash -LiteralPath (Join-Path $smokeRoot "editor\$themeVsixName") -Algorithm SHA256).Hash -ne
+    (Get-FileHash -LiteralPath (Join-Path (Join-Path $projectRoot 'dist') $themeVsixName) -Algorithm SHA256).Hash) {
+    throw 'Installed VS Code theme does not match the current build'
+}
+foreach ($asset in @('package.json', 'README.md', 'icon.png', 'language-configuration.json', 'syntaxes\galeikan.tmLanguage.json')) {
+    $installedAsset = Join-Path (Join-Path $smokeRoot 'editor\vscode\galeikan-language') $asset
     $sourceAsset = Join-Path (Join-Path $projectRoot 'editors\vscode\galeikan') $asset
     if (-not (Test-Path -LiteralPath $installedAsset) -or
         (Get-FileHash -LiteralPath $installedAsset -Algorithm SHA256).Hash -ne
         (Get-FileHash -LiteralPath $sourceAsset -Algorithm SHA256).Hash) {
         throw "Installed editor asset is missing or outdated: $asset"
     }
+}
+foreach ($asset in @('package.json', 'README.md', 'icon.png', 'themes\galeikan-noir-color-theme.json')) {
+    $installedAsset = Join-Path (Join-Path $smokeRoot 'editor\vscode\galeikan-eclipse') $asset
+    $sourceAsset = Join-Path (Join-Path $projectRoot 'editors\vscode\galeikan-eclipse') $asset
+    if (-not (Test-Path -LiteralPath $installedAsset) -or
+        (Get-FileHash -LiteralPath $installedAsset -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $sourceAsset -Algorithm SHA256).Hash) {
+        throw "Installed theme asset is missing or outdated: $asset"
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $smokeRoot 'editor\vscode\galeikan-language\themes')) {
+    throw 'Syntax extension still contains an embedded theme'
 }
 foreach ($asset in @('pyproject.toml', 'galeikan_bridge\__init__.py', 'galeikan_bridge\_runner.py')) {
     $installedAsset = Join-Path (Join-Path $smokeRoot 'python') $asset

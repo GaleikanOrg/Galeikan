@@ -46,10 +46,13 @@ example="$staging/usr/share/doc/galeikan/examples/hello.gak"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan.png"
 test -f "$staging/usr/share/icons/hicolor/256x256/mimetypes/text-x-galeikan-script.png"
 cmp "$project_root/logo_GaleikanEcosystem.jpg" "$staging/usr/share/galeikan/brand/logo_GaleikanEcosystem.jpg"
-test -f "$staging/usr/share/galeikan/editor/vscode/package.json"
-for asset in package.json language-configuration.json syntaxes/galeikan.tmLanguage.json themes/galeikan-noir-color-theme.json; do
-  cmp "$project_root/editors/vscode/galeikan/$asset" "$staging/usr/share/galeikan/editor/vscode/$asset"
+for asset in package.json README.md icon.png language-configuration.json syntaxes/galeikan.tmLanguage.json; do
+  cmp "$project_root/editors/vscode/galeikan/$asset" "$staging/usr/share/galeikan/editor/vscode/galeikan-language/$asset"
 done
+for asset in package.json README.md icon.png themes/galeikan-noir-color-theme.json; do
+  cmp "$project_root/editors/vscode/galeikan-eclipse/$asset" "$staging/usr/share/galeikan/editor/vscode/galeikan-eclipse/$asset"
+done
+test ! -e "$staging/usr/share/galeikan/editor/vscode/galeikan-language/themes"
 for asset in pyproject.toml galeikan_bridge/__init__.py galeikan_bridge/_runner.py; do
   cmp "$project_root/python/$asset" "$staging/usr/share/galeikan/python/$asset"
 done
