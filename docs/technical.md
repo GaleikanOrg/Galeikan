@@ -157,7 +157,7 @@ print write("output.bin", modified)
 | `symbol_view`, `static_symbol_view`, `symbol_address_u64`, `static_symbol_address_u64` | Return the backing source view or address for dynamic/static symbols. |
 | `relocation_count`, `relocation_location`, `relocation_address`, `relocation_address_u64`, `relocation_kind`, `relocation_summary` | Count relocation entries and read their location, address, type, or summary. |
 
-`import_fingerprint` is a Galeikan-specific comparison key, not the conventional PE imphash. It hashes sorted, length-prefixed records with a versioned domain tag; each record includes regular/delay status, name/ordinal status, DLL name, and symbol. It ignores IAT addresses and does not hash executable code. Matching fingerprints indicate matching parsed import profiles under this definition, not identical files or malicious intent.
+`import_fingerprint` is a Galeikan-specific comparison key, not the conventional PE imphash. It hashes sorted, length-prefixed records with a versioned domain tag; each record includes regular/delay status, name/ordinal status, DLL name, and symbol. Canonical records are limited to 16 MiB. It ignores IAT addresses and does not hash executable code. Matching fingerprints indicate matching parsed import profiles under this definition, not identical files or malicious intent.
 
 #### CLR metadata within `std.formats`
 

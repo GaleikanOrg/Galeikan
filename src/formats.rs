@@ -57,6 +57,44 @@ pub struct ImportInfo {
     pub iat_rva: Option<u64>,
 }
 
+fn import_fingerprint_records(regular: &[ImportInfo], delayed: &[ImportInfo]) -> Result<String, String> {
+    let mut records = Vec::new();
+    let mut total_bytes = 0_usize;
+    for (category, imports) in [(0_u8, regular), (1_u8, delayed)] {
+        for import in imports {
+            let library = import.library.as_bytes().to_ascii_lowercase();
+            let symbol = import.symbol.as_bytes().to_ascii_lowercase();
+            let record_size = 10_usize
+                .checked_add(library.len())
+                .and_then(|size| size.checked_add(symbol.len()))
+                .ok_or("PE import fingerprint size overflow")?;
+            total_bytes = total_bytes
+                .checked_add(4)
+                .and_then(|size| size.checked_add(record_size))
+                .ok_or("PE import fingerprint size overflow")?;
+            if total_bytes > MAX_IMPORT_FINGERPRINT_BYTES {
+                return Err("PE import fingerprint exceeds 16 MiB".into());
+            }
+            let mut record = Vec::with_capacity(record_size);
+            record.push(category);
+            record.push(u8::from(import.kind == "ordinal"));
+            record.extend_from_slice(&(library.len() as u32).to_le_bytes());
+            record.extend_from_slice(&library);
+            record.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
+            record.extend_from_slice(&symbol);
+            records.push(record);
+        }
+    }
+    records.sort_unstable();
+    let mut hash = Sha256::new();
+    hash.update(b"galeikan.pe.import-fingerprint.v1\0");
+    for record in records {
+        hash.update((record.len() as u32).to_le_bytes());
+        hash.update(record);
+    }
+    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 #[derive(Clone, Debug)]
 pub struct ExportInfo {
     pub name: String,
@@ -197,6 +235,7 @@ const MAX_IMPORT_DESCRIPTORS: usize = 4096;
 const MAX_IMPORT_SYMBOLS: usize = 10_000;
 const MAX_IMPORT_LIBRARY_BYTES: usize = 1024;
 const MAX_IMPORT_SYMBOL_BYTES: usize = 4096;
+const MAX_IMPORT_FINGERPRINT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_EXPORT_ADDRESSES: usize = 10_000;
 const MAX_EXPORT_NAMES: usize = 10_000;
 const MAX_EXPORT_TEXT_BYTES: usize = 4096;
@@ -1839,32 +1878,7 @@ impl FormatReport {
     }
 
     pub fn import_fingerprint(&self, bytes: &[u8]) -> Result<String, String> {
-        let mut records = Vec::new();
-        for (category, imports) in [
-            (0_u8, self.imports(bytes)?),
-            (1_u8, self.delay_imports(bytes)?),
-        ] {
-            for import in imports {
-                let library = import.library.as_bytes().to_ascii_lowercase();
-                let symbol = import.symbol.as_bytes().to_ascii_lowercase();
-                let mut record = Vec::with_capacity(10 + library.len() + symbol.len());
-                record.push(category);
-                record.push(u8::from(import.kind == "ordinal"));
-                record.extend_from_slice(&(library.len() as u32).to_le_bytes());
-                record.extend_from_slice(&library);
-                record.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
-                record.extend_from_slice(&symbol);
-                records.push(record);
-            }
-        }
-        records.sort_unstable();
-        let mut hash = Sha256::new();
-        hash.update(b"galeikan.pe.import-fingerprint.v1\0");
-        for record in records {
-            hash.update((record.len() as u32).to_le_bytes());
-            hash.update(record);
-        }
-        Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+        import_fingerprint_records(self.imports(bytes)?, self.delay_imports(bytes)?)
     }
 
     pub fn delay_imports(&self, bytes: &[u8]) -> Result<&[ImportInfo], String> {
@@ -4400,7 +4414,7 @@ fn probe_elf(bytes: &[u8]) -> Result<FormatReport, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe, section_name};
+    use super::{import_fingerprint_records, probe, section_name, ImportInfo};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     fn exercise_mutated_format(bytes: &[u8]) {
@@ -4428,6 +4442,7 @@ mod tests {
                 let _ = report.certificates(bytes);
                 let _ = report.imports(bytes);
                 let _ = report.delay_imports(bytes);
+                let _ = report.import_fingerprint(bytes);
                 let _ = report.delay_dependencies(bytes);
                 let _ = report.exports(bytes);
                 let _ = report.relocations(bytes);
@@ -6040,6 +6055,21 @@ mod tests {
         let mut changed = original;
         changed[0x382] = b'N';
         assert_ne!(probe(&changed).unwrap().import_fingerprint(&changed).unwrap(), baseline);
+    }
+
+    #[test]
+    fn pe_import_fingerprint_rejects_oversized_canonical_profile() {
+        let import = ImportInfo {
+            library: "kernel32.dll".into(),
+            symbol: "A".repeat(4096),
+            kind: "name",
+            iat_rva: None,
+        };
+        let imports = vec![import; 4100];
+        assert_eq!(
+            import_fingerprint_records(&imports, &[]).unwrap_err(),
+            "PE import fingerprint exceeds 16 MiB"
+        );
     }
 
     #[test]

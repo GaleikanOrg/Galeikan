@@ -1124,6 +1124,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn import_fingerprint_ffi_rejects_invalid_input_without_writing_output() {
+        let mut output = [0x5a_u8; 64];
+        let mut error = [0_u8; 256];
+        let input = b"MZ";
+        assert_eq!(unsafe {
+            galeikan_formats_import_fingerprint(
+                input.as_ptr(), input.len(), output.as_mut_ptr(), error.as_mut_ptr(), error.len(),
+            )
+        }, -1);
+        assert!(error[0] != 0);
+        assert_eq!(output, [0x5a_u8; 64]);
+        error.fill(0);
+        assert_eq!(unsafe {
+            galeikan_formats_import_fingerprint(
+                input.as_ptr(), input.len(), std::ptr::null_mut(), error.as_mut_ptr(), error.len(),
+            )
+        }, -1);
+        assert!(error[0] != 0);
+    }
+
+    #[test]
     fn http_authority_ffi_canonicalizes_and_rejects_unsafe_urls() {
         let mut authority = [0_u8; 512];
         let mut error = [0_u8; 256];
